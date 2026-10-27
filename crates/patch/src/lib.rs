@@ -11,6 +11,7 @@ pub mod preview;
 mod scope;
 mod target;
 mod text;
+mod xml;
 
 pub use compose::{Absent, Composition, Context, Report, Skipped, Sources};
 pub use target::{Error, Images, Target};

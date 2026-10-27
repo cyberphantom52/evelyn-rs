@@ -219,6 +219,17 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 edits: edits.clone(),
             },
         },
+        Operation::Xml {
+            target,
+            before,
+            edits,
+        } => Stmt::Edit {
+            selection: select(target.as_ref(), Scope::default()),
+            transform: Transform::Xml {
+                before: before.clone(),
+                edits: edits.clone(),
+            },
+        },
         Operation::AssertHash(path, sha256) => Stmt::Assert {
             condition: Expr::Binary {
                 op: BinaryOp::Eq,

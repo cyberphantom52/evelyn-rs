@@ -4,7 +4,8 @@
 //! however many surface forms use it.
 
 use crate::{
-    ByteEdit, Firmware, MetadataPolicy, MetadataRule, Overrides, PropertyTarget, value::Value,
+    ByteEdit, Firmware, MetadataPolicy, MetadataRule, Overrides, PropertyTarget, XmlEdit,
+    value::Value,
 };
 use model::{DevicePath, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
@@ -72,6 +73,10 @@ pub enum Transform {
     Bytes {
         before: Option<Sha256Digest>,
         edits: Vec<ByteEdit>,
+    },
+    Xml {
+        before: Option<Sha256Digest>,
+        edits: Vec<XmlEdit>,
     },
     SetProp {
         key: String,

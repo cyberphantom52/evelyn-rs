@@ -28,6 +28,7 @@ tar = { version = "0.4.46", default-features = false }
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 percent-encoding = "2.3.2"
 diffy = "0.5.2"
+xot = "0.31.2"
 tracing = "0.1.44"
 
 [workspace.lints.rust]

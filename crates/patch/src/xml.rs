@@ -1,0 +1,233 @@
+//! Hash-guarded XML edits on an xot tree. The edited document is written out
+//! again in full, so its formatting may change; its content changes only where
+//! the edits say.
+
+use model::Sha256Digest;
+use recipe::{XmlEdit, XmlMatch, XmlName, XmlPredicate};
+use thiserror::Error;
+use xot::{
+    Node, Xot,
+    output::xml::{Declaration, Parameters},
+};
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum Error {
+    #[error("XML input SHA-256 mismatch")]
+    HashMismatch,
+    #[error("invalid UTF-8 XML document")]
+    InvalidXml,
+    #[error("XML edit {edit} expected {expected} matches, found {actual}")]
+    Count {
+        edit: usize,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("XML scalar edit cannot replace element children")]
+    MixedContent,
+    #[error("XML document element cannot be removed")]
+    RemoveRoot,
+    #[error("XML fragment must be one element that its key matches")]
+    Fragment,
+    #[error("XML could not be written: {0}")]
+    Write(String),
+}
+
+/// Later edits see earlier edits. A `PutChild` fragment must be exactly one element
+/// that matches its key where it is inserted.
+pub fn apply(
+    input: &[u8],
+    before: Option<&Sha256Digest>,
+    edits: &[XmlEdit],
+) -> Result<Vec<u8>, Error> {
+    if before.is_some_and(|before| Sha256Digest::bytes(input) != *before) {
+        return Err(Error::HashMismatch);
+    }
+    let source = std::str::from_utf8(input).map_err(|_| Error::InvalidXml)?;
+    let mut xot = Xot::new();
+    let document = xot.parse(source).map_err(|_| Error::InvalidXml)?;
+    for (index, edit) in edits.iter().enumerate() {
+        apply_one(&mut xot, document, index, edit)?;
+    }
+    let parameters = Parameters {
+        declaration: Some(Declaration {
+            encoding: Some("utf-8".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let output = xot
+        .serialize_xml_string(parameters, document)
+        .map_err(|error| Error::Write(error.to_string()))?;
+    Ok(output.into_bytes())
+}
+
+fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Result<(), Error> {
+    let invalid = |_| Error::InvalidXml;
+    match edit {
+        XmlEdit::SetText {
+            path,
+            expect,
+            value,
+        } => {
+            let nodes = select(xot, document, &path.selectors);
+            count(index, *expect, nodes.len())?;
+            for node in nodes {
+                if xot.children(node).any(|child| xot.is_element(child)) {
+                    return Err(Error::MixedContent);
+                }
+                // Comments and processing instructions stay; the text is replaced.
+                let texts: Vec<_> = xot.children(node).filter(|n| xot.is_text(*n)).collect();
+                for text in texts {
+                    xot.remove(text).map_err(invalid)?;
+                }
+                xot.append_text(node, value).map_err(invalid)?;
+            }
+        }
+        XmlEdit::Remove { path, expect } => {
+            let nodes = select(xot, document, &path.selectors);
+            count(index, *expect, nodes.len())?;
+            let root = xot.document_element(document).map_err(invalid)?;
+            for node in nodes {
+                if node == root {
+                    return Err(Error::RemoveRoot);
+                }
+                xot.remove(node).map_err(invalid)?;
+            }
+        }
+        XmlEdit::PutChild {
+            parent,
+            key,
+            expect,
+            element,
+        } => {
+            let parents = select(xot, document, &parent.selectors);
+            count(index, 1, parents.len())?;
+            let parent = parents[0];
+            let children: Vec<_> = xot
+                .children(parent)
+                .filter(|node| matches(xot, *node, key))
+                .collect();
+            // Without `expect`, a child to replace may or may not be there.
+            count(
+                index,
+                expect.unwrap_or(children.len().min(1)),
+                children.len(),
+            )?;
+            let fragment = fragment(xot, parent, element)?;
+            if !matches(xot, fragment, key) {
+                return Err(Error::Fragment);
+            }
+            match children.first() {
+                Some(child) => xot.replace(*child, fragment).map_err(invalid)?,
+                None => xot.append(parent, fragment).map_err(invalid)?,
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Parse `element` as it would read inside `parent`: with the namespace prefixes
+/// (and default namespace) in scope there. The element comes out detached.
+fn fragment(xot: &mut Xot, parent: Node, element: &str) -> Result<Node, Error> {
+    let mut declarations = String::new();
+    let xml = xot.xml_prefix();
+    for (prefix, namespace) in xot.namespaces_in_scope(parent) {
+        if prefix == xml {
+            continue;
+        }
+        let uri = escape(xot.namespace_str(namespace));
+        match xot.prefix_str(prefix) {
+            "" => declarations.push_str(&format!(" xmlns=\"{uri}\"")),
+            prefix => declarations.push_str(&format!(" xmlns:{prefix}=\"{uri}\"")),
+        }
+    }
+    let wrapped = xot
+        .parse(&format!("<fragment{declarations}>{element}</fragment>"))
+        .map_err(|_| Error::Fragment)?;
+    let wrapper = xot.document_element(wrapped).map_err(|_| Error::Fragment)?;
+    let children: Vec<_> = xot.children(wrapper).collect();
+    let [node] = children[..] else {
+        return Err(Error::Fragment);
+    };
+    if !xot.is_element(node) {
+        return Err(Error::Fragment);
+    }
+    xot.detach(node).map_err(|_| Error::Fragment)?;
+    Ok(node)
+}
+
+fn count(edit: usize, expected: usize, actual: usize) -> Result<(), Error> {
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(Error::Count {
+            edit,
+            expected,
+            actual,
+        })
+    }
+}
+
+/// Whether an xot name is `name`: its local name and namespace, if any.
+fn same(xot: &Xot, id: xot::NameId, name: &XmlName) -> bool {
+    let (local, uri) = xot.name_ns_str(id);
+    local == name.local && Some(uri).filter(|uri| !uri.is_empty()) == name.namespace.as_deref()
+}
+
+fn named(xot: &Xot, node: Node, name: &XmlName) -> bool {
+    xot.element(node)
+        .is_some_and(|element| same(xot, element.name(), name))
+}
+
+/// Text-only element whose text is `value`.
+fn scalar(xot: &Xot, node: Node, value: &str) -> bool {
+    if xot.children(node).any(|child| xot.is_element(child)) {
+        return false;
+    }
+    let text: String = xot
+        .children(node)
+        .filter_map(|child| xot.text_str(child))
+        .collect();
+    text == value
+}
+
+fn matches(xot: &Xot, node: Node, selector: &XmlMatch) -> bool {
+    if !named(xot, node, &selector.name) {
+        return false;
+    }
+    match &selector.predicate {
+        None => true,
+        Some(XmlPredicate::Attribute { name, value }) => xot
+            .attributes(node)
+            .iter()
+            .any(|(id, found)| same(xot, id, name) && found == value),
+        Some(XmlPredicate::Text { value }) => scalar(xot, node, value),
+        Some(XmlPredicate::ChildText { name, value }) => {
+            let mut found = xot.children(node).filter(|child| named(xot, *child, name));
+            match (found.next(), found.next()) {
+                (Some(child), None) => scalar(xot, child, value),
+                _ => false,
+            }
+        }
+    }
+}
+
+fn select(xot: &Xot, document: Node, path: &[XmlMatch]) -> Vec<Node> {
+    let mut nodes = vec![document];
+    for selector in path {
+        nodes = nodes
+            .into_iter()
+            .flat_map(|parent| xot.children(parent))
+            .filter(|node| matches(xot, *node, selector))
+            .collect();
+    }
+    nodes
+}
+
+/// A namespace URI as an attribute value.
+fn escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+}
