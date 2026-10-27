@@ -41,7 +41,7 @@ fn walk_stmt<'a>(
 ) -> Result<(), Error> {
     visitor.stmt(stmt, bound)?;
     match stmt {
-        Stmt::Step { body, .. } => body
+        Stmt::Step { body, .. } | Stmt::Within { body, .. } => body
             .iter()
             .try_for_each(|stmt| walk_stmt(stmt, visitor, bound)),
         Stmt::Let { name, value, body } => {
@@ -79,6 +79,7 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         | Expr::Prop { .. }
         | Expr::PropFiles { .. }
         | Expr::Partition(_)
+        | Expr::Class(_)
         | Expr::Asset(_) => Ok(()),
     }
 }
@@ -99,9 +100,10 @@ impl Expr {
                 Kind::Str
             }
             Self::Literal(Value::List(_)) => Kind::List,
-            Self::Literal(Value::Selection(_)) | Self::Select { .. } | Self::PropFiles { .. } => {
-                Kind::Selection
-            }
+            Self::Literal(Value::Selection(_))
+            | Self::Select { .. }
+            | Self::Class(_)
+            | Self::PropFiles { .. } => Kind::Selection,
             Self::Literal(Value::Bool(_))
             | Self::Partition(_)
             | Self::Asset(_)
@@ -174,6 +176,9 @@ impl Check {
         let own = match stmt {
             Stmt::Let { value, .. } => ron(value)?,
             Stmt::When { condition, .. } => ron(condition)?,
+            Stmt::Within {
+                package, before, ..
+            } => ron(&(package, before))?,
             other => ron(other)?,
         };
         match placeholders(&own)

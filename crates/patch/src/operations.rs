@@ -2,7 +2,7 @@ use crate::{Error, Target, compose::Context, layout};
 use model::{
     Entry, EntryKind, Name, PartitionTree, Provenance, RelativePath, Sha256Digest, SourceRef,
 };
-use recipe::{MetadataPolicy, MetadataRule, Overrides, tree::Transform};
+use recipe::{MetadataPolicy, MetadataRule, Overrides, Returns, tree::Transform};
 use std::path::Path;
 
 impl Target {
@@ -299,5 +299,27 @@ pub(crate) fn transformed(
         Transform::DelProp { key } => {
             android_property::remove(&text(bytes)?, key, None)?.into_bytes()
         }
+        Transform::StubMethod {
+            class,
+            method,
+            returns,
+        } => {
+            let stub = match returns {
+                Returns::Void => smali::Stub::Void,
+                Returns::Zero => smali::Stub::Zero,
+                Returns::One => smali::Stub::One,
+            };
+            smali::stub_method(&text(bytes)?, class, method, stub)?.into_bytes()
+        }
+        Transform::ReplaceMethod {
+            class,
+            method,
+            body,
+        } => smali::replace_method(&text(bytes)?, class, method, &asset(body)?)?.into_bytes(),
+        Transform::InsertMethod {
+            class,
+            method,
+            body,
+        } => smali::insert_method(&text(bytes)?, class, method, &asset(body)?)?.into_bytes(),
     })
 }

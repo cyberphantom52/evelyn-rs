@@ -35,6 +35,12 @@ pub enum Error {
     #[error("target IO: {0}")]
     Io(#[from] io::Error),
     #[error(transparent)]
+    Package(#[from] crate::package::Error),
+    #[error(transparent)]
+    Smali(#[from] smali::Error),
+    #[error(transparent)]
+    Tool(#[from] toolchain::Error),
+    #[error(transparent)]
     Value(#[from] recipe::value::ValueError),
     #[error("assertion failed: {0}")]
     Assertion(String),
@@ -98,6 +104,48 @@ impl Target {
             images,
             root: &self.root,
         }
+    }
+
+    /// An on-disk copy of a regular file (or hardlink to one) whose content is `before`,
+    /// for tools that need a path. Image contents are written out as a blob first.
+    pub(crate) fn content_path(
+        &mut self,
+        path: &RelativePath,
+        before: Option<&Sha256Digest>,
+        images: &Images,
+    ) -> Result<PathBuf, Error> {
+        let (canonical, content, sha256, size) = self.file(path)?;
+        if before.is_some_and(|before| sha256 != before) {
+            return Err(Error::Identity(path.clone()));
+        }
+        if let Content::Image { .. } = content {
+            let (canonical, content, sha256) = (canonical.clone(), content.clone(), sha256.clone());
+            let blob = self.new_blob();
+            let mut file = fs::File::create_new(self.blob_path(&blob))?;
+            io::copy(&mut self.store(images).open(&content, size)?, &mut file)?;
+            if let Some(entry) = self.tree.entries.get_mut(&canonical) {
+                entry.kind = EntryKind::File {
+                    content: Content::Blob(blob.clone()),
+                    sha256,
+                    size,
+                };
+            }
+            return Ok(self.blob_path(&blob));
+        }
+        Ok(self.store(images).blob_path(content))
+    }
+
+    /// Replace a file (and all of its hardlinks) with the contents of `replacement`.
+    pub(crate) fn replace_file(
+        &mut self,
+        path: &RelativePath,
+        replacement: &Path,
+        step: &Name,
+    ) -> Result<(), Error> {
+        let kind = self.write_blob(fs::File::open(replacement)?)?;
+        let canonical = self.file(path)?.0.clone();
+        self.accept_content(&canonical, kind, step);
+        Ok(())
     }
 
     /// Move a subtree into another target, preserving metadata and lineage.
