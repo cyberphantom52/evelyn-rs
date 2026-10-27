@@ -1,7 +1,8 @@
 //! Turn an edited copy of a file into recipe operations.
 
 use model::{DevicePath, RelativePath, Sha256Digest};
-use recipe::{ByteEdit, Operation};
+use recipe::{Hex, Operation};
+use std::collections::BTreeMap;
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,7 +58,7 @@ pub fn capture(
             if before.len() != after.len() {
                 return Err(Error::BinaryLength);
             }
-            let mut edits = Vec::new();
+            let mut edits = BTreeMap::new();
             let mut cursor = 0;
             while cursor < before.len() {
                 if before[cursor] == after[cursor] {
@@ -68,16 +69,12 @@ pub fn capture(
                 while cursor < before.len() && before[cursor] != after[cursor] {
                     cursor += 1;
                 }
-                edits.push(ByteEdit {
-                    offset: start as u64,
-                    expected: before[start..cursor].to_vec(),
-                    replacement: after[start..cursor].to_vec(),
-                });
+                edits.insert(start as u64, Hex(after[start..cursor].to_vec()));
             }
             (
                 vec![Operation::BinaryPatch {
                     target,
-                    before: None,
+                    before: Sha256Digest::bytes(before),
                     edits,
                 }],
                 None,

@@ -189,12 +189,12 @@ pub enum Operation {
     },
     /// Apply a unified diff (an asset) to a file and its hardlinks.
     TextPatch(DevicePath, RelativePath),
+    /// Overwrite bytes at offsets of a file whose content must be `before`.
     BinaryPatch {
         target: DevicePath,
-        /// Optional guard on the file's exact content before the edit.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        before: Option<Sha256Digest>,
-        edits: Vec<ByteEdit>,
+        before: Sha256Digest,
+        /// Offsets and the bytes written there, as hex: `{487572: "a9008052"}`.
+        edits: BTreeMap<u64, Hex>,
     },
     Xml {
         target: DevicePath,
@@ -290,12 +290,34 @@ pub enum Returns {
     One,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ByteEdit {
-    pub offset: u64,
-    pub expected: Vec<u8>,
-    pub replacement: Vec<u8>,
+/// Bytes written as hex, two digits each: `"a9008052"`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Hex(pub Vec<u8>);
+
+impl TryFrom<String> for Hex {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, String> {
+        let invalid = || format!("invalid hex bytes {text:?}");
+        if text.is_empty() || !text.len().is_multiple_of(2) {
+            return Err(invalid());
+        }
+        (0..text.len())
+            .step_by(2)
+            .map(|at| {
+                u8::from_str_radix(text.get(at..at + 2).ok_or_else(invalid)?, 16)
+                    .map_err(|_| invalid())
+            })
+            .collect::<Result<_, _>>()
+            .map(Self)
+    }
+}
+
+impl From<Hex> for String {
+    fn from(hex: Hex) -> Self {
+        hex.0.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -388,14 +410,17 @@ impl Operation {
                     _ => Ok(()),
                 }
             }
-            Self::BinaryPatch { edits, .. }
-                if edits.iter().any(|edit| {
-                    edit.expected.is_empty() || edit.expected.len() != edit.replacement.len()
-                }) =>
-            {
-                Err(Error::Invalid(
-                    "binary edits need equal nonempty expected and replacement bytes".into(),
-                ))
+            Self::BinaryPatch { edits, .. } => {
+                let mut end = 0;
+                for (offset, bytes) in edits {
+                    if *offset < end {
+                        return Err(Error::Invalid(format!(
+                            "binary edit at {offset} overlaps the one before it"
+                        )));
+                    }
+                    end = offset + bytes.0.len() as u64;
+                }
+                Ok(())
             }
             Self::Xml { edits, .. } => xml::validate(edits),
             Self::Package { edits, .. } => edits.iter().try_for_each(|edit| match edit {
