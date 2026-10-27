@@ -19,7 +19,7 @@ pub use profile::{
     Device, Port, Profile, ROM, STANDARD_SYSTEM, STOCK, Settings, SlotScheme, Stock, SuperLayout,
     VENDOR_SIDE, default_mount_point, system_mount_point,
 };
-pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate};
+pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate, XmlStep};
 
 use model::{DevicePath, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};

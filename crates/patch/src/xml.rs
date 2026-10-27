@@ -3,7 +3,7 @@
 //! the edits say.
 
 use model::Sha256Digest;
-use recipe::{XmlEdit, XmlMatch, XmlName, XmlPredicate};
+use recipe::{XmlEdit, XmlMatch, XmlName, XmlPredicate, XmlStep};
 use thiserror::Error;
 use xot::{
     Node, Xot,
@@ -98,23 +98,14 @@ fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Res
         }
         XmlEdit::Remove { path, expect } => {
             let nodes = select(xot, document, &path.selectors);
-            count(index, *expect, nodes.len())?;
+            if let Some(expect) = expect {
+                count(index, *expect, nodes.len())?;
+            }
             let root = xot.document_element(document).map_err(invalid)?;
-            for node in nodes {
-                if node == root {
+            for node in &nodes {
+                if *node == root {
                     return Err(Error::RemoveRoot);
                 }
-                xot.remove(node).map_err(invalid)?;
-            }
-            Ok(*expect > 0)
-        }
-        XmlEdit::RemoveAll { element } => {
-            let root = xot.document_element(document).map_err(invalid)?;
-            let nodes: Vec<_> = xot
-                .descendants(root)
-                .filter(|node| *node != root && matches(xot, *node, element))
-                .collect();
-            for node in &nodes {
                 // A match inside one already removed went with it.
                 if !xot.is_removed(*node) {
                     xot.remove(*node).map_err(invalid)?;
@@ -240,14 +231,23 @@ fn matches(xot: &Xot, node: Node, selector: &XmlMatch) -> bool {
     }
 }
 
-fn select(xot: &Xot, document: Node, path: &[XmlMatch]) -> Vec<Node> {
+fn select(xot: &Xot, document: Node, path: &[XmlStep]) -> Vec<Node> {
     let mut nodes = vec![document];
-    for selector in path {
-        nodes = nodes
-            .into_iter()
-            .flat_map(|parent| xot.children(parent))
-            .filter(|node| matches(xot, *node, selector))
-            .collect();
+    for step in path {
+        let mut next: Vec<Node> = Vec::new();
+        for parent in nodes {
+            // `descendants` starts with the node itself; a step selects below it.
+            let below: Vec<Node> = match step.descendant {
+                true => xot.descendants(parent).skip(1).collect(),
+                false => xot.children(parent).collect(),
+            };
+            for node in below {
+                if matches(xot, node, &step.matches) && !next.contains(&node) {
+                    next.push(node);
+                }
+            }
+        }
+        nodes = next;
     }
     nodes
 }
