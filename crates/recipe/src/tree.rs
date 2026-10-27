@@ -43,16 +43,12 @@ pub enum Stmt {
         selection: Expr,
         to: Option<DevicePath>,
     },
-    /// Give every entry selected, and what is below it, Android's defaults for
-    /// where it is on the device. They are worked out from the finished build's
-    /// own policy, as the device would; a later `SetMetadata` applies over them.
-    Reset { selection: Expr },
-    /// Set metadata on every entry selected; `pattern` names the selection in
-    /// reports.
+    /// Set metadata on every entry selected (not what is below it; for that,
+    /// select with `Below`). `pattern` names the selection in reports.
     SetMetadata {
         selection: Expr,
         pattern: String,
-        overrides: Overrides,
+        metadata: Assigned,
     },
     /// Transform the content of every file selected.
     Edit {
@@ -137,6 +133,8 @@ pub enum Expr {
     },
     /// The smali file defining a class (`Lcom/example/Name;`), inside a package.
     Class(String),
+    /// The entries selected and everything below them.
+    Below(Box<Expr>),
     /// The text of the one file selected, in the build or a firmware.
     Content(Box<Expr>),
     /// The files selected whose content contains `text`.
@@ -157,6 +155,17 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
     },
+}
+
+/// What `SetMetadata` gives an entry.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Assigned {
+    /// Android's defaults for where it is on the device, worked out from the
+    /// finished build's own policy as the device would; fields set later apply
+    /// over them.
+    Defaults,
+    /// These fields; the others stay.
+    Fields(Overrides),
 }
 
 /// Where a selection can look besides the build.

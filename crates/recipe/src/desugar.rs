@@ -3,7 +3,7 @@
 use crate::{
     Data, Error, Expr as Surface, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch,
     XmlName, XmlPath, XmlPredicate,
-    tree::{BinaryOp, Expr, Scope, Source, Stmt, Transform, Tree, UnaryOp},
+    tree::{Assigned, BinaryOp, Expr, Scope, Source, Stmt, Transform, Tree, UnaryOp},
     value::Value,
 };
 use model::RelativePath;
@@ -141,8 +141,10 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             };
             // What the copy put in the build, by where it went.
             let placed = to.as_ref().unwrap_or(pattern).to_string();
-            let reset = || Stmt::Reset {
-                selection: select(&placed, Scope::default()),
+            let defaults = || Stmt::SetMetadata {
+                selection: Expr::Below(Box::new(select(&placed, Scope::default()))),
+                pattern: placed.clone(),
+                metadata: Assigned::Defaults,
             };
             let found = expect(
                 select(
@@ -156,7 +158,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             );
             return match metadata {
                 Metadata::Copy => vec![found, copy],
-                Metadata::Default => vec![found, copy, reset()],
+                Metadata::Default => vec![found, copy, defaults()],
                 Metadata::Explicit {
                     uid,
                     gid,
@@ -165,16 +167,16 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 } => vec![
                     found,
                     copy,
-                    reset(),
+                    defaults(),
                     Stmt::SetMetadata {
                         selection: select(&placed, Scope::default()),
                         pattern: placed.clone(),
-                        overrides: crate::Overrides {
+                        metadata: Assigned::Fields(crate::Overrides {
                             uid: *uid,
                             gid: *gid,
                             mode: *mode,
                             selinux: selinux.clone(),
-                        },
+                        }),
                     },
                 ],
             };
@@ -224,12 +226,12 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         } => Stmt::SetMetadata {
             selection: select(pattern.as_ref(), Scope::default()),
             pattern: pattern.to_string(),
-            overrides: crate::Overrides {
+            metadata: Assigned::Fields(crate::Overrides {
                 uid: *uid,
                 gid: *gid,
                 mode: *mode,
                 selinux: selinux.clone(),
-            },
+            }),
         },
         Operation::SetProperty { key, value, target } => Stmt::Edit {
             selection: Expr::PropFiles {

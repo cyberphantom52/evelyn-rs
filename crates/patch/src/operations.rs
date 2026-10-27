@@ -153,14 +153,11 @@ impl Target {
         Ok(Some(true))
     }
 
-    /// Have `path`, and what is below it, get Android's defaults; what was set on
-    /// them before no longer applies.
+    /// Have `path` get Android's defaults; what was set on it before no longer
+    /// applies.
     pub(crate) fn reset(&mut self, path: &RelativePath) {
-        let below = format!("{path}/");
-        for entry in self.tree.entries.keys() {
-            if entry == path || entry.as_ref().starts_with(&below) {
-                self.derived.insert(entry.clone(), Vec::new());
-            }
+        if self.tree.entries.contains_key(path) {
+            self.derived.insert(path.clone(), Vec::new());
         }
     }
 
