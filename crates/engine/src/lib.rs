@@ -1,6 +1,12 @@
 //! Firmware composition planning and build execution.
 
+mod build;
+mod flashable;
+mod fstab;
 mod needs;
+mod output;
+mod super_image;
+pub use build::{BuildRequest, Built, build};
 
 use model::{Artifact, Filesystem, ImageFormat, Mounts, Name, Output, Sha256Digest, SourceRef};
 use recipe::{Profile, ROM, Recipe, STANDARD_SYSTEM, STOCK, VENDOR_SIDE};
@@ -14,10 +20,18 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("source {0} is not EROFS or ext4")]
+    SourceFilesystem(SourceRef),
+    #[error(transparent)]
+    Patch(#[from] patch::Error),
     #[error("invalid JSON record: {0}")]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
+    Zip(#[from] zip::result::ZipError),
+    #[error(transparent)]
     Android(#[from] android_fs::Error),
+    #[error(transparent)]
+    Toolchain(#[from] toolchain::Error),
     #[error("workspace IO: {0}")]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -26,6 +40,15 @@ pub enum Error {
     Model(#[from] model::Error),
     #[error("step IDs must be unique across recipes: {0}")]
     DuplicateStep(Name),
+    #[error("{fstab} mounts {partition}, which this build does not have")]
+    FstabPartition { fstab: String, partition: String },
+    #[error("{fstab} mounts {partition} as {accepted:?}, but it is built as {filesystem}")]
+    FstabFilesystem {
+        fstab: String,
+        partition: String,
+        filesystem: String,
+        accepted: Vec<String>,
+    },
     #[error("ZIP output flashes the stock firmware's images from {0}, which does not exist")]
     MissingFirmware(PathBuf),
     #[error("--stock has no {0}.img, which device.toml sets")]
@@ -38,6 +61,10 @@ pub enum Error {
         expected: String,
         found: Vec<String>,
     },
+    #[error(
+        "the system image has neither system/build.prop nor build.prop; set its mount_point in port.toml"
+    )]
+    SystemLayout,
     #[error("super and ZIP output need a [super] section in device.toml")]
     MissingLayout,
     #[error("missing regular recipe asset: {0}")]

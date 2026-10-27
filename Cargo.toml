@@ -12,6 +12,7 @@ publish = false
 android-fs = { path = "crates/android-fs" }
 android-property = { path = "crates/android-property" }
 model = { path = "crates/model" }
+patch = { path = "crates/patch" }
 recipe = { path = "crates/recipe" }
 toolchain = { path = "crates/toolchain" }
 thiserror = "2.0.21"
@@ -31,6 +32,8 @@ percent-encoding = "2.3.2"
 diffy = "0.5.2"
 xot = "0.31.2"
 tracing = "0.1.44"
+zip = { version = "9.0.5", default-features = false }
+zstd = { version = "0.14.3", default-features = false, features = ["zstdmt"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
