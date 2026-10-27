@@ -9,6 +9,8 @@ rust-version = "1.99.1"
 publish = false
 
 [workspace.dependencies]
+android-fs = { path = "crates/android-fs" }
+android-property = { path = "crates/android-property" }
 model = { path = "crates/model" }
 recipe = { path = "crates/recipe" }
 toolchain = { path = "crates/toolchain" }
