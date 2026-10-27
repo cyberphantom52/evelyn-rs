@@ -14,12 +14,14 @@ mod profile;
 pub mod tree;
 pub mod value;
 pub mod visit;
+mod xml;
 pub use expr::Expr;
 pub use metadata::{MetadataPolicy, MetadataSpec};
 pub use profile::{
     Device, Port, Profile, ROM, STANDARD_SYSTEM, STOCK, Settings, SlotScheme, Stock, SuperLayout,
     VENDOR_SIDE, default_mount_point, system_mount_point,
 };
+pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate};
 
 use model::{DevicePath, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
@@ -199,6 +201,13 @@ pub enum Operation {
         before: Option<Sha256Digest>,
         edits: Vec<ByteEdit>,
     },
+    Xml {
+        target: DevicePath,
+        /// Optional guard on the file's exact content before the edit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<Sha256Digest>,
+        edits: Vec<XmlEdit>,
+    },
     /// The file's content must have this SHA-256.
     AssertHash(DevicePath, Sha256Digest),
 }
@@ -322,6 +331,7 @@ impl Operation {
             Self::InstallTree { metadata, .. } => metadata
                 .iter()
                 .try_for_each(|rule| rule.metadata.resolve().map(drop)),
+            Self::Xml { edits, .. } => xml::validate(edits),
             _ => Ok(()),
         }
     }

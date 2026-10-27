@@ -29,6 +29,8 @@ pub enum Error {
     #[error(transparent)]
     Text(#[from] crate::text::Error),
     #[error(transparent)]
+    Xml(#[from] crate::xml::Error),
+    #[error(transparent)]
     Layout(#[from] crate::layout::Error),
     #[error("target IO: {0}")]
     Io(#[from] io::Error),
