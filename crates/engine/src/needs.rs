@@ -1,29 +1,25 @@
 //! What a recipe needs before it can apply: the assets it reads from its directory
 //! and the firmware partitions it reads, gathered by walking its primitive tree.
 
-use model::{DevicePath, Name, RelativePath, Sha256Digest};
+use model::{DevicePath, Name, RelativePath};
 use recipe::{
     Error, Firmware,
     tree::{Expr, Stmt, Transform},
     visit::Visitor,
 };
 
-/// Asset files (with the SHA-256 the recipe pins, if any) and asset directories.
+/// The asset files and directories a recipe reads.
 #[derive(Default)]
-pub(crate) struct Assets {
-    pub files: Vec<(RelativePath, Option<Sha256Digest>)>,
-    pub trees: Vec<RelativePath>,
-}
+pub(crate) struct Assets(pub Vec<RelativePath>);
 
 impl Visitor for Assets {
     fn stmt(&mut self, stmt: &Stmt, _bound: &[&Name]) -> Result<(), Error> {
         match stmt {
-            Stmt::Write { asset, sha256, .. } => self.files.push((asset.clone(), sha256.clone())),
-            Stmt::WriteTree { assets, .. } => self.trees.push(assets.clone()),
+            Stmt::Write { asset, .. } => self.0.push(asset.clone()),
             Stmt::Edit { transform, .. } => match transform {
-                Transform::TextPatch { patch, .. } => self.files.push((patch.clone(), None)),
+                Transform::TextPatch { patch, .. } => self.0.push(patch.clone()),
                 Transform::ReplaceMethod { body, .. } | Transform::InsertMethod { body, .. } => {
-                    self.files.push((body.clone(), None))
+                    self.0.push(body.clone())
                 }
                 _ => {}
             },

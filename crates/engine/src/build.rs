@@ -36,6 +36,8 @@ pub struct Built {
     pub skipped: Vec<patch::Skipped>,
     /// Patterns a step removed that matched nothing.
     pub absent: Vec<patch::Absent>,
+    /// `SetMetadata` patterns that set what was already there.
+    pub unchanged: Vec<patch::Absent>,
     /// ROM partitions the port does not take.
     pub ignored: Vec<Name>,
 }
@@ -56,6 +58,9 @@ pub fn build(request: &BuildRequest<'_>) -> Result<Built, Error> {
     }
     for absent in &report.absent {
         tracing::info!(step = %absent.step, pattern = %absent.pattern, "nothing to remove");
+    }
+    for unchanged in &report.unchanged {
+        tracing::warn!(step = %unchanged.step, pattern = %unchanged.pattern, "SetMetadata sets what is already there");
     }
     crate::fstab::check(&targets, &images)?;
     let output = request.work_dir.join("images");
@@ -85,6 +90,7 @@ pub fn build(request: &BuildRequest<'_>) -> Result<Built, Error> {
         outputs,
         skipped: report.skipped,
         absent: report.absent,
+        unchanged: report.unchanged,
         ignored: plan.ignored.clone(),
     })
 }
@@ -205,7 +211,7 @@ fn compose(
         };
         composition.apply(&planned.recipe, &context)?;
     }
-    let (trees, report) = composition.finish()?;
+    let (trees, report) = composition.finish(mounts, images)?;
     let targets = trees
         .into_iter()
         .map(|(name, tree)| {

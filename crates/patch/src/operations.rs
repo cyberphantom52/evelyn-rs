@@ -2,7 +2,7 @@ use crate::{Error, Target, compose::Context, layout};
 use model::{
     Entry, EntryKind, Name, PartitionTree, Provenance, RelativePath, Sha256Digest, SourceRef,
 };
-use recipe::{MetadataPolicy, MetadataRule, Overrides, Returns, tree::Transform};
+use recipe::{Metadata, Overrides, Returns, tree::Transform};
 use std::path::Path;
 
 impl Target {
@@ -43,15 +43,15 @@ impl Target {
     }
 
     /// Import `path` from a firmware's `source` tree: overwritten entries keep this
-    /// target's metadata and new ones the source's, then the overrides apply to
-    /// everything it brought in (`mode` to files only).
+    /// target's metadata; new ones have the source's, or with `Default` get
+    /// Android's defaults when the build is done.
     pub(crate) fn import(
         &mut self,
         source: &PartitionTree,
         from: &SourceRef,
         path: &RelativePath,
         to_path: &RelativePath,
-        item: &Overrides,
+        metadata: Metadata,
         step: &Name,
     ) -> Result<(), Error> {
         // A wildcard import keeps every match at its own path.
@@ -67,11 +67,6 @@ impl Target {
         } else {
             vec![(path.clone(), to_path.clone())]
         };
-        let label = item.selinux.as_ref().map(|label| {
-            let mut value = label.as_bytes().to_vec();
-            value.push(0);
-            value
-        });
         for (from_path, to_path) in pairs {
             let selected = layout::select(source, &from_path, &to_path, from)?;
             let mut changed = self.destination(&to_path, true, Some(source))?;
@@ -85,38 +80,34 @@ impl Target {
                 if let Some(previous) = previous {
                     entry.metadata = previous.metadata.clone();
                 }
-                if let Some(uid) = item.uid {
-                    entry.metadata.uid = uid;
-                }
-                if let Some(gid) = item.gid {
-                    entry.metadata.gid = gid;
-                }
-                if let Some(mode) = item.mode
-                    && !matches!(entry.kind, EntryKind::Directory)
-                {
-                    entry.metadata.mode = mode;
-                }
-                if let Some(label) = &label {
-                    entry
-                        .metadata
-                        .xattrs
-                        .insert("security.selinux".into(), label.clone());
-                }
             }
+            let earlier = self.created.clone();
             self.accept(changed, step);
+            if metadata == Metadata::Default {
+                continue;
+            }
+            // What the source has keeps the source's metadata: what it brought, and
+            // the parent directories made like the source's.
+            self.created.retain(|path| {
+                earlier.contains(path)
+                    || !selected.contains_key(path)
+                        && !source
+                            .entries
+                            .get(path)
+                            .is_some_and(|entry| matches!(entry.kind, EntryKind::Directory))
+            });
         }
         Ok(())
     }
 
-    /// Install an asset at `to`. This replaces the directory entry, not every
-    /// alias of its old inode.
+    /// Write `file` at `to`. This replaces the directory entry, not every alias of
+    /// its old inode. An overwritten file keeps its metadata; a new one is
+    /// given Android's defaults once accepted.
     pub(crate) fn install(
         &mut self,
         file: &Path,
         asset: &RelativePath,
-        sha256: &Option<Sha256Digest>,
         to: &RelativePath,
-        metadata: &MetadataPolicy,
     ) -> Result<PartitionTree, Error> {
         let previous = self.tree.entries.get(to);
         if previous.is_some_and(|entry| matches!(entry.kind, EntryKind::Directory)) {
@@ -124,73 +115,81 @@ impl Target {
                 "remove a directory explicitly before installing a file",
             ));
         }
-        if matches!(metadata, MetadataPolicy::Preserve) && previous.is_some() {
-            self.file(to)?;
-        }
-        let resolved = metadata.resolve(previous.map(|entry| &entry.metadata))?;
-        let mut lineage = previous
-            .map(|entry| entry.provenance.clone())
-            .unwrap_or_default();
+        let (metadata, mut lineage) = match previous {
+            Some(entry) => (entry.metadata.clone(), entry.provenance.clone()),
+            None => (self.tree.root.clone(), Vec::new()),
+        };
         let mut changed = self.destination(to, true, None)?;
         let bytes = std::fs::read(file)?;
-        let digest = Sha256Digest::bytes(&bytes);
-        if sha256.as_ref().is_some_and(|sha256| *sha256 != digest) {
-            return Err(Error::Identity(asset.clone()));
-        }
         lineage.push(Provenance::Asset {
             path: asset.clone(),
-            sha256: digest,
+            sha256: Sha256Digest::bytes(&bytes),
         });
         changed.entries.insert(
             to.clone(),
             Entry {
                 kind: self.write_blob(bytes.as_slice())?,
-                metadata: resolved,
+                metadata,
                 provenance: lineage,
             },
         );
         Ok(changed)
     }
 
-    /// Install every file under `assets` at the same path. Replaced files keep their
-    /// metadata; new files take the first matching rule's.
-    pub(crate) fn install_tree(
+    /// Set what `overrides` sets on the entry at `path`; whether that changed it.
+    pub(crate) fn set_metadata(
         &mut self,
-        recipe_dir: &Path,
-        assets: &RelativePath,
-        rules: &[MetadataRule],
+        path: &RelativePath,
+        overrides: &Overrides,
         step: &Name,
+    ) -> Result<bool, Error> {
+        let entry = self
+            .tree
+            .entries
+            .get_mut(path)
+            .ok_or_else(|| Error::Missing(path.clone()))?;
+        let mut metadata = entry.metadata.clone();
+        metadata.uid = overrides.uid.unwrap_or(metadata.uid);
+        metadata.gid = overrides.gid.unwrap_or(metadata.gid);
+        metadata.mode = overrides.mode.unwrap_or(metadata.mode);
+        // A label is the same with or without its terminating NUL, as for the kernel.
+        let current = metadata.xattrs.get("security.selinux");
+        if let Some(label) = &overrides.selinux
+            && current.is_none_or(|current| {
+                current.strip_suffix(&[0]).unwrap_or(current) != label.as_bytes()
+            })
+        {
+            let mut value = label.as_bytes().to_vec();
+            value.push(0);
+            metadata.xattrs.insert("security.selinux".into(), value);
+        }
+        if metadata == entry.metadata {
+            return Ok(false);
+        }
+        entry.metadata = metadata;
+        entry.provenance.push(Provenance::Step { id: step.clone() });
+        Ok(true)
+    }
+
+    /// Give every new entry Android's defaults for where it is on the device.
+    pub(crate) fn give_defaults(
+        &mut self,
+        partition: &Name,
+        mounts: &model::Mounts,
+        defaults: &crate::defaults::Defaults,
     ) -> Result<(), Error> {
-        for (relative, file) in files(&assets.resolve(recipe_dir))? {
-            let path = RelativePath::try_from(relative.clone())?;
-            let metadata = match self.tree.entries.get(&path) {
-                Some(entry) if matches!(entry.kind, EntryKind::Directory) => {
-                    return Err(Error::Unsupported(
-                        "remove a directory explicitly before installing a file",
-                    ));
-                }
-                Some(entry) => entry.metadata.clone(),
-                None => rules
-                    .iter()
-                    .find(|rule| layout::glob_matches(&rule.path, &path))
-                    .ok_or_else(|| Error::NoMetadataRule(path.clone()))?
-                    .metadata
-                    .resolve()?,
+        for path in std::mem::take(&mut self.created) {
+            let Some(entry) = self.tree.entries.get_mut(&path) else {
+                continue;
             };
-            let bytes = std::fs::read(&file)?;
-            let mut changed = self.destination(&path, true, None)?;
-            changed.entries.insert(
-                path,
-                Entry {
-                    kind: self.write_blob(bytes.as_slice())?,
-                    metadata,
-                    provenance: vec![Provenance::Asset {
-                        path: RelativePath::try_from(format!("{assets}/{relative}"))?,
-                        sha256: Sha256Digest::bytes(&bytes),
-                    }],
-                },
-            );
-            self.accept(changed, step);
+            let at = model::TargetPath {
+                partition: partition.clone(),
+                path: path.clone(),
+            };
+            let device = mounts
+                .device_path(&at)
+                .ok_or_else(|| Error::UnknownPartition(partition.clone()))?;
+            entry.metadata = defaults.metadata(&device, &entry.kind)?;
         }
         Ok(())
     }
@@ -234,6 +233,9 @@ impl Target {
     /// Adopt `changed`, recording the step on every new or altered entry.
     pub(crate) fn accept(&mut self, mut changed: PartitionTree, step: &Name) {
         for (path, entry) in &mut changed.entries {
+            if !self.tree.entries.contains_key(path) {
+                self.created.insert(path.clone());
+            }
             if !self.tree.entries.get(path).is_some_and(|previous| {
                 previous.kind == entry.kind
                     && previous.metadata == entry.metadata
@@ -247,7 +249,7 @@ impl Target {
 }
 
 /// Regular files under `root`, as (path relative to `root`, full path), sorted.
-fn files(root: &Path) -> Result<Vec<(String, std::path::PathBuf)>, Error> {
+pub(crate) fn files(root: &Path) -> Result<Vec<(String, std::path::PathBuf)>, Error> {
     let mut found = Vec::new();
     let mut pending = vec![(String::new(), root.to_path_buf())];
     while let Some((prefix, dir)) = pending.pop() {

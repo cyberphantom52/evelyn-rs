@@ -9,14 +9,12 @@
 
 mod desugar;
 mod expr;
-mod metadata;
 mod profile;
 pub mod tree;
 pub mod value;
 pub mod visit;
 mod xml;
 pub use expr::Expr;
-pub use metadata::{MetadataPolicy, MetadataSpec};
 pub use profile::{
     Device, Port, Profile, ROM, STANDARD_SYSTEM, STOCK, Settings, SlotScheme, Stock, SuperLayout,
     VENDOR_SIDE, default_mount_point, system_mount_point,
@@ -125,22 +123,16 @@ impl Firmware {
 pub enum Operation {
     /// Copy what `pattern` (a device path, globs allowed) matches in a firmware into
     /// the build, at the same path or at `to`, overwriting what is there. An
-    /// overwritten entry keeps the build's metadata and a new one the firmware's;
-    /// `uid`, `gid`, `mode` (files only) and `selinux` override either.
+    /// overwritten entry keeps the build's metadata; a new one has the firmware's,
+    /// or with `metadata: Default` Android's defaults.
     Import {
         from: Firmware,
         pattern: DevicePath,
         /// Where it goes, if not to the same path. A glob keeps its path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<DevicePath>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        uid: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        gid: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        mode: Option<u16>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        selinux: Option<String>,
+        #[serde(default, skip_serializing_if = "Metadata::is_copy")]
+        metadata: Metadata,
     },
     /// Remove what `pattern` matches from the build. A relative pattern is tried in
     /// the directory of every build partition the scope selects: those from the ROM
@@ -159,22 +151,25 @@ pub enum Operation {
         from: DevicePath,
         to: DevicePath,
     },
-    /// Write a recipe asset at `to`, overwriting whatever is there.
+    /// Write a recipe asset (a file, or a directory's files) at `to`, overwriting
+    /// what is there. Overwritten files keep their metadata; new entries get
+    /// Android's defaults.
     Install {
         asset: RelativePath,
-        /// Required unless the asset path is a template (`{name}`).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        sha256: Option<Sha256Digest>,
         to: DevicePath,
-        #[serde(default)]
-        metadata: MetadataPolicy,
     },
-    /// Install every file under the `assets` directory at the same path in `partition`.
-    /// Overwritten files keep their metadata; new files take the first matching rule's.
-    InstallTree {
-        assets: RelativePath,
-        partition: Name,
-        metadata: Vec<MetadataRule>,
+    /// Set metadata Android's defaults do not give, on every entry `pattern` (a
+    /// device path, globs allowed) matches in the build.
+    SetMetadata {
+        pattern: DevicePath,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uid: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gid: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selinux: Option<String>,
     },
     /// Set a property where it is defined, else add it. Without a target, where the
     /// device's value comes from, else in the last-loaded property file; with a
@@ -219,12 +214,26 @@ pub enum Operation {
     AssertHash(DevicePath, Sha256Digest),
 }
 
-/// Metadata an import sets on what it brings in, instead of keeping it.
+/// What new entries an import brings get: the firmware's metadata, or Android's
+/// defaults for where they are on the device.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Metadata {
+    #[default]
+    Copy,
+    Default,
+}
+
+impl Metadata {
+    fn is_copy(&self) -> bool {
+        *self == Self::Copy
+    }
+}
+
+/// The metadata `SetMetadata` sets; what it leaves unset stays.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Overrides {
     pub uid: Option<u32>,
     pub gid: Option<u32>,
-    /// Files only; directories keep their mode.
     pub mode: Option<u16>,
     pub selinux: Option<String>,
 }
@@ -260,13 +269,6 @@ impl From<PropertyTarget> for String {
 
 /// Metadata for new files whose path (relative to the partition) matches `path`,
 /// where `*` and `?` match within one component.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MetadataRule {
-    pub path: RelativePath,
-    pub metadata: MetadataSpec,
-}
-
 /// What a stubbed method returns: nothing (`V`), zero/false/null, or one/true.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Returns {
@@ -319,7 +321,6 @@ pub enum PackageEdit {
     Install {
         path: RelativePath,
         asset: RelativePath,
-        sha256: Sha256Digest,
     },
 }
 
@@ -327,10 +328,6 @@ impl Operation {
     /// Checks that can fail before any image is touched; the patch crate checks the rest on apply.
     fn validate(&self) -> Result<(), Error> {
         match self {
-            Self::Install {
-                metadata: MetadataPolicy::Explicit(spec),
-                ..
-            } => spec.resolve().map(drop),
             Self::SetProperty { key, value, .. } if !property_key(key) || value.contains('\n') => {
                 Err(Error::Invalid(format!("invalid property {key:?}")))
             }
@@ -355,25 +352,29 @@ impl Operation {
                 }
                 Ok(())
             }
-            Self::Import {
-                selinux: Some(label),
+            Self::SetMetadata {
+                uid,
+                gid,
+                mode,
+                selinux,
                 ..
-            } => MetadataSpec {
-                uid: 0,
-                gid: 0,
-                mode: 0,
-                selinux: label.clone(),
-                xattrs: Default::default(),
+            } => {
+                if uid.is_none() && gid.is_none() && mode.is_none() && selinux.is_none() {
+                    return Err(Error::Invalid("SetMetadata sets nothing".into()));
+                }
+                if mode.is_some_and(|mode| mode > 0o7777) {
+                    return Err(Error::Invalid(format!("invalid mode {mode:?}")));
+                }
+                match selinux {
+                    Some(label)
+                        if label.splitn(4, ':').filter(|part| !part.is_empty()).count() != 4
+                            || label.contains(|c: char| c == '\0' || c.is_whitespace()) =>
+                    {
+                        Err(Error::Invalid(format!("invalid SELinux label {label:?}")))
+                    }
+                    _ => Ok(()),
+                }
             }
-            .resolve()
-            .map(drop),
-            Self::Install {
-                asset,
-                sha256: None,
-                ..
-            } if !asset.as_ref().contains('{') => Err(Error::Invalid(format!(
-                "asset {asset} needs a sha256 unless its path is a template"
-            ))),
             Self::BinaryPatch { edits, .. }
                 if edits.iter().any(|edit| {
                     edit.expected.is_empty() || edit.expected.len() != edit.replacement.len()
@@ -383,9 +384,6 @@ impl Operation {
                     "binary edits need equal nonempty expected and replacement bytes".into(),
                 ))
             }
-            Self::InstallTree { metadata, .. } => metadata
-                .iter()
-                .try_for_each(|rule| rule.metadata.resolve().map(drop)),
             Self::Xml { edits, .. } => xml::validate(edits),
             Self::Package { edits, .. } => edits.iter().try_for_each(|edit| match edit {
                 PackageEdit::Xml { edits, .. } => xml::validate(edits),

@@ -60,9 +60,10 @@ fn walk_stmt<'a>(
         }
         Stmt::Delete { selection, .. }
         | Stmt::Copy { selection, .. }
+        | Stmt::SetMeta { selection, .. }
         | Stmt::Edit { selection, .. } => walk_expr(selection, visitor, bound),
         Stmt::Assert { condition, .. } => walk_expr(condition, visitor, bound),
-        Stmt::Move { .. } | Stmt::Write { .. } | Stmt::WriteTree { .. } => Ok(()),
+        Stmt::Move { .. } | Stmt::Write { .. } => Ok(()),
     }
 }
 
@@ -167,6 +168,7 @@ impl Check {
             }
             Stmt::Delete { selection, .. }
             | Stmt::Copy { selection, .. }
+            | Stmt::SetMeta { selection, .. }
             | Stmt::Edit { selection, .. } => {
                 expect(selection.kind(), &[Kind::Selection], "a selection")?
             }

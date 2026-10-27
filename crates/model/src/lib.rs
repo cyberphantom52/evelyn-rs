@@ -144,6 +144,15 @@ impl Mounts {
         })
     }
 
+    /// The partition mounted at exactly `path`, if one is.
+    pub fn partition_at(&self, path: &DevicePath) -> Option<&Name> {
+        let path = path.to_string();
+        self.0
+            .iter()
+            .find(|(mount, _)| mount.trim_end_matches('/') == path.trim_end_matches('/'))
+            .map(|(_, partition)| partition)
+    }
+
     /// The device path of `path` in `partition`, if the partition is mounted.
     pub fn device_path(&self, target: &TargetPath) -> Option<DevicePath> {
         let (mount, _) = self.0.iter().find(|(_, p)| *p == target.partition)?;

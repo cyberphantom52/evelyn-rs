@@ -368,7 +368,6 @@ impl Visitor for Partitions<'_> {
                 self.step = Some(id.clone());
                 Ok(())
             }
-            Stmt::WriteTree { partition, .. } => self.known(partition.as_ref()),
             _ => Ok(()),
         }
     }

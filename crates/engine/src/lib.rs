@@ -13,7 +13,7 @@ pub use authoring::{
 };
 pub use build::{BuildRequest, Built, build};
 
-use model::{Artifact, Filesystem, ImageFormat, Mounts, Name, Output, Sha256Digest, SourceRef};
+use model::{Artifact, Filesystem, ImageFormat, Mounts, Name, Output, SourceRef};
 use recipe::{Profile, ROM, Recipe, STANDARD_SYSTEM, STOCK, VENDOR_SIDE};
 use serde::Serialize;
 use std::{
@@ -78,8 +78,6 @@ pub enum Error {
     MissingLayout,
     #[error("missing regular recipe asset: {0}")]
     MissingAsset(PathBuf),
-    #[error("recipe asset {0} does not match its declared SHA-256")]
-    AssetHash(PathBuf),
     #[error("invalid authoring request: {0}")]
     Authoring(&'static str),
 }
@@ -154,24 +152,14 @@ impl Plan {
             let assets = recipe_path.parent().unwrap_or(Path::new("."));
             let mut needed = needs::Assets::default();
             recipe.tree()?.walk(&mut needed)?;
-            for tree in &needed.trees {
-                if !assets.join(tree.as_ref()).is_dir() {
-                    return Err(Error::MissingAsset(assets.join(tree.as_ref())));
-                }
-            }
-            for (asset, sha256) in &needed.files {
+            for asset in &needed.0 {
                 // A templated asset is looked up when its step runs.
                 if asset.as_ref().contains('{') {
                     continue;
                 }
                 let asset = assets.join(asset.as_ref());
-                if !asset.is_file() {
+                if !asset.exists() {
                     return Err(Error::MissingAsset(asset));
-                }
-                if let Some(sha256) = sha256
-                    && Sha256Digest::bytes(&fs::read(&asset)?) != *sha256
-                {
-                    return Err(Error::AssetHash(asset));
                 }
             }
             recipes.push(PlannedRecipe {
