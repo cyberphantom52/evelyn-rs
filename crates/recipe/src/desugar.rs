@@ -177,7 +177,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 key: key.clone(),
                 target: target.clone(),
                 create: true,
-                every: false,
+                every: target.is_none(),
             },
             transform: Transform::SetProp {
                 key: key.clone(),
