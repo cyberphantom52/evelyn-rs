@@ -1,0 +1,162 @@
+#!/sbin/sh
+
+UI_OUTPUT_FD="/proc/self/fd/$2"
+PACKAGE_ZIP="$3"
+BLOCK_DEVICE_DIR="/dev/block/bootdevice/by-name"
+TARGET_DEVICE_ID="INSERT_DEVICE_ID"
+TEMP_BINARY_DIR="/tmp/bin"
+ZSTD_BINARY="${TEMP_BINARY_DIR}/zstd"
+ACTIVE_SLOT_SUFFIX="$(getprop ro.boot.slot_suffix)"
+
+ui_print() {
+    printf 'ui_print %s\nui_print\n' "$*" >> "$UI_OUTPUT_FD"
+}
+
+abort_install() {
+    ui_print "$*"
+    exit 1
+}
+
+SetupZstd () {
+    mkdir -p "$TEMP_BINARY_DIR" || abort_install "Failed to create temporary directory."
+    unzip -p "$PACKAGE_ZIP" "META-INF/zstd" > "$ZSTD_BINARY" || abort_install "Failed to extract zstd."
+    chmod 0755 "$ZSTD_BINARY" || abort_install "Failed to set zstd permissions."
+}
+
+WaitForVolumeChoice () {
+    command -v getevent >/dev/null 2>&1 || abort_install "getevent is not available in recovery."
+
+    while :
+    do
+        volume_key_event="$(getevent -lc 1 2>/dev/null | grep VOLUME | grep ' DOWN')"
+
+        case "$volume_key_event" in
+            *VOLUMEUP*)
+                return 0
+                ;;
+            *VOLUMEDOWN*)
+                return 1
+                ;;
+        esac
+    done
+}
+
+DeviceCheck () {
+    local detected_device
+
+    detected_device="$(getprop ro.product.device)"
+    if [ "$detected_device" != "$TARGET_DEVICE_ID" ]; then
+        abort_install "Build is for ${TARGET_DEVICE_ID}. Detected ${detected_device}."
+    fi
+
+    ui_print "${detected_device} detected"
+    ui_print "Device confirmed"
+}
+
+ZipHasEntry () {
+    unzip -l "$PACKAGE_ZIP" "$1" >/dev/null 2>&1
+}
+
+SelectFirmwareTarget () {
+    ui_print "Firmware images detected."
+    ui_print "Press Vol+ to flash firmware to both slots."
+    ui_print "Press Vol- to flash firmware to the active slot."
+
+    if WaitForVolumeChoice; then
+        ui_print "Firmware target: both slots."
+        return 0
+    fi
+
+    ui_print "Firmware target: active slot."
+    return 1
+}
+
+FlashEntry () {
+    local zip_image_path="$1"
+    local block_device_path="$2"
+
+    if ! ZipHasEntry "$zip_image_path"; then
+        abort_install "Image not found: ${zip_image_path}"
+    fi
+
+    if [ ! -e "$block_device_path" ]; then
+        abort_install "Block device not found: ${block_device_path}"
+    fi
+
+    ui_print "Flashing ${zip_image_path} to ${block_device_path}"
+
+    if ! unzip -p "$PACKAGE_ZIP" "$zip_image_path" | "$ZSTD_BINARY" -d -c > "$block_device_path"; then
+        abort_install "Failed to flash ${zip_image_path}"
+    fi
+}
+
+FlashBuild() {
+    local build_partition_list_path="/tmp/build_partition_list.txt"
+
+    if ZipHasEntry "super.img.zst"; then
+        FlashEntry "super.img.zst" "${BLOCK_DEVICE_DIR}/super"
+        return 0
+    fi
+
+    if ! ZipHasEntry "partition_list.txt"; then
+        return 0
+    fi
+
+    if ! unzip -p "$PACKAGE_ZIP" "partition_list.txt" > "$build_partition_list_path" 2>/dev/null; then
+        abort_install "Failed to extract partition_list.txt"
+    fi
+
+    while IFS= read -r partition_name || [ -n "$partition_name" ]
+    do
+        [ -n "$partition_name" ] || continue
+
+        zip_image_path="${partition_name}.img.zst"
+        block_device_path="${BLOCK_DEVICE_DIR}/${partition_name}${ACTIVE_SLOT_SUFFIX}"
+        FlashEntry "$zip_image_path" "$block_device_path"
+    done < "$build_partition_list_path"
+}
+
+FlashFirmware () {
+    local firmware_partition_list_path="/tmp/firmware_partition_list.txt"
+    local flash_to_both_slots=0
+
+    if ! ZipHasEntry "firmware-update/partition_list.txt"; then
+        return 0
+    fi
+
+    if ! unzip -p "$PACKAGE_ZIP" "firmware-update/partition_list.txt" > "$firmware_partition_list_path" 2>/dev/null; then
+        abort_install "Failed to extract firmware partition list"
+    fi
+
+    if SelectFirmwareTarget; then
+        flash_to_both_slots=1
+    fi
+
+    while IFS= read -r partition_name || [ -n "$partition_name" ]
+    do
+        [ -n "$partition_name" ] || continue
+
+        zip_image_path="firmware-update/${partition_name}.img.zst"
+        block_device_path="${BLOCK_DEVICE_DIR}/${partition_name}"
+        if [ "$flash_to_both_slots" = "1" ]; then
+            FlashEntry "$zip_image_path" "${block_device_path}_a"
+            FlashEntry "$zip_image_path" "${block_device_path}_b"
+        else
+            FlashEntry "$zip_image_path" "${block_device_path}${ACTIVE_SLOT_SUFFIX}"
+        fi
+    done < "$firmware_partition_list_path"
+}
+
+start_time_seconds="$(date +%s 2>/dev/null)"
+
+SetupZstd
+DeviceCheck
+FlashFirmware
+FlashBuild
+
+if [ -n "$start_time_seconds" ]; then
+    end_time_seconds="$(date +%s 2>/dev/null)"
+    if [ -n "$end_time_seconds" ]; then
+        ui_print "Installed in $((end_time_seconds - start_time_seconds)) seconds"
+    fi
+fi
