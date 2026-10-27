@@ -229,18 +229,42 @@ impl Scope<'_> {
             let path = pattern.strip_prefix('/').ok_or(Error::Unsupported(
                 "paths inside a package start at its root, /",
             ))?;
-            let path = RelativePath::try_from(path.to_owned())?;
-            if layout::is_glob(&path) {
-                return Err(Error::Unsupported("globs inside a package"));
+            // Segment by segment, reading only the directories a glob needs.
+            let mut found = vec![String::new()];
+            for segment in path.split('/') {
+                let mut next = Vec::new();
+                for dir in found {
+                    let join = |name: &str| match dir.is_empty() {
+                        true => name.to_owned(),
+                        false => format!("{dir}/{name}"),
+                    };
+                    if segment.contains(['*', '?']) {
+                        let Ok(entries) = std::fs::read_dir(package.decoded.join(&dir)) else {
+                            continue;
+                        };
+                        for entry in entries.flatten() {
+                            let name = entry.file_name().to_string_lossy().into_owned();
+                            if layout::wildcard(segment, &name) {
+                                next.push(join(&name));
+                            }
+                        }
+                    } else if package.decoded.join(join(segment)).exists() {
+                        next.push(join(segment));
+                    }
+                }
+                found = next;
             }
-            return Ok(match path.resolve(&package.decoded).exists() {
-                true => vec![Located {
-                    place: Place::Package,
-                    partition: package.partition.clone(),
-                    path,
-                }],
-                false => Vec::new(),
-            });
+            found.sort();
+            return found
+                .into_iter()
+                .map(|path| {
+                    Ok(Located {
+                        place: Place::Package,
+                        partition: package.partition.clone(),
+                        path: RelativePath::try_from(path)?,
+                    })
+                })
+                .collect();
         }
         let paths = if pattern.starts_with('/') {
             Composition::resolve(
@@ -392,22 +416,6 @@ impl Scope<'_> {
                 create,
                 every,
             } => Value::Selection(self.prop_files(key, target.as_ref(), *create, *every)?),
-            Expr::Class(class) => {
-                let package = self
-                    .package
-                    .ok_or(Error::Unsupported("Class selects inside a package"))?;
-                let found = crate::package::locate(&package.decoded, class)?;
-                Value::Selection(
-                    found
-                        .into_iter()
-                        .map(|path| Located {
-                            place: Place::Package,
-                            partition: package.partition.clone(),
-                            path,
-                        })
-                        .collect(),
-                )
-            }
             Expr::Hash(inner) => {
                 let selection = self.eval(inner)?;
                 let [entry] = selection.as_selection()? else {

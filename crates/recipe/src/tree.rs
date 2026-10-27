@@ -131,8 +131,6 @@ pub enum Expr {
         create: bool,
         every: bool,
     },
-    /// The smali file defining a class (`Lcom/example/Name;`), inside a package.
-    Class(String),
     /// The entries selected and everything below them.
     Below(Box<Expr>),
     /// The text of the one file selected, in the build or a firmware.

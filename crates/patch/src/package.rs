@@ -16,8 +16,6 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("class {class} is defined in {count} smali files; expected one")]
-    Class { class: String, count: usize },
     #[error("{0}: {1}")]
     Io(PathBuf, #[source] std::io::Error),
 }
@@ -89,36 +87,6 @@ impl Visitor for Resources {
             self.note(pattern);
         }
         Ok(())
-    }
-}
-
-/// Where `Lcom/example/Name;` is defined: `smali*/com/example/Name.smali`, in at
-/// most one dex.
-pub(crate) fn locate(decoded: &Path, class: &str) -> Result<Option<RelativePath>, Error> {
-    let none = || Error::Class {
-        class: class.into(),
-        count: 0,
-    };
-    let name = class
-        .strip_prefix('L')
-        .and_then(|name| name.strip_suffix(';'))
-        .ok_or_else(none)?;
-    let mut found = Vec::new();
-    for entry in fs::read_dir(decoded).map_err(io(decoded))?.flatten() {
-        let dex = entry.file_name().to_string_lossy().into_owned();
-        if dex.starts_with("smali") {
-            let path = RelativePath::try_from(format!("{dex}/{name}.smali")).map_err(|_| none())?;
-            if path.resolve(decoded).is_file() {
-                found.push(path);
-            }
-        }
-    }
-    match found.len() {
-        0 | 1 => Ok(found.pop()),
-        count => Err(Error::Class {
-            class: class.into(),
-            count,
-        }),
     }
 }
 
