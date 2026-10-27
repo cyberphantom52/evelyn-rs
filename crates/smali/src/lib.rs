@@ -28,6 +28,17 @@ pub enum Error {
     Replacement(String),
 }
 
+/// What a stubbed method returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stub {
+    /// `return-void`, for `V` methods.
+    Void,
+    /// `0`/`false`/`null` for the method's return type.
+    Zero,
+    /// `1`/`true`, for `Z`, `B`, `S`, `C` and `I` methods.
+    One,
+}
+
 fn find<'a>(class: &'a Class<'a>, name: &str, signature: &str) -> Result<&'a Method<'a>, Error> {
     if class.name != name {
         return Err(Error::Class {
@@ -101,6 +112,43 @@ pub fn insert_method(
         output.push('\n');
     }
     Ok(output)
+}
+
+/// Replace the body of method `signature` so it only returns `stub`.
+pub fn stub_method(
+    source: &str,
+    class: &str,
+    signature: &str,
+    stub: Stub,
+) -> Result<String, Error> {
+    let parsed = parse(source)?;
+    let method = find(&parsed, class, signature)?;
+    let ret = method.return_type();
+    let body = match (stub, ret.as_bytes().first()) {
+        (Stub::Void, _) if ret == "V" => "    .locals 0\n\n    return-void".to_owned(),
+        (Stub::Zero, Some(b'J' | b'D')) => {
+            "    .locals 2\n\n    const-wide/16 v0, 0x0\n\n    return-wide v0".to_owned()
+        }
+        (Stub::Zero, Some(b'L' | b'[')) => {
+            "    .locals 1\n\n    const/4 v0, 0x0\n\n    return-object v0".to_owned()
+        }
+        (Stub::Zero | Stub::One, Some(b'Z' | b'B' | b'S' | b'C' | b'I')) => format!(
+            "    .locals 1\n\n    const/4 v0, {}\n\n    return v0",
+            if stub == Stub::One { "0x1" } else { "0x0" }
+        ),
+        (Stub::Zero, Some(b'F')) => {
+            "    .locals 1\n\n    const/4 v0, 0x0\n\n    return v0".to_owned()
+        }
+        _ => {
+            return Err(Error::Replacement(format!(
+                "{signature}: cannot stub a {ret} method that way"
+            )));
+        }
+    };
+    let header = &source[method.span.start..];
+    let header = &header[..header.find('\n').unwrap_or(header.len())];
+    let text = format!("{header}\n{body}\n.end method\n");
+    Ok(splice(source, method.span.clone(), &text))
 }
 
 /// The replacement's signature, which must be `expected` when that is non-empty.
