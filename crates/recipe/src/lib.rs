@@ -171,10 +171,10 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         selinux: Option<String>,
     },
-    /// Set a property where it is defined, else add it. Without a target, where the
-    /// device's value comes from, else in the last-loaded property file; with a
-    /// partition, every file in it defining the key, else its `build.prop`; with
-    /// `partition:path`, that file.
+    /// Set a property everywhere it is defined, else add it: without a target in
+    /// every partition, else in the last-loaded property file; with a partition,
+    /// in every file in it defining the key, else its `build.prop`; with a file,
+    /// in that file.
     SetProperty {
         key: String,
         value: String,
