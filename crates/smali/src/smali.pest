@@ -1,0 +1,76 @@
+// Smali, as written by baksmali/apktool: one statement per line.
+
+WHITESPACE = _{ " " | "\t" }
+COMMENT    = _{ "#" ~ (!NEWLINE ~ ANY)* }
+eol        = _{ NEWLINE | EOI }
+
+file = { SOI ~ (class_item | NEWLINE)* ~ EOI }
+
+class_item = _{ class | super_class | source | implements | debug | annotation | field | method }
+
+class      = { ".class" ~ access* ~ type_desc ~ eol }
+super_class = { ".super" ~ type_desc ~ eol }
+source     = { ".source" ~ string ~ eol }
+implements = { ".implements" ~ type_desc ~ eol }
+debug      = { ".debug" ~ literal ~ eol }
+
+access = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHA_LOWER | "-")* ~ &(WHITESPACE) }
+
+// Annotations keep their bodies as raw lines; only their extent matters here.
+annotation     = { ".annotation" ~ raw_rest ~ NEWLINE ~ annotation_line* ~ ".end annotation" ~ eol }
+annotation_line = _{ !(".end annotation") ~ raw_line }
+
+field = {
+    ".field" ~ access* ~ member_name ~ ":" ~ type_desc ~ ("=" ~ raw_rest)? ~ eol
+    ~ (NEWLINE* ~ annotation ~ (NEWLINE | annotation)* ~ ".end field" ~ eol)?
+}
+
+method = {
+    ".method" ~ access* ~ method_name ~ method_desc ~ eol
+    ~ statement*
+    ~ ".end method" ~ eol
+}
+
+statement = _{
+    NEWLINE | label_def | param | annotation | packed_switch | sparse_switch | array_data
+    | directive | instruction
+}
+
+label_def = { label ~ eol }
+param     = {
+    ".param" ~ register ~ ("," ~ string)? ~ eol
+    ~ (NEWLINE* ~ annotation ~ (NEWLINE | annotation)* ~ ".end param" ~ eol)?
+}
+packed_switch = { ".packed-switch" ~ literal ~ NEWLINE ~ (NEWLINE | label ~ eol)* ~ ".end packed-switch" ~ eol }
+sparse_switch = { ".sparse-switch" ~ NEWLINE ~ (NEWLINE | literal ~ "->" ~ label ~ eol)* ~ ".end sparse-switch" ~ eol }
+array_data    = { ".array-data" ~ literal ~ NEWLINE ~ (NEWLINE | literal+ ~ eol)* ~ ".end array-data" ~ eol }
+
+// .registers, .locals, .line, .local, .end local, .restart local, .catch, .catchall, ...
+directive      = { !(".end" ~ "method") ~ directive_name ~ raw_rest ~ eol }
+directive_name = @{ "." ~ (ASCII_ALPHA | "-")+ }
+
+instruction = { opcode ~ (operand ~ ("," ~ operand)*)? ~ eol }
+opcode      = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "-" | "/")* }
+
+operand = _{
+    register_range | register_list | method_ref | field_ref | string | label
+    | type_desc | literal | raw_operand
+}
+register       = @{ ("v" | "p") ~ ASCII_DIGIT+ }
+register_list  = { "{" ~ (register ~ ("," ~ register)*)? ~ "}" }
+register_range = { "{" ~ register ~ ".." ~ register ~ "}" }
+method_ref     = { type_desc ~ "->" ~ method_name ~ method_desc }
+field_ref      = { type_desc ~ "->" ~ member_name ~ ":" ~ type_desc }
+label          = @{ ":" ~ (ASCII_ALPHANUMERIC | "_" | "$")+ }
+
+type_desc  = @{ "["* ~ (("L" ~ (!(";" | NEWLINE) ~ ANY)+ ~ ";") | ("V" | "Z" | "B" | "S" | "C" | "I" | "J" | "F" | "D")) }
+method_desc = @{ "(" ~ (!")" ~ ANY)* ~ ")" ~ type_desc }
+method_name = @{ "<init>" | "<clinit>" | member_name }
+member_name = @{ (!(":" | "(" | "," | WHITESPACE | NEWLINE | "->") ~ ANY)+ }
+
+string  = @{ "\"" ~ ("\\" ~ ANY | !("\"" | NEWLINE) ~ ANY)* ~ "\"" }
+literal = @{ "-"? ~ ASCII_ALPHANUMERIC ~ (ASCII_ALPHANUMERIC | "." | "+" | "-")* }
+raw_operand = @{ (!("," | NEWLINE | "#") ~ ANY)+ }
+
+raw_rest = @{ (!NEWLINE ~ ANY)* }
+raw_line = @{ (!NEWLINE ~ ANY)* ~ NEWLINE }
