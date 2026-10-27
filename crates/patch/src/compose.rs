@@ -3,10 +3,12 @@
 //! and in [`crate::scope`], whatever surface operation it came from.
 
 use crate::{Error, Images, Target, defaults::Defaults, package::Opened, scope::Scope};
-use model::{DevicePath, Mounts, Name, PartitionTree, RelativePath, SourceRef, TargetPath};
+use model::{
+    DevicePath, EntryKind, Mounts, Name, PartitionTree, RelativePath, SourceRef, TargetPath,
+};
 use recipe::{
-    Firmware, Recipe, STANDARD_SYSTEM, VENDOR_SIDE,
-    tree::{Expr, Stmt},
+    Data, Firmware, Recipe, STANDARD_SYSTEM, VENDOR_SIDE,
+    tree::{Expr, Stmt, Transform},
     value::{Place, Value},
 };
 use serde::Serialize;
@@ -383,6 +385,12 @@ impl Composition {
                         pattern: ron(selection),
                     });
                 }
+                let transform = &match transform {
+                    Transform::Append(Data::File { from, path }) => {
+                        Transform::Append(Data::Text(firmware_text(*from, path, context)?))
+                    }
+                    other => other.clone(),
+                };
                 for entry in selected {
                     match (entry.place, &self.package) {
                         (Place::Build, _) => self.target(&entry.partition)?.transform(
@@ -533,4 +541,39 @@ impl Composition {
 
 fn ron(value: &impl Serialize) -> String {
     ron::to_string(value).unwrap_or_default()
+}
+
+/// A firmware file's content, as text.
+fn firmware_text(
+    from: Firmware,
+    path: &DevicePath,
+    context: &Context<'_>,
+) -> Result<String, Error> {
+    let [at] = <[TargetPath; 1]>::try_from(context.mounts.resolve(path))
+        .map_err(|_| Error::Unsupported("Append reads one firmware file"))?;
+    let source = crate::scope::source_of(from, &at.partition)?;
+    let tree = context
+        .sources
+        .get(&source)
+        .ok_or_else(|| Error::UnknownSource(source.clone()))?;
+    let mut entry = tree
+        .entries
+        .get(&at.path)
+        .ok_or_else(|| Error::Missing(at.path.clone()))?;
+    if let EntryKind::Hardlink { target } = &entry.kind {
+        entry = tree
+            .entries
+            .get(target)
+            .ok_or_else(|| Error::Missing(target.clone()))?;
+    }
+    let EntryKind::File { content, size, .. } = &entry.kind else {
+        return Err(Error::Unsupported("Append reads a regular file"));
+    };
+    let store = android_fs::Store {
+        images: context.images,
+        root: Path::new("/"),
+    };
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut store.open(content, *size)?, &mut bytes)?;
+    String::from_utf8(bytes).map_err(|_| Error::Unsupported("appended files must be UTF-8"))
 }

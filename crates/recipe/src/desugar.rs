@@ -232,6 +232,10 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             before: before.clone(),
             body: edits.iter().map(package_edit).collect(),
         },
+        Operation::Append { target, content } => Stmt::Edit {
+            selection: select(target.as_ref(), Scope::default()),
+            transform: Transform::Append(content.clone()),
+        },
         Operation::AssertHash(path, sha256) => Stmt::Assert {
             condition: Expr::Binary {
                 op: BinaryOp::Eq,

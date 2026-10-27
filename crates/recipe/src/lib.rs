@@ -212,6 +212,11 @@ pub enum Operation {
     },
     /// The file's content must have this SHA-256.
     AssertHash(DevicePath, Sha256Digest),
+    /// Add `content` at the end of a file, on a line of its own.
+    Append {
+        target: DevicePath,
+        content: Data,
+    },
 }
 
 /// What new entries an import brings get: the firmware's metadata, or Android's
@@ -227,6 +232,14 @@ impl Metadata {
     fn is_copy(&self) -> bool {
         *self == Self::Copy
     }
+}
+
+/// What `Append` adds: text, or a firmware file's content.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum Data {
+    Text(String),
+    File { from: Firmware, path: DevicePath },
 }
 
 /// The metadata `SetMetadata` sets; what it leaves unset stays.

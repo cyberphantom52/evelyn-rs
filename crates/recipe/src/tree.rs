@@ -4,7 +4,7 @@
 //! however many surface forms use it.
 
 use crate::{
-    ByteEdit, Firmware, Metadata, Overrides, PropertyTarget, Returns, XmlEdit, value::Value,
+    ByteEdit, Data, Firmware, Metadata, Overrides, PropertyTarget, Returns, XmlEdit, value::Value,
 };
 use model::{DevicePath, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
@@ -88,6 +88,8 @@ pub enum Transform {
     DelProp {
         key: String,
     },
+    /// Add text, or a firmware file's content, at the end, on a line of its own.
+    Append(Data),
     /// Make a smali method only return `returns`.
     StubMethod {
         class: String,

@@ -2,7 +2,7 @@ use crate::{Error, Target, compose::Context, layout};
 use model::{
     Entry, EntryKind, Name, PartitionTree, Provenance, RelativePath, Sha256Digest, SourceRef,
 };
-use recipe::{Metadata, Overrides, Returns, tree::Transform};
+use recipe::{Data, Metadata, Overrides, Returns, tree::Transform};
 use std::path::Path;
 
 impl Target {
@@ -297,6 +297,22 @@ pub(crate) fn transformed(
         }
         Transform::SetProp { key, value } => {
             android_property::set(&text(bytes)?, key, value, None)?.into_bytes()
+        }
+        Transform::Append(Data::Text(data)) => {
+            let mut text = text(bytes)?;
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str(data);
+            if !data.ends_with('\n') {
+                text.push('\n');
+            }
+            text.into_bytes()
+        }
+        Transform::Append(Data::File { .. }) => {
+            return Err(Error::Unsupported(
+                "a firmware file is read before it is appended",
+            ));
         }
         Transform::DelProp { key } => {
             android_property::remove(&text(bytes)?, key, None)?.into_bytes()
