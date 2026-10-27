@@ -10,6 +10,7 @@ publish = false
 
 [workspace.dependencies]
 model = { path = "crates/model" }
+recipe = { path = "crates/recipe" }
 toolchain = { path = "crates/toolchain" }
 thiserror = "2.0.21"
 pest = "2.9.4"
@@ -24,6 +25,7 @@ fs-ext4 = { package = "rust-fs-ext4", version = "0.8.0" }
 tar = { version = "0.4.46", default-features = false }
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 percent-encoding = "2.3.2"
+diffy = "0.5.2"
 tracing = "0.1.44"
 
 [workspace.lints.rust]
