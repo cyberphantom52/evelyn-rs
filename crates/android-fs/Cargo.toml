@@ -6,7 +6,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+model.workspace = true
+thiserror.workspace = true
 fs-core.workspace = true
+fs-ext4.workspace = true
 
 [lints]
 workspace = true
