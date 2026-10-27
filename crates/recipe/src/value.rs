@@ -33,6 +33,8 @@ pub enum Place {
     Build,
     /// A firmware, in its `partition`.
     Firmware(Firmware),
+    /// The package being edited, which is in `partition`.
+    Package,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]

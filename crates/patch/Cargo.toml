@@ -8,8 +8,10 @@ publish.workspace = true
 [dependencies]
 android-fs.workspace = true
 android-property.workspace = true
+toolchain.workspace = true
 model.workspace = true
 recipe.workspace = true
+smali.workspace = true
 serde.workspace = true
 ron.workspace = true
 thiserror.workspace = true

@@ -4,7 +4,7 @@
 //! however many surface forms use it.
 
 use crate::{
-    ByteEdit, Firmware, MetadataPolicy, MetadataRule, Overrides, PropertyTarget, XmlEdit,
+    ByteEdit, Firmware, MetadataPolicy, MetadataRule, Overrides, PropertyTarget, Returns, XmlEdit,
     value::Value,
 };
 use model::{DevicePath, Name, RelativePath, Sha256Digest};
@@ -62,6 +62,14 @@ pub enum Stmt {
     },
     /// The condition must hold, or the build fails with `message`.
     Assert { condition: Expr, message: String },
+    /// Decode a package (APK or JAR), run the body inside it and rebuild it. In
+    /// the body, `/` is the package's root: `/res/values/strings.xml`, and a
+    /// `Write`'s metadata is not used.
+    Within {
+        package: DevicePath,
+        before: Option<Sha256Digest>,
+        body: Vec<Stmt>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -84,6 +92,24 @@ pub enum Transform {
     },
     DelProp {
         key: String,
+    },
+    /// Make a smali method only return `returns`.
+    StubMethod {
+        class: String,
+        method: String,
+        returns: Returns,
+    },
+    /// Replace a smali method with the asset `body`.
+    ReplaceMethod {
+        class: String,
+        method: String,
+        body: RelativePath,
+    },
+    /// Add the asset `body` as a new smali method.
+    InsertMethod {
+        class: String,
+        method: String,
+        body: RelativePath,
     },
 }
 
@@ -109,6 +135,8 @@ pub enum Expr {
         create: bool,
         every: bool,
     },
+    /// The smali file defining a class (`Lcom/example/Name;`), inside a package.
+    Class(String),
     /// The SHA-256 of the one file selected.
     Hash(Box<Expr>),
     /// The build has this partition.

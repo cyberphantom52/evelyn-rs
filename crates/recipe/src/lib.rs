@@ -208,6 +208,13 @@ pub enum Operation {
         before: Option<Sha256Digest>,
         edits: Vec<XmlEdit>,
     },
+    Package {
+        target: DevicePath,
+        /// Optional guard on the file's exact content before the edit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<Sha256Digest>,
+        edits: Vec<PackageEdit>,
+    },
     /// The file's content must have this SHA-256.
     AssertHash(DevicePath, Sha256Digest),
 }
@@ -260,12 +267,60 @@ pub struct MetadataRule {
     pub metadata: MetadataSpec,
 }
 
+/// What a stubbed method returns: nothing (`V`), zero/false/null, or one/true.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum Returns {
+    Void,
+    Zero,
+    One,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ByteEdit {
     pub offset: u64,
     pub expected: Vec<u8>,
     pub replacement: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum PackageEdit {
+    ReplaceMethod {
+        class: String,
+        method: String,
+        body: RelativePath,
+    },
+    InsertMethod {
+        class: String,
+        method: String,
+        body: RelativePath,
+    },
+    /// Replace a method's body so it only returns `returns`.
+    StubMethod {
+        class: String,
+        method: String,
+        returns: Returns,
+    },
+    TextPatch {
+        path: RelativePath,
+        patch: RelativePath,
+        /// Optional guard on the file's exact content before the edit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<Sha256Digest>,
+    },
+    Xml {
+        path: RelativePath,
+        /// Optional guard on the file's exact content before the edit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<Sha256Digest>,
+        edits: Vec<XmlEdit>,
+    },
+    Install {
+        path: RelativePath,
+        asset: RelativePath,
+        sha256: Sha256Digest,
+    },
 }
 
 impl Operation {
@@ -332,6 +387,10 @@ impl Operation {
                 .iter()
                 .try_for_each(|rule| rule.metadata.resolve().map(drop)),
             Self::Xml { edits, .. } => xml::validate(edits),
+            Self::Package { edits, .. } => edits.iter().try_for_each(|edit| match edit {
+                PackageEdit::Xml { edits, .. } => xml::validate(edits),
+                _ => Ok(()),
+            }),
             _ => Ok(()),
         }
     }

@@ -7,7 +7,7 @@
 //! `vendor`, `system_ext`, `system`, reordered by `ro.product.property_source_order`
 //! when the firmware sets it.
 
-use crate::{Composition, Error, Target, compose::Context, layout};
+use crate::{Composition, Error, Target, compose::Context, layout, package::Opened};
 use model::{DevicePath, EntryKind, Name, PartitionTree, RelativePath, SourceRef};
 use recipe::{
     Firmware, PropertyTarget,
@@ -35,6 +35,8 @@ pub(crate) struct Scope<'a> {
     pub context: &'a Context<'a>,
     /// The step being applied, for errors.
     pub step: &'a Name,
+    /// The package a `Within` has open, where `/` is the package's root.
+    pub package: Option<&'a Opened>,
 }
 
 impl Scope<'_> {
@@ -211,6 +213,23 @@ impl Scope<'_> {
             }
             return Ok(found);
         }
+        if let Some(package) = self.package {
+            let path = pattern.strip_prefix('/').ok_or(Error::Unsupported(
+                "paths inside a package start at its root, /",
+            ))?;
+            let path = RelativePath::try_from(path.to_owned())?;
+            if layout::is_glob(&path) {
+                return Err(Error::Unsupported("globs inside a package"));
+            }
+            return Ok(match path.resolve(&package.decoded).exists() {
+                true => vec![Located {
+                    place: Place::Package,
+                    partition: package.partition.clone(),
+                    path,
+                }],
+                false => Vec::new(),
+            });
+        }
         let paths = if pattern.starts_with('/') {
             Composition::resolve(
                 self.targets,
@@ -356,11 +375,31 @@ impl Scope<'_> {
                 create,
                 every,
             } => Value::Selection(self.prop_files(key, target.as_ref(), *create, *every)?),
+            Expr::Class(class) => {
+                let package = self
+                    .package
+                    .ok_or(Error::Unsupported("Class selects inside a package"))?;
+                let found = crate::package::locate(&package.decoded, class)?;
+                Value::Selection(
+                    found
+                        .into_iter()
+                        .map(|path| Located {
+                            place: Place::Package,
+                            partition: package.partition.clone(),
+                            path,
+                        })
+                        .collect(),
+                )
+            }
             Expr::Hash(inner) => {
                 let selection = self.eval(inner)?;
                 let [entry] = selection.as_selection()? else {
                     return Err(Error::Unsupported("Hash needs exactly one file"));
                 };
+                if let (Place::Package, Some(package)) = (entry.place, self.package) {
+                    let bytes = std::fs::read(entry.path.resolve(&package.decoded))?;
+                    return Ok(Value::Str(model::Sha256Digest::bytes(&bytes).to_string()));
+                }
                 let target = self
                     .targets
                     .get(&entry.partition)

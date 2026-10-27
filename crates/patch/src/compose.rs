@@ -2,8 +2,8 @@
 //! primitive tree, and each statement and expression has one implementation here
 //! and in [`crate::scope`], whatever surface operation it came from.
 
-use crate::{Error, Images, Target, scope::Scope};
-use model::{DevicePath, Mounts, Name, PartitionTree, SourceRef, TargetPath};
+use crate::{Error, Images, Target, package::Opened, scope::Scope};
+use model::{DevicePath, Mounts, Name, PartitionTree, RelativePath, SourceRef, TargetPath};
 use recipe::{
     Firmware, Recipe, STANDARD_SYSTEM, VENDOR_SIDE,
     tree::{Expr, Stmt},
@@ -11,6 +11,7 @@ use recipe::{
 };
 use serde::Serialize;
 use std::{collections::BTreeMap, path::Path};
+use toolchain::Tools;
 
 /// Scanned source trees, by source reference.
 pub type Sources = BTreeMap<SourceRef, PartitionTree>;
@@ -20,8 +21,11 @@ pub struct Context<'a> {
     pub sources: &'a Sources,
     /// The open source images that untouched file contents are read from.
     pub images: &'a Images,
+    pub tools: &'a Tools,
     /// The recipe's directory; asset paths resolve below it.
     pub assets: &'a Path,
+    /// Scratch directory for decoded packages.
+    pub packages: &'a Path,
     /// Where each partition is mounted, for resolving device paths.
     pub mounts: &'a Mounts,
 }
@@ -47,6 +51,8 @@ pub struct Composition {
     origins: BTreeMap<Name, Firmware>,
     skipped: Vec<Skipped>,
     absent: Vec<Absent>,
+    /// The package a `Within` has open.
+    package: Option<Opened>,
 }
 
 /// What a composition reports besides the trees.
@@ -63,6 +69,7 @@ impl Composition {
             origins,
             skipped: Vec::new(),
             absent: Vec::new(),
+            package: None,
         }
     }
 
@@ -82,6 +89,7 @@ impl Composition {
             origins: &self.origins,
             context,
             step,
+            package: self.package.as_ref(),
         }
         .eval(expr)
     }
@@ -102,6 +110,19 @@ impl Composition {
         step: &Name,
         context: &Context<'_>,
     ) -> Result<(), Error> {
+        if self.package.is_some()
+            && matches!(
+                stmt,
+                Stmt::Copy { .. }
+                    | Stmt::Move { .. }
+                    | Stmt::WriteTree { .. }
+                    | Stmt::Within { .. }
+            )
+        {
+            return Err(Error::Unsupported(
+                "inside a package only Edit, Write, Delete, Let, When and Assert run",
+            ));
+        }
         match stmt {
             Stmt::Step { id, body } => {
                 for stmt in body {
@@ -140,9 +161,17 @@ impl Composition {
                     });
                 }
                 for entry in selected {
-                    match entry.place {
-                        Place::Build => {
+                    match (entry.place, &self.package) {
+                        (Place::Build, _) => {
                             self.target(&entry.partition)?.remove(&entry.path, step)?;
+                        }
+                        (Place::Package, Some(package)) => {
+                            let path = entry.path.resolve(&package.decoded);
+                            let removed = match path.is_dir() {
+                                true => std::fs::remove_dir_all(&path),
+                                false => std::fs::remove_file(&path),
+                            };
+                            removed.map_err(crate::package::io(&path))?;
                         }
                         _ => return Err(Error::Unsupported("only the build can be removed from")),
                     }
@@ -219,6 +248,16 @@ impl Composition {
                 to,
                 metadata,
             } => {
+                if let Some(package) = &self.package {
+                    let source = asset.resolve(context.assets);
+                    let path = RelativePath::try_from(to.to_string()[1..].to_owned())?
+                        .resolve(&package.decoded);
+                    if let Some(parent) = path.parent() {
+                        std::fs::create_dir_all(parent).map_err(crate::package::io(parent))?;
+                    }
+                    std::fs::copy(&source, &path).map_err(crate::package::io(&source))?;
+                    return Ok(());
+                }
                 let at = self.resolve_one(to, context, step)?;
                 let target = self.target(&at.partition)?;
                 let changed = target.install(
@@ -257,13 +296,20 @@ impl Composition {
                     });
                 }
                 for entry in selected {
-                    match entry.place {
-                        Place::Build => self.target(&entry.partition)?.transform(
+                    match (entry.place, &self.package) {
+                        (Place::Build, _) => self.target(&entry.partition)?.transform(
                             &entry.path,
                             transform,
                             context,
                             step,
                         )?,
+                        (Place::Package, Some(package)) => {
+                            let path = entry.path.resolve(&package.decoded);
+                            let bytes = std::fs::read(&path).map_err(crate::package::io(&path))?;
+                            let changed =
+                                crate::operations::transformed(&bytes, transform, context.assets)?;
+                            std::fs::write(&path, changed).map_err(crate::package::io(&path))?;
+                        }
                         _ => return Err(Error::Unsupported("only the build can be edited")),
                     }
                 }
@@ -272,6 +318,34 @@ impl Composition {
                 if !self.eval(condition, context, step)?.as_bool()? {
                     return Err(Error::Assertion(message.clone()));
                 }
+            }
+            Stmt::Within {
+                package,
+                before,
+                body,
+            } => {
+                let at = self.resolve_one(package, context, step)?;
+                let opened = crate::package::open(
+                    self.target(&at.partition)?,
+                    &at,
+                    before.as_ref(),
+                    body,
+                    context,
+                    step,
+                )?;
+                self.package = Some(opened);
+                let ran = body
+                    .iter()
+                    .try_for_each(|stmt| self.exec(stmt, recipe, step, context));
+                let opened = self.package.take().expect("opened above");
+                ran?;
+                crate::package::close(
+                    self.target(&at.partition)?,
+                    &at.path,
+                    opened,
+                    context,
+                    step,
+                )?;
             }
         }
         Ok(())
