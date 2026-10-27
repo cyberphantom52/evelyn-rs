@@ -1,0 +1,242 @@
+//! Mutable partition trees. Untouched files keep referring to their source image;
+//! every edit writes a new blob, and blobs are never changed in place.
+
+use android_fs::{Store, image::Source};
+use model::{
+    Content, Entry, EntryKind, Filesystem, Name, PartitionTree, Provenance, RelativePath,
+    Sha256Digest, Sha256Writer, SourceRef, TargetPath,
+};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    io::{self, Read},
+    path::{Path, PathBuf},
+};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error(transparent)]
+    Recipe(#[from] recipe::Error),
+    #[error(transparent)]
+    Model(#[from] model::Error),
+    #[error(transparent)]
+    Android(#[from] android_fs::Error),
+    #[error(transparent)]
+    Property(#[from] android_property::Error),
+    #[error(transparent)]
+    Binary(#[from] crate::binary::Error),
+    #[error(transparent)]
+    Text(#[from] crate::text::Error),
+    #[error(transparent)]
+    Layout(#[from] crate::layout::Error),
+    #[error("target IO: {0}")]
+    Io(#[from] io::Error),
+    #[error(transparent)]
+    Value(#[from] recipe::value::ValueError),
+    #[error("assertion failed: {0}")]
+    Assertion(String),
+    #[error("step {step} edits {pattern}, which selects nothing in this build")]
+    NothingSelected { step: Name, pattern: String },
+    #[error("no target partition {0}")]
+    UnknownPartition(Name),
+    #[error("step {step} removes from a scope that selects no partition of this build")]
+    EmptyScope { step: Name },
+    #[error("step {step} touches {path}, which is in no partition this build has")]
+    AbsentPath { step: Name, path: model::DevicePath },
+    #[error("step {step} touches partition {partition}, which this firmware does not have")]
+    AbsentPartition { step: Name, partition: Name },
+    #[error("partition {partition} defines {key} with different values in different files")]
+    PropertyConflict { partition: Name, key: String },
+    #[error("partition {0} has no build.prop for a new property")]
+    NoPropertyFile(Name),
+    #[error("source {0} was not extracted")]
+    UnknownSource(model::SourceRef),
+    #[error("no metadata rule matches new file {0}")]
+    NoMetadataRule(RelativePath),
+    #[error("missing target entry {0}")]
+    Missing(RelativePath),
+    #[error("content identity mismatch at {0}")]
+    Identity(RelativePath),
+    #[error("unsupported target transformation: {0}")]
+    Unsupported(&'static str),
+}
+
+/// Open source images, by source reference.
+pub type Images = BTreeMap<SourceRef, Source>;
+
+pub struct Target {
+    root: PathBuf,
+    pub(crate) tree: PartitionTree,
+    next_blob: u64,
+}
+
+impl Target {
+    /// Start a new target at `output` from a source tree, under a new partition identity.
+    /// Nothing is copied: entries keep referring to their source image until edited.
+    pub fn create(
+        output: &Path,
+        mut tree: PartitionTree,
+        partition: Name,
+        filesystem: Filesystem,
+    ) -> Result<Self, Error> {
+        tree.partition = partition;
+        tree.filesystem = filesystem;
+        fs::create_dir_all(output.join("content"))?;
+        Ok(Self {
+            root: output.into(),
+            tree,
+            next_blob: 0,
+        })
+    }
+
+    /// Reads this target's file contents from its blobs and the open source images.
+    pub fn store<'a>(&'a self, images: &'a Images) -> Store<'a> {
+        Store {
+            images,
+            root: &self.root,
+        }
+    }
+
+    /// Move a subtree into another target, preserving metadata and lineage.
+    pub(crate) fn relocate_to(
+        &mut self,
+        destination: &mut Self,
+        from: &TargetPath,
+        to: &TargetPath,
+        step: &Name,
+    ) -> Result<(), Error> {
+        let selected = crate::layout::subtree(&self.tree, &from.path, &to.path)?;
+        let removed = crate::layout::remove(&self.tree, &from.path)?;
+        let mut changed = destination.destination(&to.path, false, Some(&self.tree))?;
+        changed
+            .entries
+            .extend(destination.adopt(Some(&self.root), selected)?);
+        self.accept(removed, step);
+        destination.accept(changed, step);
+        Ok(())
+    }
+
+    /// Write the manifest and drop blobs no longer referenced by the tree.
+    pub fn finish(self) -> Result<PartitionTree, Error> {
+        android_fs::write_tree(&self.root, &self.tree)?;
+        let live: BTreeSet<_> = self
+            .tree
+            .entries
+            .values()
+            .filter_map(|entry| match &entry.kind {
+                EntryKind::File {
+                    content: Content::Blob(blob),
+                    ..
+                } => Some(blob.as_ref()),
+                _ => None,
+            })
+            .collect();
+        for entry in fs::read_dir(self.root.join("content"))? {
+            let entry = entry?;
+            if !live.contains(entry.file_name().to_string_lossy().as_ref()) {
+                fs::remove_file(entry.path())?;
+            }
+        }
+        Ok(self.tree)
+    }
+
+    /// Give `canonical` new content and record the step on it and all of its hardlinks.
+    pub(crate) fn accept_content(
+        &mut self,
+        canonical: &RelativePath,
+        kind: EntryKind,
+        step: &Name,
+    ) {
+        for (path, entry) in &mut self.tree.entries {
+            if path == canonical {
+                entry.kind = kind.clone();
+            } else if !matches!(&entry.kind, EntryKind::Hardlink { target } if target == canonical)
+            {
+                continue;
+            }
+            entry.provenance.push(Provenance::Step { id: step.clone() });
+        }
+    }
+
+    /// Resolve a regular file, following a hardlink to its canonical entry.
+    pub(crate) fn file(
+        &self,
+        path: &RelativePath,
+    ) -> Result<(&RelativePath, &Content, &Sha256Digest, u64), Error> {
+        let (mut path, mut entry) = self
+            .tree
+            .entries
+            .get_key_value(path)
+            .ok_or_else(|| Error::Missing(path.clone()))?;
+        if let EntryKind::Hardlink { target } = &entry.kind {
+            (path, entry) = (target, &self.tree.entries[target]);
+        }
+        match &entry.kind {
+            EntryKind::File {
+                content,
+                sha256,
+                size,
+            } => Ok((path, content, sha256, *size)),
+            _ => Err(Error::Unsupported(
+                "content edits require a regular file, not a symlink or directory",
+            )),
+        }
+    }
+
+    pub(crate) fn read(&self, path: &RelativePath, images: &Images) -> Result<Vec<u8>, Error> {
+        let (_, content, _, size) = self.file(path)?;
+        let mut bytes = Vec::with_capacity(size as usize);
+        self.store(images)
+            .open(content, size)?
+            .read_to_end(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    /// Write a new blob from `reader`.
+    pub(crate) fn write_blob(&mut self, mut reader: impl Read) -> Result<EntryKind, Error> {
+        let blob = self.new_blob();
+        let mut writer = Sha256Writer::new(fs::File::create_new(self.blob_path(&blob))?);
+        let size = io::copy(&mut reader, &mut writer)?;
+        let (_, sha256) = writer.finish()?;
+        Ok(EntryKind::File {
+            content: Content::Blob(blob),
+            sha256,
+            size,
+        })
+    }
+
+    /// Bring entries into this target. Image contents are shared as they are; blobs of
+    /// the tree at `source_root` are linked (or copied) into this target's store.
+    pub(crate) fn adopt(
+        &mut self,
+        source_root: Option<&Path>,
+        mut entries: BTreeMap<RelativePath, Entry>,
+    ) -> Result<BTreeMap<RelativePath, Entry>, Error> {
+        for entry in entries.values_mut() {
+            if let EntryKind::File {
+                content: Content::Blob(blob),
+                ..
+            } = &mut entry.kind
+            {
+                let root = source_root.ok_or(Error::Unsupported("blob outside a target"))?;
+                let source = root.join(PartitionTree::blob_path(blob).as_ref());
+                *blob = self.new_blob();
+                let destination = self.blob_path(blob);
+                if fs::hard_link(&source, &destination).is_err() {
+                    fs::copy(&source, &destination)?;
+                }
+            }
+        }
+        Ok(entries)
+    }
+
+    fn new_blob(&mut self) -> Name {
+        self.next_blob += 1;
+        Name::try_from(format!("t{}", self.next_blob)).expect("blob names are valid")
+    }
+
+    fn blob_path(&self, blob: &Name) -> PathBuf {
+        self.root.join(PartitionTree::blob_path(blob).as_ref())
+    }
+}

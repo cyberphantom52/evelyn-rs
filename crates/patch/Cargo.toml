@@ -6,9 +6,12 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+android-fs.workspace = true
+android-property.workspace = true
 model.workspace = true
 recipe.workspace = true
 serde.workspace = true
+ron.workspace = true
 thiserror.workspace = true
 diffy.workspace = true
 
