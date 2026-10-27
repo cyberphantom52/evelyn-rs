@@ -206,12 +206,33 @@ pub enum Operation {
         before: Option<Sha256Digest>,
         edits: Vec<XmlEdit>,
     },
+    /// Decode an APK or JAR, apply `edits` inside it and rebuild it. The edits are
+    /// ordinary operations with paths from the package's root
+    /// (`/res/values/strings.xml`), plus the smali edits only a package has.
     Package {
         target: DevicePath,
         /// Optional guard on the file's exact content before the edit.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         before: Option<Sha256Digest>,
-        edits: Vec<PackageEdit>,
+        edits: Vec<Operation>,
+    },
+    /// Inside a `Package`: replace a smali method with the asset `body`.
+    ReplaceMethod {
+        class: String,
+        method: String,
+        body: RelativePath,
+    },
+    /// Inside a `Package`: add the asset `body` as a new smali method.
+    InsertMethod {
+        class: String,
+        method: String,
+        body: RelativePath,
+    },
+    /// Inside a `Package`: replace a method's body so it only returns `returns`.
+    StubMethod {
+        class: String,
+        method: String,
+        returns: Returns,
     },
     /// The file's content must have this SHA-256.
     AssertHash {
@@ -359,46 +380,57 @@ impl From<Hex> for String {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum PackageEdit {
-    ReplaceMethod {
-        class: String,
-        method: String,
-        body: RelativePath,
-    },
-    InsertMethod {
-        class: String,
-        method: String,
-        body: RelativePath,
-    },
-    /// Replace a method's body so it only returns `returns`.
-    StubMethod {
-        class: String,
-        method: String,
-        returns: Returns,
-    },
-    TextPatch {
-        path: RelativePath,
-        patch: RelativePath,
-        /// Optional guard on the file's exact content before the edit.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        before: Option<Sha256Digest>,
-    },
-    Xml {
-        path: RelativePath,
-        /// Optional guard on the file's exact content before the edit.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        before: Option<Sha256Digest>,
-        edits: Vec<XmlEdit>,
-    },
-    Install {
-        path: RelativePath,
-        asset: RelativePath,
-    },
-}
-
 impl Operation {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Import { .. } => "Import",
+            Self::Remove { .. } => "Remove",
+            Self::Relocate { .. } => "Relocate",
+            Self::Install { .. } => "Install",
+            Self::SetMetadata { .. } => "SetMetadata",
+            Self::SetProperty { .. } => "SetProperty",
+            Self::RemoveProperty { .. } => "RemoveProperty",
+            Self::TextPatch { .. } => "TextPatch",
+            Self::BinaryPatch { .. } => "BinaryPatch",
+            Self::Xml { .. } => "Xml",
+            Self::Package { .. } => "Package",
+            Self::ReplaceMethod { .. } => "ReplaceMethod",
+            Self::InsertMethod { .. } => "InsertMethod",
+            Self::StubMethod { .. } => "StubMethod",
+            Self::AssertHash { .. } => "AssertHash",
+            Self::EnableFeature(..) => "EnableFeature",
+            Self::DisableFeature(..) => "DisableFeature",
+            Self::Append { .. } => "Append",
+        }
+    }
+
+    /// The smali edits, which need a package's classes.
+    fn package_only(&self) -> bool {
+        matches!(
+            self,
+            Self::ReplaceMethod { .. } | Self::InsertMethod { .. } | Self::StubMethod { .. }
+        )
+    }
+
+    /// What can run on a package's files: content edits, installs and removals by
+    /// path, and the smali edits.
+    fn in_package(&self) -> bool {
+        match self {
+            Self::Remove {
+                from: None,
+                partition: None,
+                pattern,
+            } => pattern.starts_with('/'),
+            Self::TextPatch { .. }
+            | Self::BinaryPatch { .. }
+            | Self::Xml { .. }
+            | Self::Install { .. }
+            | Self::Append { .. }
+            | Self::AssertHash { .. } => true,
+            other => other.package_only(),
+        }
+    }
+
     /// Checks that can fail before any image is touched; the patch crate checks the rest on apply.
     fn validate(&self) -> Result<(), Error> {
         match self {
@@ -472,9 +504,14 @@ impl Operation {
                 Ok(())
             }
             Self::Xml { edits, .. } => xml::validate(edits),
-            Self::Package { edits, .. } => edits.iter().try_for_each(|edit| match edit {
-                PackageEdit::Xml { edits, .. } => xml::validate(edits),
-                _ => Ok(()),
+            Self::Package { edits, .. } => edits.iter().try_for_each(|edit| {
+                if !edit.in_package() {
+                    return Err(Error::Invalid(format!(
+                        "{} does not work inside a Package",
+                        edit.name()
+                    )));
+                }
+                edit.validate()
             }),
             _ => Ok(()),
         }
@@ -521,6 +558,12 @@ impl Recipe {
                 return Err(Error::Invalid(format!("duplicate step {}", step.id)));
             }
             for operation in &step.operations {
+                if operation.package_only() {
+                    return Err(Error::Invalid(format!(
+                        "{} works only inside a Package",
+                        operation.name()
+                    )));
+                }
                 operation.validate()?;
             }
         }
