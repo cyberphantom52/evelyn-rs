@@ -165,7 +165,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                     found,
                     copy,
                     reset(),
-                    Stmt::SetMeta {
+                    Stmt::SetMetadata {
                         selection: select(&placed, Scope::default()),
                         pattern: placed.clone(),
                         overrides: crate::Overrides {
@@ -211,7 +211,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             gid,
             mode,
             selinux,
-        } => Stmt::SetMeta {
+        } => Stmt::SetMetadata {
             selection: select(pattern.as_ref(), Scope::default()),
             pattern: pattern.to_string(),
             overrides: crate::Overrides {
