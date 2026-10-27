@@ -9,10 +9,13 @@ use model::{DevicePath, Mounts, Name, PartitionTree, RelativePath, SourceRef, Ta
 use recipe::{
     Firmware, Recipe, STANDARD_SYSTEM, VENDOR_SIDE,
     tree::{Expr, Stmt, Transform},
-    value::{Place, Value},
+    value::{Located, Place, Value},
 };
 use serde::Serialize;
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 use toolchain::Tools;
 
 /// Scanned source trees, by source reference.
@@ -117,11 +120,7 @@ impl Composition {
         if self.package.is_some()
             && matches!(
                 stmt,
-                Stmt::Copy { .. }
-                    | Stmt::Move { .. }
-                    | Stmt::Reset { .. }
-                    | Stmt::SetMetadata { .. }
-                    | Stmt::Within { .. }
+                Stmt::Reset { .. } | Stmt::SetMetadata { .. } | Stmt::Within { .. }
             )
         {
             return Err(Error::Unsupported(
@@ -182,37 +181,32 @@ impl Composition {
             Stmt::Copy { selection, to } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
-                let to = to
-                    .as_ref()
-                    .map(|to| self.resolve_one(to, context, step))
-                    .transpose()?;
                 if to.is_some() && selected.len() > 1 {
                     return Err(Error::Unsupported(
                         "a copy of several entries keeps their paths",
                     ));
                 }
                 for entry in selected {
-                    let Place::Firmware(firmware) = entry.place else {
-                        return Err(Error::Unsupported(
-                            "Copy reads a firmware; Move moves within the build",
-                        ));
-                    };
-                    let source = crate::scope::source_of(firmware, &entry.partition)?;
-                    let tree = context
-                        .sources
-                        .get(&source)
-                        .ok_or_else(|| Error::UnknownSource(source.clone()))?;
-                    let to = to.clone().unwrap_or_else(|| TargetPath {
-                        partition: entry.partition.clone(),
-                        path: entry.path.clone(),
-                    });
-                    self.target(&to.partition)?.import(
-                        tree,
-                        &source,
-                        &entry.path,
-                        &to.path,
-                        step,
-                    )?;
+                    match entry.place {
+                        Place::Firmware(firmware) => {
+                            self.copy_firmware(firmware, entry, to.as_ref(), context, step)?
+                        }
+                        Place::Asset => {
+                            let to = to
+                                .as_ref()
+                                .ok_or(Error::Unsupported("an asset is copied to a path"))?;
+                            self.copy_asset(&entry.path, to, context, step)?;
+                        }
+                        Place::Build => {
+                            let to = to.as_ref().ok_or(Error::Unsupported(
+                                "a copy within the build needs a path",
+                            ))?;
+                            self.copy_build(entry, to, context, step)?;
+                        }
+                        Place::Package => {
+                            return Err(Error::Unsupported("a package's files are not copied"));
+                        }
+                    }
                 }
             }
             Stmt::Reset { selection } => {
@@ -223,91 +217,6 @@ impl Composition {
                         return Err(Error::Unsupported("only the build's entries can be reset"));
                     }
                     self.target(&entry.partition)?.reset(&entry.path);
-                }
-            }
-            Stmt::Move { from, to } => {
-                let from = self.resolve_one(from, context, step)?;
-                let to = self.resolve_one(to, context, step)?;
-                // Moved entries keep their metadata; those still waiting for
-                // Android's defaults wait at their new path.
-                let below = |path: &RelativePath, root: &RelativePath| {
-                    path == root || path.as_ref().starts_with(&format!("{root}/"))
-                };
-                let source = self.target(&from.partition)?;
-                let waiting: Vec<(RelativePath, Vec<Pending>)> = source
-                    .derived
-                    .iter()
-                    .filter(|(path, _)| below(path, &from.path))
-                    .map(|(path, pending)| {
-                        let moved =
-                            format!("{}{}", to.path, &path.as_ref()[from.path.as_ref().len()..]);
-                        Ok((RelativePath::try_from(moved)?, pending.clone()))
-                    })
-                    .collect::<Result<_, Error>>()?;
-                source.derived.retain(|path, _| !below(path, &from.path));
-                if from.partition == to.partition {
-                    self.target(&to.partition)?
-                        .relocate(&from.path, &to.path, step)?;
-                } else {
-                    let mut source = self
-                        .targets
-                        .remove(&from.partition)
-                        .ok_or_else(|| Error::UnknownPartition(from.partition.clone()))?;
-                    let moved = self
-                        .target(&to.partition)
-                        .and_then(|destination| source.relocate_to(destination, &from, &to, step));
-                    self.targets.insert(from.partition.clone(), source);
-                    moved?;
-                }
-                // Relocating marks what it moved as new; it is not.
-                let destination = self.target(&to.partition)?;
-                destination.derived.retain(|path, _| !below(path, &to.path));
-                destination.derived.extend(waiting);
-            }
-            Stmt::Write { asset, to } => {
-                let source = asset.resolve(context.assets);
-                if let Some(package) = &self.package {
-                    let path = RelativePath::try_from(to.to_string()[1..].to_owned())?
-                        .resolve(&package.decoded);
-                    if let Some(parent) = path.parent() {
-                        std::fs::create_dir_all(parent).map_err(crate::package::io(parent))?;
-                    }
-                    std::fs::copy(&source, &path).map_err(crate::package::io(&source))?;
-                    return Ok(());
-                }
-                // A partition's mount point is its root; anything else is a path in one.
-                let (partition, base) = match context.mounts.partition_at(to) {
-                    Some(partition) => (partition.clone(), None),
-                    None => {
-                        let at = self.resolve_one(to, context, step)?;
-                        (at.partition, Some(at.path))
-                    }
-                };
-                let below = |path: &str| match &base {
-                    Some(base) => RelativePath::try_from(format!("{base}/{path}")),
-                    None => RelativePath::try_from(path.to_owned()),
-                };
-                let files = if source.is_dir() {
-                    crate::operations::files(&source)?
-                        .into_iter()
-                        .map(|(relative, file)| {
-                            Ok((
-                                below(&relative)?,
-                                file,
-                                RelativePath::try_from(format!("{asset}/{relative}"))?,
-                            ))
-                        })
-                        .collect::<Result<Vec<_>, Error>>()?
-                } else {
-                    let to = base.ok_or(Error::Unsupported(
-                        "a file cannot replace a partition's root",
-                    ))?;
-                    vec![(to, source, asset.clone())]
-                };
-                let target = self.target(&partition)?;
-                for (to, file, asset) in files {
-                    let changed = target.install(&file, &asset, &to)?;
-                    target.accept(changed, step);
                 }
             }
             Stmt::SetMetadata {
@@ -420,6 +329,142 @@ impl Composition {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    /// Copy what a firmware has at `entry` into the build.
+    fn copy_firmware(
+        &mut self,
+        firmware: Firmware,
+        entry: &Located,
+        to: Option<&DevicePath>,
+        context: &Context<'_>,
+        step: &Name,
+    ) -> Result<(), Error> {
+        if self.package.is_some() {
+            return Err(Error::Unsupported(
+                "a package takes assets, not firmware files",
+            ));
+        }
+        let source = crate::scope::source_of(firmware, &entry.partition)?;
+        let tree = context
+            .sources
+            .get(&source)
+            .ok_or_else(|| Error::UnknownSource(source.clone()))?;
+        let to = match to {
+            Some(to) => self.resolve_one(to, context, step)?,
+            None => TargetPath {
+                partition: entry.partition.clone(),
+                path: entry.path.clone(),
+            },
+        };
+        self.target(&to.partition)?
+            .import(tree, &source, &entry.path, &to.path, step)
+    }
+
+    /// Copy a recipe asset (a file, or a directory's files) to `to`, in the build
+    /// or the open package. New files get Android's defaults.
+    fn copy_asset(
+        &mut self,
+        asset: &RelativePath,
+        to: &DevicePath,
+        context: &Context<'_>,
+        step: &Name,
+    ) -> Result<(), Error> {
+        let source = asset.resolve(context.assets);
+        if let Some(package) = &self.package {
+            let path =
+                RelativePath::try_from(to.to_string()[1..].to_owned())?.resolve(&package.decoded);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(crate::package::io(parent))?;
+            }
+            std::fs::copy(&source, &path).map_err(crate::package::io(&source))?;
+            return Ok(());
+        }
+        // A partition's mount point is its root; anything else is a path in one.
+        let (partition, base) = match context.mounts.partition_at(to) {
+            Some(partition) => (partition.clone(), None),
+            None => {
+                let at = self.resolve_one(to, context, step)?;
+                (at.partition, Some(at.path))
+            }
+        };
+        let below = |path: &str| match &base {
+            Some(base) => RelativePath::try_from(format!("{base}/{path}")),
+            None => RelativePath::try_from(path.to_owned()),
+        };
+        let files = if source.is_dir() {
+            crate::operations::files(&source)?
+                .into_iter()
+                .map(|(relative, file)| {
+                    Ok((
+                        below(&relative)?,
+                        file,
+                        RelativePath::try_from(format!("{asset}/{relative}"))?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, Error>>()?
+        } else {
+            let to = base.ok_or(Error::Unsupported(
+                "a file cannot replace a partition's root",
+            ))?;
+            vec![(to, source, asset.clone())]
+        };
+        let target = self.target(&partition)?;
+        for (to, file, asset) in files {
+            let changed = target.install(&file, &asset, &to)?;
+            target.accept(changed, step);
+        }
+        Ok(())
+    }
+
+    /// Copy an entry of the build, and what is below it, to `to`, keeping their
+    /// metadata; those still waiting for Android's defaults wait at the copy too.
+    fn copy_build(
+        &mut self,
+        entry: &Located,
+        to: &DevicePath,
+        context: &Context<'_>,
+        step: &Name,
+    ) -> Result<(), Error> {
+        let to = self.resolve_one(to, context, step)?;
+        let below = |path: &RelativePath, root: &RelativePath| {
+            path == root || path.as_ref().starts_with(&format!("{root}/"))
+        };
+        let waiting: Vec<(RelativePath, Vec<Pending>)> = self
+            .target(&entry.partition)?
+            .derived
+            .iter()
+            .filter(|(path, _)| below(path, &entry.path))
+            .map(|(path, pending)| {
+                let copied = format!("{}{}", to.path, &path.as_ref()[entry.path.as_ref().len()..]);
+                Ok((RelativePath::try_from(copied)?, pending.clone()))
+            })
+            .collect::<Result<_, Error>>()?;
+        let before: BTreeSet<RelativePath> = self
+            .target(&to.partition)?
+            .derived
+            .keys()
+            .cloned()
+            .collect();
+        if entry.partition == to.partition {
+            self.target(&to.partition)?
+                .copy_within(&entry.path, &to.path, step)?;
+        } else {
+            let source = self
+                .targets
+                .remove(&entry.partition)
+                .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?;
+            let copied = self
+                .target(&to.partition)
+                .and_then(|destination| source.copy_into(destination, &entry.path, &to.path, step));
+            self.targets.insert(entry.partition.clone(), source);
+            copied?;
+        }
+        // What the copy made is not new: it has its source's metadata.
+        let destination = self.target(&to.partition)?;
+        destination.derived.retain(|path, _| before.contains(path));
+        destination.derived.extend(waiting);
         Ok(())
     }
 

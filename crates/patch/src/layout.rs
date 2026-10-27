@@ -36,29 +36,6 @@ pub fn remove(tree: &PartitionTree, path: &RelativePath) -> Result<PartitionTree
     Ok(output)
 }
 
-/// Move an existing entry and its descendants without replacement or parent creation.
-/// Hardlink references follow moved canonical entries; raw symlink targets do not change.
-pub fn relocate(
-    tree: &PartitionTree,
-    from: &RelativePath,
-    to: &RelativePath,
-) -> Result<PartitionTree, Error> {
-    exists(tree, from)?;
-    if tree.entries.contains_key(to) {
-        return Err(Error::DestinationExists(to.clone()));
-    }
-    if within(to, from) {
-        return Err(Error::OwnSubtree {
-            from: from.clone(),
-            to: to.clone(),
-        });
-    }
-    parent(tree, to)?;
-    let mut output = tree.clone();
-    output.entries = rebase(std::mem::take(&mut output.entries), from, to)?;
-    Ok(output)
-}
-
 /// Copy `from` and its descendants out of `source`, mapped to `to`. Image provenance
 /// without a source name is attributed to `identity`.
 pub fn select(
@@ -178,21 +155,6 @@ pub(crate) fn create_parents(
                     },
                 );
             }
-        }
-    }
-    Ok(())
-}
-
-/// Require that `path`'s parent, if any, is an existing directory.
-pub(crate) fn parent(tree: &PartitionTree, path: &RelativePath) -> Result<(), Error> {
-    if let Some((parent, _)) = path.as_ref().rsplit_once('/') {
-        let parent = RelativePath::try_from(parent.to_owned())?;
-        match tree.entries.get(&parent) {
-            None => return Err(Error::MissingParent(parent)),
-            Some(entry) if !matches!(entry.kind, EntryKind::Directory) => {
-                return Err(Error::NonDirectoryParent(parent));
-            }
-            Some(_) => {}
         }
     }
     Ok(())

@@ -35,6 +35,8 @@ pub enum Place {
     Firmware(Firmware),
     /// The package being edited, which is in `partition`.
     Package,
+    /// The recipe's assets.
+    Asset,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
