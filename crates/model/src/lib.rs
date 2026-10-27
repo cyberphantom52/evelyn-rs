@@ -83,9 +83,6 @@ impl RelativePath {
     }
 }
 
-mod hashing;
-pub use hashing::Sha256Writer;
-
 impl Sha256Digest {
     pub fn bytes(bytes: &[u8]) -> Self {
         Self::finish(Sha256::new_with_prefix(bytes))
@@ -157,6 +154,106 @@ impl fmt::Display for SourceRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}.{}", self.source, self.partition)
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AndroidMetadata {
+    pub uid: u32,
+    pub gid: u32,
+    pub mode: u16,
+    /// Namespace-qualified xattr names and their raw values.
+    pub xattrs: std::collections::BTreeMap<String, Vec<u8>>,
+}
+
+impl AndroidMetadata {
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.mode > 0o7777
+            || self
+                .xattrs
+                .keys()
+                .any(|key| key.is_empty() || key.len() > 255 || key.contains('\0'))
+        {
+            return Err(Error::Invalid {
+                kind: "Android metadata",
+                value: format!("invalid mode {:#o} or xattr name", self.mode),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Where a file's bytes are: unchanged in a source image, or in a tree's own store.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum Content {
+    /// Inode `inode` of source image `source`.
+    Image { source: SourceRef, inode: u64 },
+    /// A file in the tree's `content/` directory, written by an edit.
+    Blob(Name),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum EntryKind {
+    File {
+        content: Content,
+        sha256: Sha256Digest,
+        size: u64,
+    },
+    Directory,
+    Symlink {
+        target: Vec<u8>,
+    },
+    Hardlink {
+        target: RelativePath,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Entry {
+    pub kind: EntryKind,
+    pub metadata: AndroidMetadata,
+    pub provenance: Vec<Provenance>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum Provenance {
+    Image {
+        source: Option<Name>,
+        partition: Name,
+        path: RelativePath,
+        sha256: Sha256Digest,
+    },
+    Asset {
+        path: RelativePath,
+        sha256: Sha256Digest,
+    },
+    Step {
+        id: Name,
+    },
+}
+
+mod tree;
+pub use tree::PartitionTree;
+mod hashing;
+pub use hashing::Sha256Writer;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Filesystem {
+    Erofs,
+    Ext4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Output {
+    Partitions,
+    Super,
+    Zip,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
