@@ -188,7 +188,10 @@ pub enum Operation {
         target: Option<PropertyTarget>,
     },
     /// Apply a unified diff (an asset) to a file and its hardlinks.
-    TextPatch(DevicePath, RelativePath),
+    TextPatch {
+        target: DevicePath,
+        patch: RelativePath,
+    },
     /// Overwrite bytes at offsets of a file whose content must be `before`.
     BinaryPatch {
         target: DevicePath,
@@ -211,7 +214,10 @@ pub enum Operation {
         edits: Vec<PackageEdit>,
     },
     /// The file's content must have this SHA-256.
-    AssertHash(DevicePath, Sha256Digest),
+    AssertHash {
+        target: DevicePath,
+        sha256: Sha256Digest,
+    },
     /// Declare a feature, in its kind's file: added there, or replaced if it is.
     EnableFeature(Feature),
     /// Remove a feature (`feature`, `oplus-feature` or `app_feature`) from every

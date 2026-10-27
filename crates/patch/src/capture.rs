@@ -52,7 +52,13 @@ pub fn capture(
             let before = std::str::from_utf8(before)?;
             let after = std::str::from_utf8(after)?;
             let patch = diffy::create_patch(before, after).to_string().into_bytes();
-            (vec![Operation::TextPatch(target, asset)], Some(patch))
+            (
+                vec![Operation::TextPatch {
+                    target,
+                    patch: asset,
+                }],
+                Some(patch),
+            )
         }
         CaptureKind::Binary => {
             if before.len() != after.len() {
