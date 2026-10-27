@@ -177,7 +177,7 @@ impl Target {
     }
 
     /// Give every entry waiting for them Android's defaults for where it is on the
-    /// device, then what was set over them. Returns the `SetMeta` statements that
+    /// device, then what was set over them. Returns the `SetMetadata` statements that
     /// changed something.
     pub(crate) fn give_defaults(
         &mut self,
@@ -358,7 +358,7 @@ pub(crate) fn transformed(
     })
 }
 
-/// A `SetMeta` on an entry waiting for Android's defaults, set over them.
+/// A `SetMetadata` on an entry waiting for Android's defaults, set over them.
 #[derive(Clone, Debug)]
 pub(crate) struct Pending {
     pub statement: usize,

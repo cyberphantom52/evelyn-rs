@@ -120,7 +120,7 @@ impl Composition {
                 Stmt::Copy { .. }
                     | Stmt::Move { .. }
                     | Stmt::Reset { .. }
-                    | Stmt::SetMeta { .. }
+                    | Stmt::SetMetadata { .. }
                     | Stmt::Within { .. }
             )
         {
@@ -310,7 +310,7 @@ impl Composition {
                     target.accept(changed, step);
                 }
             }
-            Stmt::SetMeta {
+            Stmt::SetMetadata {
                 selection,
                 pattern,
                 overrides,

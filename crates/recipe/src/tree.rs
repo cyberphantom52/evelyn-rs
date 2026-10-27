@@ -43,7 +43,7 @@ pub enum Stmt {
     },
     /// Give every entry selected, and what is below it, Android's defaults for
     /// where it is on the device. They are worked out from the finished build's
-    /// own policy, as the device would; a later `SetMeta` applies over them.
+    /// own policy, as the device would; a later `SetMetadata` applies over them.
     Reset { selection: Expr },
     /// Move an entry (and its contents) to another path, within or across
     /// partitions, keeping its metadata.
@@ -53,7 +53,7 @@ pub enum Stmt {
     Write { asset: RelativePath, to: DevicePath },
     /// Set metadata on every entry selected; `pattern` names the selection in
     /// reports.
-    SetMeta {
+    SetMetadata {
         selection: Expr,
         pattern: String,
         overrides: Overrides,
