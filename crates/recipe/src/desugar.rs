@@ -1,12 +1,11 @@
 //! Surface recipes (steps of operations, `let:` and `when:`) into the primitive tree.
 
 use crate::{
-    Data, Error, Expr as Surface, Feature, Metadata, Operation, PackageEdit, Recipe, Step, XmlEdit,
-    XmlMatch, XmlName, XmlPath, XmlPredicate,
+    Data, Error, Expr as Surface, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch,
+    XmlName, XmlPath, XmlPredicate,
     tree::{BinaryOp, Expr, Scope, Stmt, Transform, Tree, UnaryOp},
     value::Value,
 };
-use model::{DevicePath, RelativePath};
 
 impl Recipe {
     /// The recipe as primitives, its steps in dependency order.
@@ -261,7 +260,43 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         } => Stmt::Within {
             package: target.clone(),
             before: before.clone(),
-            body: edits.iter().map(package_edit).collect(),
+            body: edits.iter().flat_map(self::operation).collect(),
+        },
+        Operation::StubMethod {
+            class,
+            method,
+            returns,
+        } => Stmt::Edit {
+            selection: Expr::Class(class.clone()),
+            transform: Transform::StubMethod {
+                class: class.clone(),
+                method: method.clone(),
+                returns: *returns,
+            },
+        },
+        Operation::ReplaceMethod {
+            class,
+            method,
+            body,
+        } => Stmt::Edit {
+            selection: Expr::Class(class.clone()),
+            transform: Transform::ReplaceMethod {
+                class: class.clone(),
+                method: method.clone(),
+                body: body.clone(),
+            },
+        },
+        Operation::InsertMethod {
+            class,
+            method,
+            body,
+        } => Stmt::Edit {
+            selection: Expr::Class(class.clone()),
+            transform: Transform::InsertMethod {
+                class: class.clone(),
+                method: method.clone(),
+                body: body.clone(),
+            },
         },
         Operation::EnableFeature(feature) => {
             let (file, root, element, name, args) = match feature {
@@ -358,79 +393,6 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         },
     };
     vec![stmt]
-}
-
-/// A package edit, as a statement inside the package.
-fn package_edit(edit: &PackageEdit) -> Stmt {
-    let at = |path: &RelativePath| format!("/{path}");
-    let class = |class: &String, transform| Stmt::Edit {
-        selection: Expr::Class(class.clone()),
-        transform,
-    };
-    match edit {
-        PackageEdit::StubMethod {
-            class: name,
-            method,
-            returns,
-        } => class(
-            name,
-            Transform::StubMethod {
-                class: name.clone(),
-                method: method.clone(),
-                returns: *returns,
-            },
-        ),
-        PackageEdit::ReplaceMethod {
-            class: name,
-            method,
-            body,
-        } => class(
-            name,
-            Transform::ReplaceMethod {
-                class: name.clone(),
-                method: method.clone(),
-                body: body.clone(),
-            },
-        ),
-        PackageEdit::InsertMethod {
-            class: name,
-            method,
-            body,
-        } => class(
-            name,
-            Transform::InsertMethod {
-                class: name.clone(),
-                method: method.clone(),
-                body: body.clone(),
-            },
-        ),
-        PackageEdit::TextPatch {
-            path,
-            patch,
-            before,
-        } => Stmt::Edit {
-            selection: select(&at(path), Scope::default()),
-            transform: Transform::TextPatch {
-                patch: patch.clone(),
-                before: before.clone(),
-            },
-        },
-        PackageEdit::Xml {
-            path,
-            before,
-            edits,
-        } => Stmt::Edit {
-            selection: select(&at(path), Scope::default()),
-            transform: Transform::Xml {
-                before: before.clone(),
-                edits: edits.clone(),
-            },
-        },
-        PackageEdit::Install { path, asset } => Stmt::Write {
-            asset: asset.clone(),
-            to: DevicePath::try_from(at(path)).expect("a relative path below / is a device path"),
-        },
-    }
 }
 
 /// `<element name="name">`, as an XML selector.
