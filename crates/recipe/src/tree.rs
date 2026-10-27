@@ -80,32 +80,15 @@ pub enum Transform {
         before: Option<Sha256Digest>,
         edits: Vec<XmlEdit>,
     },
-    SetProp {
-        key: String,
-        value: String,
-    },
-    DelProp {
-        key: String,
-    },
+    /// Set a property to `value`, or remove it without one.
+    Prop { key: String, value: Option<String> },
     /// Add a string at the end, on a line of its own.
     Append(Expr),
-    /// Make a smali method only return `returns`.
-    StubMethod {
+    /// Change one method of the class a smali file defines.
+    Smali {
         class: String,
         method: String,
-        returns: Returns,
-    },
-    /// Replace a smali method with the asset `body`.
-    ReplaceMethod {
-        class: String,
-        method: String,
-        body: RelativePath,
-    },
-    /// Add the asset `body` as a new smali method.
-    InsertMethod {
-        class: String,
-        method: String,
-        body: RelativePath,
+        edit: MethodEdit,
     },
 }
 
@@ -153,6 +136,17 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
     },
+}
+
+/// How `Smali` changes a method.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum MethodEdit {
+    /// Make it only return this.
+    Stub(Returns),
+    /// Replace it with the asset `body`, one complete method.
+    Replace(RelativePath),
+    /// Add the asset `body` as a new method.
+    Insert(RelativePath),
 }
 
 /// What `SetMetadata` gives an entry.

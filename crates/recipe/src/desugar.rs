@@ -3,7 +3,7 @@
 use crate::{
     Data, Error, Expr as Surface, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch,
     XmlName, XmlPath, XmlPredicate,
-    tree::{Assigned, BinaryOp, Expr, Scope, Source, Stmt, Transform, Tree, UnaryOp},
+    tree::{Assigned, BinaryOp, Expr, MethodEdit, Scope, Source, Stmt, Transform, Tree, UnaryOp},
     value::Value,
 };
 use model::RelativePath;
@@ -240,9 +240,9 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 create: true,
                 every: target.is_none(),
             },
-            transform: Transform::SetProp {
+            transform: Transform::Prop {
                 key: key.clone(),
-                value: value.clone(),
+                value: Some(value.clone()),
             },
         },
         // A device-wide removal clears every definition, or a lower one would show.
@@ -253,7 +253,10 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 create: false,
                 every: target.is_none(),
             },
-            transform: Transform::DelProp { key: key.clone() },
+            transform: Transform::Prop {
+                key: key.clone(),
+                value: None,
+            },
         },
         Operation::TextPatch { target, patch } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
@@ -297,38 +300,17 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             class,
             method,
             returns,
-        } => Stmt::Edit {
-            selection: smali_file(class),
-            transform: Transform::StubMethod {
-                class: class.clone(),
-                method: method.clone(),
-                returns: *returns,
-            },
-        },
+        } => smali(class, method, MethodEdit::Stub(*returns)),
         Operation::ReplaceMethod {
             class,
             method,
             body,
-        } => Stmt::Edit {
-            selection: smali_file(class),
-            transform: Transform::ReplaceMethod {
-                class: class.clone(),
-                method: method.clone(),
-                body: body.clone(),
-            },
-        },
+        } => smali(class, method, MethodEdit::Replace(body.clone())),
         Operation::InsertMethod {
             class,
             method,
             body,
-        } => Stmt::Edit {
-            selection: smali_file(class),
-            transform: Transform::InsertMethod {
-                class: class.clone(),
-                method: method.clone(),
-                body: body.clone(),
-            },
-        },
+        } => smali(class, method, MethodEdit::Insert(body.clone())),
         Operation::EnableFeature(feature) => {
             let file = feature_file(feature);
             let (root, element, name, args) = match feature {
@@ -441,6 +423,18 @@ fn feature_file(feature: &Feature) -> &str {
         Feature::Android(_) => "/my_product/etc/permissions/com.oplus.android-features.xml",
         Feature::Oplus(_) => "/my_product/etc/permissions/oplus.feature.android.xml",
         Feature::App { file, .. } => file.as_ref(),
+    }
+}
+
+/// An edit of one method of a class, in its smali file.
+fn smali(class: &str, method: &str, edit: MethodEdit) -> Stmt {
+    Stmt::Edit {
+        selection: smali_file(class),
+        transform: Transform::Smali {
+            class: class.to_owned(),
+            method: method.to_owned(),
+            edit,
+        },
     }
 }
 
