@@ -3,9 +3,7 @@
 //! these few statements and expressions, so each primitive has one implementation
 //! however many surface forms use it.
 
-use crate::{
-    Data, Firmware, Hex, Metadata, Overrides, PropertyTarget, Returns, XmlEdit, value::Value,
-};
+use crate::{Firmware, Hex, Overrides, PropertyTarget, Returns, XmlEdit, value::Value};
 use model::{DevicePath, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -32,13 +30,15 @@ pub enum Stmt {
     /// Remove every entry selected; `pattern` names the selection in reports.
     Delete { selection: Expr, pattern: String },
     /// Copy the selection into the build, at the same path or at `to`.
-    /// Overwritten entries keep the build's metadata; new ones have the source's,
-    /// or with `Default` Android's defaults.
+    /// Overwritten entries keep the build's metadata; new ones have the source's.
     Copy {
         selection: Expr,
         to: Option<DevicePath>,
-        metadata: Metadata,
     },
+    /// Give every entry selected, and what is below it, Android's defaults for
+    /// where it is on the device. They are worked out from the finished build's
+    /// own policy, as the device would; a later `SetMeta` applies over them.
+    Reset { selection: Expr, pattern: String },
     /// Move an entry (and its contents) to another path, within or across
     /// partitions, keeping its metadata.
     Move { from: DevicePath, to: DevicePath },
@@ -89,8 +89,8 @@ pub enum Transform {
     DelProp {
         key: String,
     },
-    /// Add text, or a firmware file's content, at the end, on a line of its own.
-    Append(Data),
+    /// Add a string at the end, on a line of its own.
+    Append(Expr),
     /// Make a smali method only return `returns`.
     StubMethod {
         class: String,
@@ -135,6 +135,13 @@ pub enum Expr {
     },
     /// The smali file defining a class (`Lcom/example/Name;`), inside a package.
     Class(String),
+    /// The text of the one file selected, in the build or a firmware.
+    Content(Box<Expr>),
+    /// The files selected whose content contains `text`.
+    Containing {
+        selection: Box<Expr>,
+        text: Box<Expr>,
+    },
     /// The SHA-256 of the one file selected.
     Hash(Box<Expr>),
     /// The build has this partition.

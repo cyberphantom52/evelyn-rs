@@ -4,7 +4,7 @@
 
 use crate::{
     Error,
-    tree::{BinaryOp, Expr, Stmt, Tree, UnaryOp},
+    tree::{BinaryOp, Expr, Stmt, Transform, Tree, UnaryOp},
     value::Value,
 };
 use model::Name;
@@ -58,8 +58,16 @@ fn walk_stmt<'a>(
             body.iter()
                 .try_for_each(|stmt| walk_stmt(stmt, visitor, bound))
         }
+        Stmt::Edit {
+            selection,
+            transform: Transform::Append(text),
+        } => {
+            walk_expr(selection, visitor, bound)?;
+            walk_expr(text, visitor, bound)
+        }
         Stmt::Delete { selection, .. }
         | Stmt::Copy { selection, .. }
+        | Stmt::Reset { selection, .. }
         | Stmt::SetMeta { selection, .. }
         | Stmt::Edit { selection, .. } => walk_expr(selection, visitor, bound),
         Stmt::Assert { condition, .. } => walk_expr(condition, visitor, bound),
@@ -70,7 +78,13 @@ fn walk_stmt<'a>(
 fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result<(), Error> {
     visitor.expr(expr, bound)?;
     match expr {
-        Expr::Hash(inner) | Expr::Unary { expr: inner, .. } => walk_expr(inner, visitor, bound),
+        Expr::Hash(inner) | Expr::Content(inner) | Expr::Unary { expr: inner, .. } => {
+            walk_expr(inner, visitor, bound)
+        }
+        Expr::Containing { selection, text } => {
+            walk_expr(selection, visitor, bound)?;
+            walk_expr(text, visitor, bound)
+        }
         Expr::Binary { left, right, .. } => {
             walk_expr(left, visitor, bound)?;
             walk_expr(right, visitor, bound)
@@ -97,14 +111,21 @@ pub enum Kind {
 impl Expr {
     pub fn kind(&self) -> Kind {
         match self {
-            Self::Literal(Value::Str(_) | Value::Unset) | Self::Prop { .. } | Self::Hash(_) => {
-                Kind::Str
-            }
+            Self::Literal(Value::Str(_) | Value::Unset)
+            | Self::Prop { .. }
+            | Self::Hash(_)
+            | Self::Content(_) => Kind::Str,
             Self::Literal(Value::List(_)) => Kind::List,
             Self::Literal(Value::Selection(_))
             | Self::Select { .. }
             | Self::Class(_)
+            | Self::Containing { .. }
             | Self::PropFiles { .. } => Kind::Selection,
+            Self::Binary {
+                op: BinaryOp::Or,
+                left,
+                ..
+            } if left.kind() == Kind::Selection => Kind::Selection,
             Self::Literal(Value::Bool(_))
             | Self::Partition(_)
             | Self::Asset(_)
@@ -168,9 +189,17 @@ impl Check {
             }
             Stmt::Delete { selection, .. }
             | Stmt::Copy { selection, .. }
+            | Stmt::Reset { selection, .. }
             | Stmt::SetMeta { selection, .. }
             | Stmt::Edit { selection, .. } => {
-                expect(selection.kind(), &[Kind::Selection], "a selection")?
+                expect(selection.kind(), &[Kind::Selection], "a selection")?;
+                if let Stmt::Edit {
+                    transform: Transform::Append(text),
+                    ..
+                } = stmt
+                {
+                    expect(text.kind(), &[Kind::Str], "Append")?;
+                }
             }
             _ => {}
         }
@@ -199,6 +228,11 @@ fn check_expr(expr: &Expr) -> Result<(), Error> {
     {
         match expr {
             Expr::Hash(inner) => expect(inner.kind(), &[Kind::Selection], "Hash"),
+            Expr::Content(inner) => expect(inner.kind(), &[Kind::Selection], "Content"),
+            Expr::Containing { selection, text } => {
+                expect(selection.kind(), &[Kind::Selection], "Containing")?;
+                expect(text.kind(), &[Kind::Str], "Containing")
+            }
             Expr::Unary { op, expr } => match op {
                 UnaryOp::Not => expect(expr.kind(), &[Kind::Bool], "Not"),
                 UnaryOp::Defined => expect(expr.kind(), &[Kind::Str, Kind::Selection], "Defined"),
@@ -206,9 +240,14 @@ fn check_expr(expr: &Expr) -> Result<(), Error> {
             Expr::Binary { op, left, right } => {
                 let (left, right) = (left.kind(), right.kind());
                 match op {
-                    BinaryOp::And | BinaryOp::Or => {
-                        expect(left, &[Kind::Bool], "All/Any")?;
-                        expect(right, &[Kind::Bool], "All/Any")
+                    BinaryOp::And => {
+                        expect(left, &[Kind::Bool], "All")?;
+                        expect(right, &[Kind::Bool], "All")
+                    }
+                    // Of booleans, either holds; of selections, what either selects.
+                    BinaryOp::Or => {
+                        expect(left, &[Kind::Bool, Kind::Selection], "Any")?;
+                        expect(right, &[left], "Any")
                     }
                     BinaryOp::Eq => {
                         expect(left, &[Kind::Str, Kind::Bool], "Eq")?;

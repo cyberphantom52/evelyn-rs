@@ -1,9 +1,14 @@
 use crate::{Error, Target, compose::Context, layout};
 use model::{
-    Entry, EntryKind, Name, PartitionTree, Provenance, RelativePath, Sha256Digest, SourceRef,
+    AndroidMetadata, Entry, EntryKind, Name, PartitionTree, Provenance, RelativePath, Sha256Digest,
+    SourceRef,
 };
-use recipe::{Data, Metadata, Overrides, Returns, tree::Transform};
-use std::path::Path;
+use recipe::{
+    Overrides, Returns,
+    tree::{Expr, Transform},
+    value::Value,
+};
+use std::{collections::BTreeSet, path::Path};
 
 impl Target {
     /// Move a subtree within this target.
@@ -43,18 +48,15 @@ impl Target {
     }
 
     /// Import `path` from a firmware's `source` tree: overwritten entries keep this
-    /// target's metadata; new ones have the source's, or otherwise get Android's
-    /// defaults when the build is done. Returns the new entries it brought.
+    /// target's metadata, new ones have the source's.
     pub(crate) fn import(
         &mut self,
         source: &PartitionTree,
         from: &SourceRef,
         path: &RelativePath,
         to_path: &RelativePath,
-        metadata: &Metadata,
         step: &Name,
-    ) -> Result<Vec<RelativePath>, Error> {
-        let mut brought = Vec::new();
+    ) -> Result<(), Error> {
         // A wildcard import keeps every match at its own path.
         let pairs = if layout::is_glob(path) {
             if to_path != path {
@@ -82,25 +84,11 @@ impl Target {
                     entry.metadata = previous.metadata.clone();
                 }
             }
-            let earlier = self.created.clone();
-            let existing: Vec<bool> = selected
-                .keys()
-                .map(|path| self.tree.entries.contains_key(path))
-                .collect();
+            let earlier: BTreeSet<RelativePath> = self.derived.keys().cloned().collect();
             self.accept(changed, step);
-            brought.extend(
-                selected
-                    .keys()
-                    .zip(existing)
-                    .filter(|(_, existed)| !existed)
-                    .map(|(path, _)| path.clone()),
-            );
-            if *metadata != Metadata::Copy {
-                continue;
-            }
             // What the source has keeps the source's metadata: what it brought, and
             // the parent directories made like the source's.
-            self.created.retain(|path| {
+            self.derived.retain(|path, _| {
                 earlier.contains(path)
                     || !selected.contains_key(path)
                         && !source
@@ -109,7 +97,7 @@ impl Target {
                             .is_some_and(|entry| matches!(entry.kind, EntryKind::Directory))
             });
         }
-        Ok(brought)
+        Ok(())
     }
 
     /// Write `file` at `to`. This replaces the directory entry, not every alias of
@@ -148,49 +136,57 @@ impl Target {
         Ok(changed)
     }
 
-    /// Set what `overrides` sets on the entry at `path`; whether that changed it.
+    /// Set what `overrides` sets on the entry at `path`, and whether that changed
+    /// it; for an entry waiting for Android's defaults, `None`: it is set over them.
     pub(crate) fn set_metadata(
         &mut self,
         path: &RelativePath,
         overrides: &Overrides,
+        statement: usize,
         step: &Name,
-    ) -> Result<bool, Error> {
+    ) -> Result<Option<bool>, Error> {
+        if let Some(pending) = self.derived.get_mut(path) {
+            pending.push(Pending {
+                statement,
+                overrides: overrides.clone(),
+                step: step.clone(),
+            });
+            return Ok(None);
+        }
         let entry = self
             .tree
             .entries
             .get_mut(path)
             .ok_or_else(|| Error::Missing(path.clone()))?;
-        let mut metadata = entry.metadata.clone();
-        metadata.uid = overrides.uid.unwrap_or(metadata.uid);
-        metadata.gid = overrides.gid.unwrap_or(metadata.gid);
-        metadata.mode = overrides.mode.unwrap_or(metadata.mode);
-        // A label is the same with or without its terminating NUL, as for the kernel.
-        let current = metadata.xattrs.get("security.selinux");
-        if let Some(label) = &overrides.selinux
-            && current.is_none_or(|current| {
-                current.strip_suffix(&[0]).unwrap_or(current) != label.as_bytes()
-            })
-        {
-            let mut value = label.as_bytes().to_vec();
-            value.push(0);
-            metadata.xattrs.insert("security.selinux".into(), value);
+        if !set(&mut entry.metadata, overrides) {
+            return Ok(Some(false));
         }
-        if metadata == entry.metadata {
-            return Ok(false);
-        }
-        entry.metadata = metadata;
         entry.provenance.push(Provenance::Step { id: step.clone() });
-        Ok(true)
+        Ok(Some(true))
     }
 
-    /// Give every new entry Android's defaults for where it is on the device.
+    /// Have `path`, and what is below it, get Android's defaults; what was set on
+    /// them before no longer applies.
+    pub(crate) fn reset(&mut self, path: &RelativePath) {
+        let below = format!("{path}/");
+        for entry in self.tree.entries.keys() {
+            if entry == path || entry.as_ref().starts_with(&below) {
+                self.derived.insert(entry.clone(), Vec::new());
+            }
+        }
+    }
+
+    /// Give every entry waiting for them Android's defaults for where it is on the
+    /// device, then what was set over them. Returns the `SetMeta` statements that
+    /// changed something.
     pub(crate) fn give_defaults(
         &mut self,
         partition: &Name,
         mounts: &model::Mounts,
         defaults: &crate::defaults::Defaults,
-    ) -> Result<(), Error> {
-        for path in std::mem::take(&mut self.created) {
+    ) -> Result<Vec<usize>, Error> {
+        let mut changed = Vec::new();
+        for (path, pending) in std::mem::take(&mut self.derived) {
             let Some(entry) = self.tree.entries.get_mut(&path) else {
                 continue;
             };
@@ -202,8 +198,14 @@ impl Target {
                 .device_path(&at)
                 .ok_or_else(|| Error::UnknownPartition(partition.clone()))?;
             entry.metadata = defaults.metadata(&device, &entry.kind)?;
+            for pending in pending {
+                if set(&mut entry.metadata, &pending.overrides) {
+                    changed.push(pending.statement);
+                    entry.provenance.push(Provenance::Step { id: pending.step });
+                }
+            }
         }
-        Ok(())
+        Ok(changed)
     }
 
     /// Transform a file's content for its whole hardlink group, keeping metadata.
@@ -249,7 +251,7 @@ impl Target {
     pub(crate) fn accept(&mut self, mut changed: PartitionTree, step: &Name) {
         for (path, entry) in &mut changed.entries {
             if !self.tree.entries.contains_key(path) {
-                self.created.insert(path.clone());
+                self.derived.entry(path.clone()).or_default();
             }
             if !self.tree.entries.get(path).is_some_and(|previous| {
                 previous.kind == entry.kind
@@ -313,7 +315,8 @@ pub(crate) fn transformed(
         Transform::SetProp { key, value } => {
             android_property::set(&text(bytes)?, key, value, None)?.into_bytes()
         }
-        Transform::Append(Data::Text(data)) => {
+        // The string is evaluated before the edit, where expressions are.
+        Transform::Append(Expr::Literal(Value::Str(data))) => {
             let mut text = text(bytes)?;
             if !text.is_empty() && !text.ends_with('\n') {
                 text.push('\n');
@@ -324,10 +327,8 @@ pub(crate) fn transformed(
             }
             text.into_bytes()
         }
-        Transform::Append(Data::File { .. }) => {
-            return Err(Error::Unsupported(
-                "a firmware file is read before it is appended",
-            ));
+        Transform::Append(_) => {
+            return Err(Error::Unsupported("Append's string is evaluated first"));
         }
         Transform::DelProp { key } => {
             android_property::remove(&text(bytes)?, key, None)?.into_bytes()
@@ -355,4 +356,31 @@ pub(crate) fn transformed(
             body,
         } => smali::insert_method(&text(bytes)?, class, method, &asset(body)?)?.into_bytes(),
     })
+}
+
+/// A `SetMeta` on an entry waiting for Android's defaults, set over them.
+#[derive(Clone, Debug)]
+pub(crate) struct Pending {
+    pub statement: usize,
+    pub overrides: Overrides,
+    pub step: Name,
+}
+
+/// Set what `overrides` sets on `metadata`; whether that changed it. A label is the
+/// same with or without its terminating NUL, as for the kernel.
+fn set(metadata: &mut AndroidMetadata, overrides: &Overrides) -> bool {
+    let before = metadata.clone();
+    metadata.uid = overrides.uid.unwrap_or(metadata.uid);
+    metadata.gid = overrides.gid.unwrap_or(metadata.gid);
+    metadata.mode = overrides.mode.unwrap_or(metadata.mode);
+    let current = metadata.xattrs.get("security.selinux");
+    if let Some(label) = &overrides.selinux
+        && current
+            .is_none_or(|current| current.strip_suffix(&[0]).unwrap_or(current) != label.as_bytes())
+    {
+        let mut value = label.as_bytes().to_vec();
+        value.push(0);
+        metadata.xattrs.insert("security.selinux".into(), value);
+    }
+    *metadata != before
 }

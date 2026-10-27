@@ -85,8 +85,9 @@ pub struct Target {
     root: PathBuf,
     pub(crate) tree: PartitionTree,
     next_blob: u64,
-    /// Entries this build made, which get Android's defaults when it is done.
-    pub(crate) created: BTreeSet<RelativePath>,
+    /// Entries that get Android's defaults when the build is done, with what is
+    /// set over them.
+    pub(crate) derived: BTreeMap<RelativePath, Vec<crate::operations::Pending>>,
 }
 
 impl Target {
@@ -105,7 +106,7 @@ impl Target {
             root: output.into(),
             tree,
             next_blob: 0,
-            created: BTreeSet::new(),
+            derived: BTreeMap::new(),
         })
     }
 
