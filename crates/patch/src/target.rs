@@ -4,7 +4,7 @@
 use android_fs::{Store, image::Source};
 use model::{
     Content, Entry, EntryKind, Filesystem, Name, PartitionTree, Provenance, RelativePath,
-    Sha256Digest, Sha256Writer, SourceRef, TargetPath,
+    Sha256Digest, Sha256Writer, SourceRef,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -158,21 +158,34 @@ impl Target {
         Ok(())
     }
 
-    /// Move a subtree into another target, preserving metadata and lineage.
-    pub(crate) fn relocate_to(
+    /// Copy a subtree to another path in this target, keeping its metadata.
+    pub(crate) fn copy_within(
         &mut self,
-        destination: &mut Self,
-        from: &TargetPath,
-        to: &TargetPath,
+        from: &RelativePath,
+        to: &RelativePath,
         step: &Name,
     ) -> Result<(), Error> {
-        let selected = crate::layout::subtree(&self.tree, &from.path, &to.path)?;
-        let removed = crate::layout::remove(&self.tree, &from.path)?;
-        let mut changed = destination.destination(&to.path, false, Some(&self.tree))?;
+        let selected = crate::layout::subtree(&self.tree, from, to)?;
+        let mut changed = self.destination(to, true, None)?;
+        changed.entries.extend(selected);
+        self.accept(changed, step);
+        Ok(())
+    }
+
+    /// Copy a subtree into another target, keeping its metadata; file contents the
+    /// source holds are linked or copied into the destination.
+    pub(crate) fn copy_into(
+        &self,
+        destination: &mut Self,
+        from: &RelativePath,
+        to: &RelativePath,
+        step: &Name,
+    ) -> Result<(), Error> {
+        let selected = crate::layout::subtree(&self.tree, from, to)?;
+        let mut changed = destination.destination(to, true, Some(&self.tree))?;
         changed
             .entries
             .extend(destination.adopt(Some(&self.root), selected)?);
-        self.accept(removed, step);
         destination.accept(changed, step);
         Ok(())
     }

@@ -4,7 +4,7 @@
 use model::{DevicePath, Name, RelativePath};
 use recipe::{
     Error, Firmware,
-    tree::{Expr, Stmt, Transform},
+    tree::{Expr, Source, Stmt, Transform},
     visit::Visitor,
 };
 
@@ -13,17 +13,24 @@ use recipe::{
 pub(crate) struct Assets(pub Vec<RelativePath>);
 
 impl Visitor for Assets {
+    fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), Error> {
+        if let Expr::Select { pattern, scope } = expr
+            && scope.inside == Some(Source::Assets)
+        {
+            self.0.push(RelativePath::try_from(pattern.clone())?);
+        }
+        Ok(())
+    }
+
     fn stmt(&mut self, stmt: &Stmt, _bound: &[&Name]) -> Result<(), Error> {
-        match stmt {
-            Stmt::Write { asset, .. } => self.0.push(asset.clone()),
-            Stmt::Edit { transform, .. } => match transform {
+        if let Stmt::Edit { transform, .. } = stmt {
+            match transform {
                 Transform::TextPatch { patch, .. } => self.0.push(patch.clone()),
                 Transform::ReplaceMethod { body, .. } | Transform::InsertMethod { body, .. } => {
                     self.0.push(body.clone())
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
         Ok(())
     }
@@ -39,7 +46,7 @@ pub(crate) struct Sources {
 impl Visitor for Sources {
     fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), Error> {
         if let Expr::Select { pattern, scope } = expr
-            && let Some(firmware) = scope.inside
+            && let Some(Source::Firmware(firmware)) = scope.inside
         {
             self.reads
                 .push((firmware, DevicePath::try_from(pattern.clone())?));

@@ -11,18 +11,6 @@ use recipe::{
 use std::{collections::BTreeSet, path::Path};
 
 impl Target {
-    /// Move a subtree within this target.
-    pub(crate) fn relocate(
-        &mut self,
-        from: &RelativePath,
-        to: &RelativePath,
-        step: &Name,
-    ) -> Result<(), Error> {
-        let changed = layout::relocate(&self.tree, from, to)?;
-        self.accept(changed, step);
-        Ok(())
-    }
-
     /// Remove `path` (or every entry a glob matches) and its contents. Returns
     /// whether there was anything to remove.
     pub(crate) fn remove(&mut self, path: &RelativePath, step: &Name) -> Result<bool, Error> {

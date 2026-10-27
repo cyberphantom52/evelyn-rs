@@ -73,7 +73,6 @@ fn walk_stmt<'a>(
         | Stmt::SetMetadata { selection, .. }
         | Stmt::Edit { selection, .. } => walk_expr(selection, visitor, bound),
         Stmt::Assert { condition, .. } => walk_expr(condition, visitor, bound),
-        Stmt::Move { .. } | Stmt::Write { .. } => Ok(()),
     }
 }
 
@@ -96,8 +95,7 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         | Expr::Prop { .. }
         | Expr::PropFiles { .. }
         | Expr::Partition(_)
-        | Expr::Class(_)
-        | Expr::Asset(_) => Ok(()),
+        | Expr::Class(_) => Ok(()),
     }
 }
 
@@ -130,7 +128,6 @@ impl Expr {
             } if left.kind() == Kind::Selection => Kind::Selection,
             Self::Literal(Value::Bool(_))
             | Self::Partition(_)
-            | Self::Asset(_)
             | Self::Unary { .. }
             | Self::Binary { .. } => Kind::Bool,
         }

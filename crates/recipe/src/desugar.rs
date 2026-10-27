@@ -3,9 +3,10 @@
 use crate::{
     Data, Error, Expr as Surface, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch,
     XmlName, XmlPath, XmlPredicate,
-    tree::{BinaryOp, Expr, Scope, Stmt, Transform, Tree, UnaryOp},
+    tree::{BinaryOp, Expr, Scope, Source, Stmt, Transform, Tree, UnaryOp},
     value::Value,
 };
+use model::RelativePath;
 
 impl Recipe {
     /// The recipe as primitives, its steps in dependency order.
@@ -26,7 +27,7 @@ fn step(step: &Step) -> Stmt {
         .iter()
         .filter_map(|operation| match operation {
             Operation::Install { asset, .. } if asset.as_ref().contains('{') => {
-                Some(Expr::Asset(asset.clone()))
+                Some(defined(asset_file(asset)))
             }
             _ => None,
         })
@@ -132,7 +133,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 selection: select(
                     pattern.as_ref(),
                     Scope {
-                        inside: Some(*from),
+                        inside: Some(Source::Firmware(*from)),
                         ..Scope::default()
                     },
                 ),
@@ -147,7 +148,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 select(
                     pattern.as_ref(),
                     Scope {
-                        inside: Some(*from),
+                        inside: Some(Source::Firmware(*from)),
                         ..Scope::default()
                     },
                 ),
@@ -197,13 +198,22 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 skip: format!("nothing to remove: {pattern}"),
             }
         }
-        Operation::Relocate { from, to } => Stmt::Move {
-            from: from.clone(),
-            to: to.clone(),
-        },
-        Operation::Install { asset, to } => Stmt::Write {
-            asset: asset.clone(),
-            to: to.clone(),
+        // Copying within the build carries content and metadata; what was copied
+        // is then removed where it was.
+        Operation::Relocate { from, to } => {
+            let from = select(from.as_ref(), Scope::default());
+            return vec![
+                expect(from.clone(), format!("{} is not there", ron_of(&from))),
+                Stmt::Copy {
+                    selection: from.clone(),
+                    to: Some(to.clone()),
+                },
+                Stmt::Delete { selection: from },
+            ];
+        }
+        Operation::Install { asset, to } => Stmt::Copy {
+            selection: asset_file(asset),
+            to: Some(to.clone()),
         },
         Operation::SetMetadata {
             pattern,
@@ -376,7 +386,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 Data::File { from, path } => Expr::Content(Box::new(select(
                     path.as_ref(),
                     Scope {
-                        inside: Some(*from),
+                        inside: Some(Source::Firmware(*from)),
                         ..Scope::default()
                     },
                 ))),
@@ -421,6 +431,25 @@ fn feature_file(feature: &Feature) -> &str {
         Feature::Android(_) => "/my_product/etc/permissions/com.oplus.android-features.xml",
         Feature::Oplus(_) => "/my_product/etc/permissions/oplus.feature.android.xml",
         Feature::App { file, .. } => file.as_ref(),
+    }
+}
+
+/// A recipe asset, as a selection.
+fn asset_file(asset: &RelativePath) -> Expr {
+    select(
+        asset.as_ref(),
+        Scope {
+            inside: Some(Source::Assets),
+            ..Scope::default()
+        },
+    )
+}
+
+/// The pattern a selection was written with, for messages.
+fn ron_of(selection: &Expr) -> String {
+    match selection {
+        Expr::Select { pattern, .. } => pattern.clone(),
+        other => ron::to_string(other).unwrap_or_default(),
     }
 }
 

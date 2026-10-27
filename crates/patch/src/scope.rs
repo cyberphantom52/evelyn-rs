@@ -11,7 +11,7 @@ use crate::{Composition, Error, Target, compose::Context, layout, package::Opene
 use model::{DevicePath, EntryKind, Name, PartitionTree, RelativePath, SourceRef};
 use recipe::{
     Firmware, PropertyTarget,
-    tree::{BinaryOp, Expr, Scope as Range, UnaryOp},
+    tree::{BinaryOp, Expr, Scope as Range, Source, UnaryOp},
     value::{Located, Place, Value},
 };
 use std::collections::BTreeMap;
@@ -190,7 +190,19 @@ impl Scope<'_> {
     /// it. In the build, a device path, or a relative pattern tried in the
     /// directory of every partition the range selects.
     pub fn select(&self, pattern: &str, range: &Range) -> Result<Vec<Located>, Error> {
-        if let Some(firmware) = range.inside {
+        if range.inside == Some(Source::Assets) {
+            // An asset (file or directory) by its path in the recipe's directory.
+            let path = RelativePath::try_from(pattern.to_owned())?;
+            return Ok(match path.resolve(self.context.assets).exists() {
+                true => vec![Located {
+                    place: Place::Asset,
+                    partition: Name::try_from("assets".to_owned())?,
+                    path,
+                }],
+                false => Vec::new(),
+            });
+        }
+        if let Some(Source::Firmware(firmware)) = range.inside {
             let mut found = Vec::new();
             for at in self
                 .context
@@ -440,7 +452,6 @@ impl Scope<'_> {
                 Value::Selection(found)
             }
             Expr::Partition(name) => Value::Bool(self.targets.contains_key(name)),
-            Expr::Asset(path) => Value::Bool(path.resolve(self.context.assets).exists()),
             Expr::Unary { op, expr } => {
                 let value = self.eval(expr)?;
                 match op {
@@ -468,6 +479,7 @@ impl Scope<'_> {
     /// The content of a selected file: in the build, a firmware or the open package.
     fn content(&self, entry: &Located) -> Result<Vec<u8>, Error> {
         match entry.place {
+            Place::Asset => Ok(std::fs::read(entry.path.resolve(self.context.assets))?),
             Place::Build => self
                 .targets
                 .get(&entry.partition)

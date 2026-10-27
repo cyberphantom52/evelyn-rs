@@ -78,7 +78,7 @@ impl Resources {
 
 impl Visitor for Resources {
     fn stmt(&mut self, stmt: &Stmt, _bound: &[&Name]) -> Result<(), recipe::Error> {
-        if let Stmt::Write { to, .. } = stmt {
+        if let Stmt::Copy { to: Some(to), .. } = stmt {
             self.note(to.as_ref());
         }
         Ok(())

@@ -35,8 +35,10 @@ pub enum Stmt {
     },
     /// Remove every entry selected.
     Delete { selection: Expr },
-    /// Copy the selection into the build, at the same path or at `to`.
-    /// Overwritten entries keep the build's metadata; new ones have the source's.
+    /// Copy what is selected (from a firmware, the recipe's assets, or the build
+    /// itself) into the build, at the same path or at `to`. Overwritten entries
+    /// keep their metadata; new ones have their source's, and assets, which have
+    /// none, get Android's defaults.
     Copy {
         selection: Expr,
         to: Option<DevicePath>,
@@ -45,12 +47,6 @@ pub enum Stmt {
     /// where it is on the device. They are worked out from the finished build's
     /// own policy, as the device would; a later `SetMetadata` applies over them.
     Reset { selection: Expr },
-    /// Move an entry (and its contents) to another path, within or across
-    /// partitions, keeping its metadata.
-    Move { from: DevicePath, to: DevicePath },
-    /// Write a recipe asset, a file or a directory's files, at `to`. Overwritten
-    /// files keep their metadata.
-    Write { asset: RelativePath, to: DevicePath },
     /// Set metadata on every entry selected; `pattern` names the selection in
     /// reports.
     SetMetadata {
@@ -152,8 +148,6 @@ pub enum Expr {
     Hash(Box<Expr>),
     /// The build has this partition.
     Partition(Name),
-    /// A recipe asset exists.
-    Asset(RelativePath),
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
@@ -165,11 +159,19 @@ pub enum Expr {
     },
 }
 
+/// Where a selection can look besides the build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Source {
+    Firmware(Firmware),
+    /// The recipe's directory: an asset path, relative to it.
+    Assets,
+}
+
 /// Where a selection looks.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Scope {
-    /// Look inside this firmware instead of the build.
-    pub inside: Option<Firmware>,
+    /// Look inside a firmware, or the recipe's assets, instead of the build.
+    pub inside: Option<Source>,
     /// Only build partitions that came from this firmware.
     pub origin: Option<Firmware>,
     /// Only partitions matching this name or glob.
