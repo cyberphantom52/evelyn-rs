@@ -1,0 +1,337 @@
+//! Firmware composition planning and build execution.
+
+mod needs;
+
+use model::{Artifact, Filesystem, ImageFormat, Mounts, Name, Output, Sha256Digest, SourceRef};
+use recipe::{Profile, ROM, Recipe, STANDARD_SYSTEM, STOCK, VENDOR_SIDE};
+use serde::Serialize;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::{Path, PathBuf},
+};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("invalid JSON record: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Android(#[from] android_fs::Error),
+    #[error("workspace IO: {0}")]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Recipe(#[from] recipe::Error),
+    #[error(transparent)]
+    Model(#[from] model::Error),
+    #[error("step IDs must be unique across recipes: {0}")]
+    DuplicateStep(Name),
+    #[error("ZIP output flashes the stock firmware's images from {0}, which does not exist")]
+    MissingFirmware(PathBuf),
+    #[error("--stock has no {0}.img, which device.toml sets")]
+    MissingStockPartition(Name),
+    #[error(
+        "stock {partition} is not the build device.toml pins: expected {expected}, found {found:?}"
+    )]
+    StockFingerprint {
+        partition: Name,
+        expected: String,
+        found: Vec<String>,
+    },
+    #[error("super and ZIP output need a [super] section in device.toml")]
+    MissingLayout,
+    #[error("missing regular recipe asset: {0}")]
+    MissingAsset(PathBuf),
+    #[error("recipe asset {0} does not match its declared SHA-256")]
+    AssetHash(PathBuf),
+}
+
+#[derive(Debug, Serialize)]
+pub struct PlannedSource {
+    pub source: SourceRef,
+    pub artifact: Artifact,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PlannedRecipe {
+    pub path: PathBuf,
+    pub recipe: Recipe,
+}
+
+/// A partition this build composes and builds into an image.
+#[derive(Debug, Serialize)]
+pub struct PlannedPartition {
+    pub name: Name,
+    pub base: SourceRef,
+    /// The port's override; otherwise the base image's filesystem.
+    pub filesystem: Option<Filesystem>,
+    /// Where the partition is mounted; for `system` without an override, decided
+    /// from its image when building.
+    pub mount_point: Option<String>,
+}
+
+/// The two firmware a port is built from, each a directory of partition images.
+pub struct Firmware<'a> {
+    pub rom: &'a Path,
+    pub stock: &'a Path,
+}
+
+/// A port with its recipes loaded and the partitions the firmware supplies resolved.
+#[derive(Debug, Serialize)]
+pub struct Plan {
+    pub profile: Profile,
+    pub output: Output,
+    /// In `super` order: standard system side, other ROM partitions, vendor side.
+    pub partitions: Vec<PlannedPartition>,
+    pub sources: Vec<PlannedSource>,
+    pub recipes: Vec<PlannedRecipe>,
+    /// Firmware images a flashable ZIP flashes, in name order.
+    pub firmware: Vec<PathBuf>,
+    /// ROM partitions the port does not take.
+    pub ignored: Vec<Name>,
+}
+
+impl Plan {
+    /// Load the port at `path`, its recipes and then `extra` recipes, against `firmware`.
+    pub fn load(
+        path: &Path,
+        output: Output,
+        firmware: &Firmware<'_>,
+        extra: &[PathBuf],
+    ) -> Result<Self, Error> {
+        let profile = Profile::load(path)?;
+        if output != Output::Partitions && profile.device.super_layout.is_none() {
+            return Err(Error::MissingLayout);
+        }
+        let mut recipes = Vec::new();
+        let mut step_ids = BTreeSet::new();
+        for recipe_path in profile.recipes()?.into_iter().chain(extra.iter().cloned()) {
+            let recipe = Recipe::load(&recipe_path)?;
+            profile.validate_recipe(&recipe)?;
+            for step in &recipe.steps {
+                if !step_ids.insert(step.id.clone()) {
+                    return Err(Error::DuplicateStep(step.id.clone()));
+                }
+            }
+            let assets = recipe_path.parent().unwrap_or(Path::new("."));
+            let mut needed = needs::Assets::default();
+            recipe.tree()?.walk(&mut needed)?;
+            for tree in &needed.trees {
+                if !assets.join(tree.as_ref()).is_dir() {
+                    return Err(Error::MissingAsset(assets.join(tree.as_ref())));
+                }
+            }
+            for (asset, sha256) in &needed.files {
+                // A templated asset is looked up when its step runs.
+                if asset.as_ref().contains('{') {
+                    continue;
+                }
+                let asset = assets.join(asset.as_ref());
+                if !asset.is_file() {
+                    return Err(Error::MissingAsset(asset));
+                }
+                if let Some(sha256) = sha256
+                    && Sha256Digest::bytes(&fs::read(&asset)?) != *sha256
+                {
+                    return Err(Error::AssetHash(asset));
+                }
+            }
+            recipes.push(PlannedRecipe {
+                path: recipe_path,
+                recipe,
+            });
+        }
+
+        let rom = filesystems(images(firmware.rom)?)?;
+        let stock = filesystems(images(firmware.stock)?)?;
+        let mut partitions = Vec::new();
+        let mut ignored = Vec::new();
+        let mut plan_partition = |name: &Name, source: &str| -> Result<(), Error> {
+            let settings = profile
+                .settings(name.as_ref())?
+                .cloned()
+                .unwrap_or_default();
+            partitions.push(PlannedPartition {
+                name: name.clone(),
+                base: SourceRef {
+                    source: Name::try_from(source.to_owned())?,
+                    partition: name.clone(),
+                },
+                filesystem: settings.filesystem,
+                mount_point: settings
+                    .mount_point
+                    .or_else(|| recipe::default_mount_point(name.as_ref())),
+            });
+            Ok(())
+        };
+        for name in STANDARD_SYSTEM {
+            if let Some(name) = rom.keys().find(|key| key.as_ref() == name) {
+                plan_partition(name, ROM)?;
+            }
+        }
+        for name in rom.keys() {
+            if STANDARD_SYSTEM.contains(&name.as_ref()) || profile.is_vendor_side(name.as_ref()) {
+                continue;
+            }
+            if profile.takes_from_rom(name.as_ref()) {
+                plan_partition(name, ROM)?;
+            } else {
+                tracing::warn!(partition = %name, "the ROM's partition is not in port.toml; leaving it out");
+                ignored.push(name.clone());
+            }
+        }
+        // The device's partitions: the vendor side the stock firmware has, and any
+        // other partition device.toml sets.
+        if let Some(missing) = profile
+            .device
+            .partitions
+            .keys()
+            .find(|name| !stock.contains_key(*name))
+        {
+            return Err(Error::MissingStockPartition(missing.clone()));
+        }
+        let mut device: Vec<&Name> = stock
+            .keys()
+            .filter(|name| {
+                VENDOR_SIDE.contains(&name.as_ref())
+                    || profile.device.partitions.contains_key(*name)
+            })
+            .collect();
+        device.sort_by_key(|name| Profile::device_order(name));
+        for name in device {
+            check_fingerprint(name, &stock[name], &profile.device.stock.fingerprint)?;
+            plan_partition(name, STOCK)?;
+        }
+
+        let mut sources = Vec::new();
+        for source in required_sources(&partitions, &recipes)? {
+            let images = if source.source.as_ref() == ROM {
+                &rom
+            } else {
+                &stock
+            };
+            let Some(image) = images.get(&source.partition) else {
+                // Steps that run check their imports; a skipped step needs none.
+                continue;
+            };
+            sources.push(PlannedSource {
+                artifact: Artifact::inspect(image)?,
+                source,
+            });
+        }
+        // A flashable ZIP also flashes every image in the stock firmware's firmware/.
+        let firmware_images = if output == Output::Zip {
+            let directory = firmware.stock.join("firmware");
+            if !directory.is_dir() {
+                return Err(Error::MissingFirmware(directory));
+            }
+            images(&directory)?.into_values().collect()
+        } else {
+            Vec::new()
+        };
+        Ok(Self {
+            profile,
+            output,
+            partitions,
+            sources,
+            recipes,
+            firmware: firmware_images,
+            ignored,
+        })
+    }
+}
+
+/// A stock partition must be the build `device.toml` pins: one of its property files
+/// sets `ro.<partition>.build.fingerprint` to `expected`.
+fn check_fingerprint(partition: &Name, image: &Path, expected: &str) -> Result<(), Error> {
+    let key = format!("ro.{partition}.build.fingerprint");
+    let mut found = Vec::new();
+    for (_, bytes) in
+        android_fs::image::Source::detect(image)?.read_files(|path| path.ends_with(".prop"))?
+    {
+        if let Some(value) = std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|text| android_property::get(text, &key))
+        {
+            if value == expected {
+                return Ok(());
+            }
+            found.push(value.to_owned());
+        }
+    }
+    if found.is_empty() {
+        tracing::warn!(%partition, "stock partition sets no {key}; its build cannot be checked");
+        return Ok(());
+    }
+    Err(Error::StockFingerprint {
+        partition: partition.clone(),
+        expected: expected.into(),
+        found,
+    })
+}
+
+/// The `<partition>.img` files in a firmware directory.
+fn images(directory: &Path) -> Result<BTreeMap<Name, PathBuf>, Error> {
+    let mut images = BTreeMap::new();
+    for entry in fs::read_dir(directory)? {
+        let path = entry?.path();
+        let Some(stem) = path
+            .extension()
+            .is_some_and(|extension| extension == "img")
+            .then(|| path.file_stem())
+            .flatten()
+        else {
+            continue;
+        };
+        let Ok(name) = Name::try_from(stem.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        if path.is_file() {
+            images.insert(name, path);
+        }
+    }
+    Ok(images)
+}
+
+/// The filesystem images (EROFS or ext4, raw or sparse) among `images`.
+fn filesystems(images: BTreeMap<Name, PathBuf>) -> Result<BTreeMap<Name, PathBuf>, Error> {
+    let mut filesystems = BTreeMap::new();
+    for (name, path) in images {
+        if ImageFormat::detect(&path)? != ImageFormat::Unknown {
+            filesystems.insert(name, path);
+        }
+    }
+    Ok(filesystems)
+}
+
+/// Partition bases plus the firmware partition of every import, deduplicated.
+fn required_sources(
+    partitions: &[PlannedPartition],
+    recipes: &[PlannedRecipe],
+) -> Result<Vec<SourceRef>, Error> {
+    // Provisional mount points: `system`'s layout is only known from its image, but
+    // either way `/system/...` is in `system`.
+    let mounts = Mounts::new(partitions.iter().map(|partition| {
+        (
+            partition.mount_point.clone().unwrap_or_else(|| "/".into()),
+            partition.name.clone(),
+        )
+    }));
+    let mut sources: BTreeSet<SourceRef> = partitions
+        .iter()
+        .map(|partition| partition.base.clone())
+        .collect();
+    let mut reads = needs::Sources::default();
+    for recipe in recipes {
+        recipe.recipe.tree()?.walk(&mut reads)?;
+    }
+    for (firmware, path) in reads.reads {
+        for found in mounts.resolve(&path) {
+            sources.insert(SourceRef {
+                source: Name::try_from(firmware.name().to_owned())?,
+                partition: found.partition,
+            });
+        }
+    }
+    Ok(sources.into_iter().collect())
+}
