@@ -42,10 +42,8 @@ pub enum Error {
     Tool(#[from] toolchain::Error),
     #[error(transparent)]
     Value(#[from] recipe::value::ValueError),
-    #[error("assertion failed: {0}")]
-    Assertion(String),
-    #[error("step {step} edits {pattern}, which selects nothing in this build")]
-    NothingSelected { step: Name, pattern: String },
+    #[error("step {step}: {message}")]
+    Assertion { step: Name, message: String },
     #[error("no target partition {0}")]
     UnknownPartition(Name),
     #[error("step {step} removes from a scope that selects no partition of this build")]

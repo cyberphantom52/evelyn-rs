@@ -53,7 +53,9 @@ fn walk_stmt<'a>(
             bound.pop();
             walked
         }
-        Stmt::When { condition, body } => {
+        Stmt::When {
+            condition, body, ..
+        } => {
             walk_expr(condition, visitor, bound)?;
             body.iter()
                 .try_for_each(|stmt| walk_stmt(stmt, visitor, bound))

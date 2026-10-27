@@ -35,12 +35,17 @@ fn step(step: &Step) -> Stmt {
         body = vec![Stmt::When {
             condition: all(assets),
             body,
+            skip: "a templated asset is not there".into(),
         }];
     }
     if let Some(condition) = &step.when {
         body = vec![Stmt::When {
             condition: expr(condition),
             body,
+            skip: format!(
+                "condition does not hold: {}",
+                ron::to_string(condition).unwrap_or_default()
+            ),
         }];
     }
     for (name, value) in step.bindings.iter().rev() {
@@ -137,17 +142,27 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             let placed = to.as_ref().unwrap_or(pattern).to_string();
             let reset = || Stmt::Reset {
                 selection: select(&placed, Scope::default()),
-                pattern: placed.clone(),
             };
+            let found = expect(
+                select(
+                    pattern.as_ref(),
+                    Scope {
+                        inside: Some(*from),
+                        ..Scope::default()
+                    },
+                ),
+                format!("{pattern} is not in the {} firmware", from.name()),
+            );
             return match metadata {
-                Metadata::Copy => vec![copy],
-                Metadata::Default => vec![copy, reset()],
+                Metadata::Copy => vec![found, copy],
+                Metadata::Default => vec![found, copy, reset()],
                 Metadata::Explicit {
                     uid,
                     gid,
                     mode,
                     selinux,
                 } => vec![
+                    found,
                     copy,
                     reset(),
                     Stmt::SetMeta {
@@ -167,17 +182,21 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             from,
             partition,
             pattern,
-        } => Stmt::Delete {
-            selection: select(
+        } => {
+            let selection = select(
                 pattern,
                 Scope {
                     origin: *from,
                     partition: partition.clone(),
                     ..Scope::default()
                 },
-            ),
-            pattern: pattern.clone(),
-        },
+            );
+            Stmt::When {
+                condition: defined(selection.clone()),
+                body: vec![Stmt::Delete { selection }],
+                skip: format!("nothing to remove: {pattern}"),
+            }
+        }
         Operation::Relocate { from, to } => Stmt::Move {
             from: from.clone(),
             to: to.clone(),
@@ -299,28 +318,13 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             },
         },
         Operation::EnableFeature(feature) => {
-            let (file, root, element, name, args) = match feature {
-                Feature::Android(name) => (
-                    "/my_product/etc/permissions/com.oplus.android-features.xml",
-                    "permissions",
-                    "feature",
-                    name,
-                    None,
-                ),
-                Feature::Oplus(name) => (
-                    "/my_product/etc/permissions/oplus.feature.android.xml",
-                    "oplus-config",
-                    "oplus-feature",
-                    name,
-                    None,
-                ),
-                Feature::App { name, args, file } => (
-                    file.as_ref(),
-                    "extend_features",
-                    "app_feature",
-                    name,
-                    args.as_deref(),
-                ),
+            let file = feature_file(feature);
+            let (root, element, name, args) = match feature {
+                Feature::Android(name) => ("permissions", "feature", name, None),
+                Feature::Oplus(name) => ("oplus-config", "oplus-feature", name, None),
+                Feature::App { name, args, .. } => {
+                    ("extend_features", "app_feature", name, args.as_deref())
+                }
             };
             let args = args.map_or(String::new(), |args| format!(" args=\"{}\"", escape(args)));
             Stmt::Edit {
@@ -354,10 +358,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 text: Box::new(Expr::Literal(Value::Str(name.clone()))),
             };
             Stmt::When {
-                condition: Expr::Unary {
-                    op: UnaryOp::Defined,
-                    expr: Box::new(files.clone()),
-                },
+                condition: defined(files.clone()),
                 body: vec![Stmt::Edit {
                     selection: files,
                     transform: Transform::Xml {
@@ -365,6 +366,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                         edits,
                     },
                 }],
+                skip: format!("feature {name} is not declared"),
             }
         }
         Operation::Append { target, content } => Stmt::Edit {
@@ -392,7 +394,50 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             message: format!("{target} does not have SHA-256 {sha256}"),
         },
     };
-    vec![stmt]
+    // An operation on one named file needs it there.
+    let target = match operation {
+        Operation::SetMetadata {
+            pattern: target, ..
+        }
+        | Operation::TextPatch { target, .. }
+        | Operation::BinaryPatch { target, .. }
+        | Operation::Xml { target, .. }
+        | Operation::Append { target, .. } => target.to_string(),
+        Operation::EnableFeature(feature) => feature_file(feature).to_owned(),
+        _ => return vec![stmt],
+    };
+    vec![
+        expect(
+            select(&target, Scope::default()),
+            format!("{target} is not there"),
+        ),
+        stmt,
+    ]
+}
+
+/// The file a feature of its kind is declared in.
+fn feature_file(feature: &Feature) -> &str {
+    match feature {
+        Feature::Android(_) => "/my_product/etc/permissions/com.oplus.android-features.xml",
+        Feature::Oplus(_) => "/my_product/etc/permissions/oplus.feature.android.xml",
+        Feature::App { file, .. } => file.as_ref(),
+    }
+}
+
+/// The selection is not empty.
+fn defined(selection: Expr) -> Expr {
+    Expr::Unary {
+        op: UnaryOp::Defined,
+        expr: Box::new(selection),
+    }
+}
+
+/// Fail with `message` unless the selection is not empty.
+fn expect(selection: Expr, message: String) -> Stmt {
+    Stmt::Assert {
+        condition: defined(selection),
+        message,
+    }
 }
 
 /// `<element name="name">`, as an XML selector.
