@@ -1,11 +1,13 @@
 //! Android filesystems: EROFS and ext4 images (raw or sparse) read in place, scanned into
 //! partition trees, and written back out.
 
+pub mod build;
 pub mod device;
 pub mod erofs;
 pub mod image;
 mod reader;
 mod store;
+mod writer;
 
 use model::PartitionTree;
 use std::{fs, io, path::Path};
@@ -26,6 +28,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("unsupported or inconsistent image data: {0}")]
     Unsupported(String),
+    #[error(transparent)]
+    Tool(#[from] toolchain::Error),
 }
 
 /// Load a tree manifest. Blobs are trusted to match it: they are written once by an
