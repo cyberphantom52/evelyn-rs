@@ -172,7 +172,7 @@ pub enum Operation {
         selinux: Option<String>,
     },
     /// Set a property everywhere it is defined, else add it: without a target in
-    /// every partition, else in the last-loaded property file; with a partition,
+    /// every partition, else in product's `build.prop`; with a partition,
     /// in every file in it defining the key, else its `build.prop`; with a file,
     /// in that file.
     SetProperty {

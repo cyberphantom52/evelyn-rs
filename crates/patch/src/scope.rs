@@ -290,7 +290,7 @@ impl Scope<'_> {
     /// a partition, every file in it defining the key; device-wide, where the
     /// device's value comes from, or with `every` every definition. Where nothing
     /// defines it, with `create` the file a new key goes to (the partition's own,
-    /// device-wide the last-loaded one), else an error.
+    /// device-wide product's), else an error.
     pub fn prop_files(
         &self,
         key: &str,
@@ -349,11 +349,16 @@ impl Scope<'_> {
         }
         let partition = match partition {
             Some(partition) => partition.clone(),
-            None => self
-                .precedence()?
-                .into_iter()
-                .next()
-                .ok_or(Error::Unsupported("no partition to hold a new property"))?,
+            // Product's properties load last of the standard partitions, so a new
+            // key there takes effect.
+            None => match self.targets.keys().find(|name| name.as_ref() == "product") {
+                Some(product) => product.clone(),
+                None => self
+                    .precedence()?
+                    .into_iter()
+                    .next()
+                    .ok_or(Error::Unsupported("no partition to hold a new property"))?,
+            },
         };
         let file = self
             .main_file(&partition)
