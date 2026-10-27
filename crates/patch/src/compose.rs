@@ -2,7 +2,7 @@
 //! primitive tree, and each statement and expression has one implementation here
 //! and in [`crate::scope`], whatever surface operation it came from.
 
-use crate::{Error, Images, Target, package::Opened, scope::Scope};
+use crate::{Error, Images, Target, defaults::Defaults, package::Opened, scope::Scope};
 use model::{DevicePath, Mounts, Name, PartitionTree, RelativePath, SourceRef, TargetPath};
 use recipe::{
     Firmware, Recipe, STANDARD_SYSTEM, VENDOR_SIDE,
@@ -51,8 +51,21 @@ pub struct Composition {
     origins: BTreeMap<Name, Firmware>,
     skipped: Vec<Skipped>,
     absent: Vec<Absent>,
+    /// Every `SetMetadata` statement, and whether it changed anything.
+    set: Vec<(Absent, bool)>,
+    /// `SetMetadata` on new entries, applied after their defaults.
+    deferred: Vec<Deferred>,
     /// The package a `Within` has open.
     package: Option<Opened>,
+}
+
+/// A `SetMetadata` on an entry waiting for Android's defaults.
+struct Deferred {
+    statement: usize,
+    partition: Name,
+    path: RelativePath,
+    overrides: recipe::Overrides,
+    step: Name,
 }
 
 /// What a composition reports besides the trees.
@@ -60,6 +73,8 @@ pub struct Composition {
 pub struct Report {
     pub skipped: Vec<Skipped>,
     pub absent: Vec<Absent>,
+    /// `SetMetadata` patterns that changed nothing: what they set is already there.
+    pub unchanged: Vec<Absent>,
 }
 
 impl Composition {
@@ -69,6 +84,8 @@ impl Composition {
             origins,
             skipped: Vec::new(),
             absent: Vec::new(),
+            set: Vec::new(),
+            deferred: Vec::new(),
             package: None,
         }
     }
@@ -113,10 +130,7 @@ impl Composition {
         if self.package.is_some()
             && matches!(
                 stmt,
-                Stmt::Copy { .. }
-                    | Stmt::Move { .. }
-                    | Stmt::WriteTree { .. }
-                    | Stmt::Within { .. }
+                Stmt::Copy { .. } | Stmt::Move { .. } | Stmt::SetMeta { .. } | Stmt::Within { .. }
             )
         {
             return Err(Error::Unsupported(
@@ -180,7 +194,7 @@ impl Composition {
             Stmt::Copy {
                 selection,
                 to,
-                overrides,
+                metadata,
             } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
@@ -219,7 +233,7 @@ impl Composition {
                         &source,
                         &entry.path,
                         &to.path,
-                        overrides,
+                        *metadata,
                         step,
                     )?;
                 }
@@ -227,29 +241,55 @@ impl Composition {
             Stmt::Move { from, to } => {
                 let from = self.resolve_one(from, context, step)?;
                 let to = self.resolve_one(to, context, step)?;
+                // Moved entries keep their metadata; those still waiting for
+                // Android's defaults wait at their new path.
+                let below = |path: &RelativePath, root: &RelativePath| {
+                    path == root || path.as_ref().starts_with(&format!("{root}/"))
+                };
+                let waiting: Vec<RelativePath> = self
+                    .target(&from.partition)?
+                    .created
+                    .iter()
+                    .filter(|path| below(path, &from.path))
+                    .map(|path| {
+                        RelativePath::try_from(format!(
+                            "{}{}",
+                            to.path,
+                            &path.as_ref()[from.path.as_ref().len()..]
+                        ))
+                    })
+                    .collect::<Result<_, _>>()?;
+                let before: Vec<_> = [&from.partition, &to.partition]
+                    .into_iter()
+                    .map(|partition| Ok(self.target(partition)?.created.clone()))
+                    .collect::<Result<_, Error>>()?;
                 if from.partition == to.partition {
-                    return self
-                        .target(&to.partition)?
-                        .relocate(&from.path, &to.path, step);
+                    self.target(&to.partition)?
+                        .relocate(&from.path, &to.path, step)?;
+                } else {
+                    let mut source = self
+                        .targets
+                        .remove(&from.partition)
+                        .ok_or_else(|| Error::UnknownPartition(from.partition.clone()))?;
+                    let moved = self
+                        .target(&to.partition)
+                        .and_then(|destination| source.relocate_to(destination, &from, &to, step));
+                    self.targets.insert(from.partition.clone(), source);
+                    moved?;
                 }
-                let mut source = self
-                    .targets
-                    .remove(&from.partition)
-                    .ok_or_else(|| Error::UnknownPartition(from.partition.clone()))?;
-                let moved = self
-                    .target(&to.partition)
-                    .and_then(|destination| source.relocate_to(destination, &from, &to, step));
-                self.targets.insert(from.partition.clone(), source);
-                moved?;
+                self.target(&from.partition)?.created = before[0]
+                    .iter()
+                    .filter(|path| !below(path, &from.path))
+                    .cloned()
+                    .collect();
+                if from.partition != to.partition {
+                    self.target(&to.partition)?.created = before[1].clone();
+                }
+                self.target(&to.partition)?.created.extend(waiting);
             }
-            Stmt::Write {
-                asset,
-                sha256,
-                to,
-                metadata,
-            } => {
+            Stmt::Write { asset, to } => {
+                let source = asset.resolve(context.assets);
                 if let Some(package) = &self.package {
-                    let source = asset.resolve(context.assets);
                     let path = RelativePath::try_from(to.to_string()[1..].to_owned())?
                         .resolve(&package.decoded);
                     if let Some(parent) = path.parent() {
@@ -258,30 +298,78 @@ impl Composition {
                     std::fs::copy(&source, &path).map_err(crate::package::io(&source))?;
                     return Ok(());
                 }
-                let at = self.resolve_one(to, context, step)?;
-                let target = self.target(&at.partition)?;
-                let changed = target.install(
-                    &asset.resolve(context.assets),
-                    asset,
-                    sha256,
-                    &at.path,
-                    metadata,
-                )?;
-                target.accept(changed, step);
+                // A partition's mount point is its root; anything else is a path in one.
+                let (partition, base) = match context.mounts.partition_at(to) {
+                    Some(partition) => (partition.clone(), None),
+                    None => {
+                        let at = self.resolve_one(to, context, step)?;
+                        (at.partition, Some(at.path))
+                    }
+                };
+                let below = |path: &str| match &base {
+                    Some(base) => RelativePath::try_from(format!("{base}/{path}")),
+                    None => RelativePath::try_from(path.to_owned()),
+                };
+                let files = if source.is_dir() {
+                    crate::operations::files(&source)?
+                        .into_iter()
+                        .map(|(relative, file)| {
+                            Ok((
+                                below(&relative)?,
+                                file,
+                                RelativePath::try_from(format!("{asset}/{relative}"))?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, Error>>()?
+                } else {
+                    let to = base.ok_or(Error::Unsupported(
+                        "a file cannot replace a partition's root",
+                    ))?;
+                    vec![(to, source, asset.clone())]
+                };
+                let target = self.target(&partition)?;
+                for (to, file, asset) in files {
+                    let changed = target.install(&file, &asset, &to)?;
+                    target.accept(changed, step);
+                }
             }
-            Stmt::WriteTree {
-                assets,
-                partition,
-                rules,
+            Stmt::SetMeta {
+                selection,
+                pattern,
+                overrides,
             } => {
-                if !self.targets.contains_key(partition) {
-                    return Err(Error::AbsentPartition {
+                let selected = self.eval(selection, context, step)?;
+                let selected = selected.as_selection()?;
+                if selected.is_empty() {
+                    return Err(Error::NothingSelected {
                         step: step.clone(),
-                        partition: partition.clone(),
+                        pattern: pattern.clone(),
                     });
                 }
-                self.target(partition)?
-                    .install_tree(context.assets, assets, rules, step)?;
+                let statement = self.set.len();
+                self.set.push((
+                    Absent {
+                        step: step.clone(),
+                        pattern: pattern.clone(),
+                    },
+                    false,
+                ));
+                for entry in selected {
+                    let target = self.target(&entry.partition)?;
+                    // A new entry gets Android's defaults when the build is done,
+                    // and this after them.
+                    if target.created.contains(&entry.path) {
+                        self.deferred.push(Deferred {
+                            statement,
+                            partition: entry.partition.clone(),
+                            path: entry.path.clone(),
+                            overrides: overrides.clone(),
+                            step: step.clone(),
+                        });
+                    } else if target.set_metadata(&entry.path, overrides, step)? {
+                        self.set[statement].1 = true;
+                    }
+                }
             }
             Stmt::Edit {
                 selection,
@@ -393,9 +481,40 @@ impl Composition {
             .ok_or_else(|| Error::UnknownPartition(name.clone()))
     }
 
-    /// Write every target's manifest and return the finished trees, with the steps
-    /// that were skipped and the removed patterns that matched nothing.
-    pub fn finish(self) -> Result<(BTreeMap<Name, PartitionTree>, Report), Error> {
+    /// Give new entries Android's defaults, from the finished build's own policy as
+    /// the device labels with it, then the `SetMetadata` that came after them; write
+    /// every target's manifest and return the finished trees, with the steps that
+    /// were skipped, the removed patterns that matched nothing and the
+    /// `SetMetadata` that changed nothing.
+    pub fn finish(
+        mut self,
+        mounts: &Mounts,
+        images: &Images,
+    ) -> Result<(BTreeMap<Name, PartitionTree>, Report), Error> {
+        if self
+            .targets
+            .values()
+            .any(|target| !target.created.is_empty())
+        {
+            let defaults = Defaults::new(&self.targets, mounts, images)?;
+            for (name, target) in &mut self.targets {
+                target.give_defaults(name, mounts, &defaults)?;
+            }
+        }
+        for deferred in std::mem::take(&mut self.deferred) {
+            let target = self.target(&deferred.partition)?;
+            if target.tree.entries.contains_key(&deferred.path)
+                && target.set_metadata(&deferred.path, &deferred.overrides, &deferred.step)?
+            {
+                self.set[deferred.statement].1 = true;
+            }
+        }
+        let unchanged = self
+            .set
+            .into_iter()
+            .filter(|(_, changed)| !changed)
+            .map(|(statement, _)| statement)
+            .collect();
         let trees = self
             .targets
             .into_iter()
@@ -406,6 +525,7 @@ impl Composition {
             Report {
                 skipped: self.skipped,
                 absent: self.absent,
+                unchanged,
             },
         ))
     }

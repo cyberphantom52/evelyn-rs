@@ -6,6 +6,7 @@ mod apktool;
 mod binary;
 pub mod capture;
 mod compose;
+mod defaults;
 mod layout;
 mod operations;
 mod package;

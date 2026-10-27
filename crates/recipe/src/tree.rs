@@ -4,8 +4,7 @@
 //! however many surface forms use it.
 
 use crate::{
-    ByteEdit, Firmware, MetadataPolicy, MetadataRule, Overrides, PropertyTarget, Returns, XmlEdit,
-    value::Value,
+    ByteEdit, Firmware, Metadata, Overrides, PropertyTarget, Returns, XmlEdit, value::Value,
 };
 use model::{DevicePath, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
@@ -31,29 +30,26 @@ pub enum Stmt {
     When { condition: Expr, body: Vec<Stmt> },
     /// Remove every entry selected; `pattern` names the selection in reports.
     Delete { selection: Expr, pattern: String },
-    /// Copy the selection into the build, at the same path or at `to`. Overwritten
-    /// entries keep the build's metadata and new ones their own; overrides apply
-    /// to everything copied.
+    /// Copy the selection into the build, at the same path or at `to`.
+    /// Overwritten entries keep the build's metadata; new ones have the source's,
+    /// or with `Default` Android's defaults.
     Copy {
         selection: Expr,
         to: Option<DevicePath>,
-        overrides: Overrides,
+        metadata: Metadata,
     },
     /// Move an entry (and its contents) to another path, within or across
     /// partitions, keeping its metadata.
     Move { from: DevicePath, to: DevicePath },
-    /// Write a recipe asset at `to`.
-    Write {
-        asset: RelativePath,
-        sha256: Option<Sha256Digest>,
-        to: DevicePath,
-        metadata: MetadataPolicy,
-    },
-    /// Write every file under the asset directory at the same path in `partition`.
-    WriteTree {
-        assets: RelativePath,
-        partition: Name,
-        rules: Vec<MetadataRule>,
+    /// Write a recipe asset, a file or a directory's files, at `to`. Overwritten
+    /// files keep their metadata.
+    Write { asset: RelativePath, to: DevicePath },
+    /// Set metadata on every entry selected; `pattern` names the selection in
+    /// reports.
+    SetMeta {
+        selection: Expr,
+        pattern: String,
+        overrides: Overrides,
     },
     /// Transform the content of every file selected.
     Edit {
@@ -63,8 +59,7 @@ pub enum Stmt {
     /// The condition must hold, or the build fails with `message`.
     Assert { condition: Expr, message: String },
     /// Decode a package (APK or JAR), run the body inside it and rebuild it. In
-    /// the body, `/` is the package's root: `/res/values/strings.xml`, and a
-    /// `Write`'s metadata is not used.
+    /// the body, `/` is the package's root: `/res/values/strings.xml`.
     Within {
         package: DevicePath,
         before: Option<Sha256Digest>,

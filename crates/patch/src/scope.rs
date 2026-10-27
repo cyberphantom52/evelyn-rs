@@ -407,7 +407,7 @@ impl Scope<'_> {
                 Value::Str(target.file(&entry.path)?.2.to_string())
             }
             Expr::Partition(name) => Value::Bool(self.targets.contains_key(name)),
-            Expr::Asset(path) => Value::Bool(path.resolve(self.context.assets).is_file()),
+            Expr::Asset(path) => Value::Bool(path.resolve(self.context.assets).exists()),
             Expr::Unary { op, expr } => {
                 let value = self.eval(expr)?;
                 match op {

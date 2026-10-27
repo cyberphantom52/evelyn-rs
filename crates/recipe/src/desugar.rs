@@ -121,10 +121,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             from,
             pattern,
             to,
-            uid,
-            gid,
-            mode,
-            selinux,
+            metadata,
         } => Stmt::Copy {
             selection: select(
                 pattern.as_ref(),
@@ -134,12 +131,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 },
             ),
             to: to.clone(),
-            overrides: crate::Overrides {
-                uid: *uid,
-                gid: *gid,
-                mode: *mode,
-                selinux: selinux.clone(),
-            },
+            metadata: *metadata,
         },
         Operation::Remove {
             from,
@@ -160,25 +152,25 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             from: from.clone(),
             to: to.clone(),
         },
-        Operation::Install {
-            asset,
-            sha256,
-            to,
-            metadata,
-        } => Stmt::Write {
+        Operation::Install { asset, to } => Stmt::Write {
             asset: asset.clone(),
-            sha256: sha256.clone(),
             to: to.clone(),
-            metadata: metadata.clone(),
         },
-        Operation::InstallTree {
-            assets,
-            partition,
-            metadata,
-        } => Stmt::WriteTree {
-            assets: assets.clone(),
-            partition: partition.clone(),
-            rules: metadata.clone(),
+        Operation::SetMetadata {
+            pattern,
+            uid,
+            gid,
+            mode,
+            selinux,
+        } => Stmt::SetMeta {
+            selection: select(pattern.as_ref(), Scope::default()),
+            pattern: pattern.to_string(),
+            overrides: crate::Overrides {
+                uid: *uid,
+                gid: *gid,
+                mode: *mode,
+                selinux: selinux.clone(),
+            },
         },
         Operation::SetProperty { key, value, target } => Stmt::Edit {
             selection: Expr::PropFiles {
@@ -321,15 +313,9 @@ fn package_edit(edit: &PackageEdit) -> Stmt {
                 edits: edits.clone(),
             },
         },
-        PackageEdit::Install {
-            path,
-            asset,
-            sha256,
-        } => Stmt::Write {
+        PackageEdit::Install { path, asset } => Stmt::Write {
             asset: asset.clone(),
-            sha256: Some(sha256.clone()),
             to: DevicePath::try_from(at(path)).expect("a relative path below / is a device path"),
-            metadata: crate::MetadataPolicy::Preserve,
         },
     }
 }

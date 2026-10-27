@@ -60,8 +60,10 @@ pub enum Error {
     NoPropertyFile(Name),
     #[error("source {0} was not extracted")]
     UnknownSource(model::SourceRef),
-    #[error("no metadata rule matches new file {0}")]
-    NoMetadataRule(RelativePath),
+    #[error(transparent)]
+    Defaults(#[from] android_fs::defaults::Error),
+    #[error("no file_contexts label for new entry {0}")]
+    NoLabel(String),
     #[error("missing target entry {0}")]
     Missing(RelativePath),
     #[error("content identity mismatch at {0}")]
@@ -77,6 +79,8 @@ pub struct Target {
     root: PathBuf,
     pub(crate) tree: PartitionTree,
     next_blob: u64,
+    /// Entries this build made, which get Android's defaults when it is done.
+    pub(crate) created: BTreeSet<RelativePath>,
 }
 
 impl Target {
@@ -95,6 +99,7 @@ impl Target {
             root: output.into(),
             tree,
             next_blob: 0,
+            created: BTreeSet::new(),
         })
     }
 

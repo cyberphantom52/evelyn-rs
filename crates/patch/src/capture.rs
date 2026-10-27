@@ -1,7 +1,7 @@
 //! Turn an edited copy of a file into recipe operations.
 
 use model::{DevicePath, RelativePath, Sha256Digest};
-use recipe::{ByteEdit, MetadataPolicy, Operation};
+use recipe::{ByteEdit, Operation};
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,12 +84,7 @@ pub fn capture(
             )
         }
         CaptureKind::Replace => (
-            vec![Operation::Install {
-                asset,
-                sha256: Some(digest.clone()),
-                to: target,
-                metadata: MetadataPolicy::Preserve,
-            }],
+            vec![Operation::Install { asset, to: target }],
             Some(after.to_vec()),
         ),
     };
