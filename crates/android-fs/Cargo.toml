@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 model.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 fs-core.workspace = true
 fs-ext4.workspace = true
