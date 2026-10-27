@@ -1,11 +1,16 @@
 //! Firmware composition planning and build execution.
 
+mod authoring;
 mod build;
 mod flashable;
 mod fstab;
 mod needs;
 mod output;
 mod super_image;
+pub use authoring::{
+    CaptureKind, CaptureRequest, CapturedRecipe, PrepareRequest, PreparedFile, capture_file,
+    prepare_file, preview_trees,
+};
 pub use build::{BuildRequest, Built, build};
 
 use model::{Artifact, Filesystem, ImageFormat, Mounts, Name, Output, Sha256Digest, SourceRef};
@@ -24,6 +29,10 @@ pub enum Error {
     SourceFilesystem(SourceRef),
     #[error(transparent)]
     Patch(#[from] patch::Error),
+    #[error(transparent)]
+    Capture(#[from] patch::capture::Error),
+    #[error(transparent)]
+    Preview(#[from] patch::preview::Error),
     #[error("invalid JSON record: {0}")]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
@@ -71,6 +80,8 @@ pub enum Error {
     MissingAsset(PathBuf),
     #[error("recipe asset {0} does not match its declared SHA-256")]
     AssetHash(PathBuf),
+    #[error("invalid authoring request: {0}")]
+    Authoring(&'static str),
 }
 
 #[derive(Debug, Serialize)]
