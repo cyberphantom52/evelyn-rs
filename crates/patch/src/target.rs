@@ -70,6 +70,12 @@ pub enum Error {
     Identity(RelativePath),
     #[error("unsupported target transformation: {0}")]
     Unsupported(&'static str),
+    #[error("{path}: {source}")]
+    At {
+        path: String,
+        #[source]
+        source: Box<Error>,
+    },
 }
 
 /// Open source images, by source reference.

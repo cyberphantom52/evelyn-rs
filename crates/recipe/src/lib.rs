@@ -212,6 +212,11 @@ pub enum Operation {
     },
     /// The file's content must have this SHA-256.
     AssertHash(DevicePath, Sha256Digest),
+    /// Declare a feature, in its kind's file: added there, or replaced if it is.
+    EnableFeature(Feature),
+    /// Remove a feature (`feature`, `oplus-feature` or `app_feature`) from every
+    /// permissions and extension XML in the build.
+    DisableFeature(String),
     /// Add `content` at the end of a file, on a line of its own.
     Append {
         target: DevicePath,
@@ -232,6 +237,23 @@ impl Metadata {
     fn is_copy(&self) -> bool {
         *self == Self::Copy
     }
+}
+
+/// A feature `EnableFeature` declares, by the element it is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum Feature {
+    /// `<feature name=…>`, in `/my_product/etc/permissions/com.oplus.android-features.xml`.
+    Android(String),
+    /// `<oplus-feature name=…>`, in `/my_product/etc/permissions/oplus.feature.android.xml`.
+    Oplus(String),
+    /// `<app_feature name=… args=…>`, in `file`.
+    App {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        args: Option<String>,
+        file: DevicePath,
+    },
 }
 
 /// What `Append` adds: text, or a firmware file's content.

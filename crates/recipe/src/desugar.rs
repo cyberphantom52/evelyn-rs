@@ -1,7 +1,8 @@
 //! Surface recipes (steps of operations, `let:` and `when:`) into the primitive tree.
 
 use crate::{
-    Error, Expr as Surface, Operation, PackageEdit, Recipe, Step,
+    Error, Expr as Surface, Feature, Operation, PackageEdit, Recipe, Step, XmlEdit, XmlMatch,
+    XmlName, XmlPath, XmlPredicate,
     tree::{BinaryOp, Expr, Scope, Stmt, Transform, Tree, UnaryOp},
     value::Value,
 };
@@ -232,6 +233,62 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             before: before.clone(),
             body: edits.iter().map(package_edit).collect(),
         },
+        Operation::EnableFeature(feature) => {
+            let (file, root, element, name, args) = match feature {
+                Feature::Android(name) => (
+                    "/my_product/etc/permissions/com.oplus.android-features.xml",
+                    "permissions",
+                    "feature",
+                    name,
+                    None,
+                ),
+                Feature::Oplus(name) => (
+                    "/my_product/etc/permissions/oplus.feature.android.xml",
+                    "oplus-config",
+                    "oplus-feature",
+                    name,
+                    None,
+                ),
+                Feature::App { name, args, file } => (
+                    file.as_ref(),
+                    "extend_features",
+                    "app_feature",
+                    name,
+                    args.as_deref(),
+                ),
+            };
+            let args = args.map_or(String::new(), |args| format!(" args=\"{}\"", escape(args)));
+            Stmt::Edit {
+                selection: select(file, Scope::default()),
+                transform: Transform::Xml {
+                    before: None,
+                    edits: vec![XmlEdit::PutChild {
+                        parent: XmlPath::try_from(root.to_owned()).expect("a literal XML path"),
+                        key: feature_match(element, name),
+                        expect: None,
+                        element: format!("<{element} name=\"{}\"{args}/>", escape(name)),
+                    }],
+                },
+            }
+        }
+        Operation::DisableFeature(name) => {
+            let edits: Vec<XmlEdit> = ["feature", "oplus-feature", "app_feature"]
+                .into_iter()
+                .map(|element| XmlEdit::RemoveAll {
+                    element: feature_match(element, name),
+                })
+                .collect();
+            return ["/*/etc/permissions/*.xml", "/*/etc/extension/*.xml"]
+                .into_iter()
+                .map(|files| Stmt::Edit {
+                    selection: select(files, Scope::default()),
+                    transform: Transform::Xml {
+                        before: None,
+                        edits: edits.clone(),
+                    },
+                })
+                .collect();
+        }
         Operation::Append { target, content } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
             transform: Transform::Append(content.clone()),
@@ -322,4 +379,26 @@ fn package_edit(edit: &PackageEdit) -> Stmt {
             to: DevicePath::try_from(at(path)).expect("a relative path below / is a device path"),
         },
     }
+}
+
+/// `<element name="name">`, as an XML selector.
+fn feature_match(element: &str, name: &str) -> XmlMatch {
+    let local = |local: &str| XmlName {
+        namespace: None,
+        local: local.to_owned(),
+    };
+    XmlMatch {
+        name: local(element),
+        predicate: Some(XmlPredicate::Attribute {
+            name: local("name"),
+            value: name.to_owned(),
+        }),
+    }
+}
+
+/// Text as an XML attribute value.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('"', "&quot;")
 }

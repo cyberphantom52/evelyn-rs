@@ -205,6 +205,9 @@ impl Target {
         let canonical = self.file(path)?.0.clone();
         let bytes = self.read(path, context.images)?;
         let changed = transformed(&bytes, transform, context.assets)?;
+        if changed == bytes {
+            return Ok(());
+        }
         let kind = self.write_blob(changed.as_slice())?;
         self.accept_content(&canonical, kind, step);
         Ok(())
