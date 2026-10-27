@@ -17,6 +17,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 ron = "0.12.2"
 toml = "1.1.8"
 sha2 = "0.11.1"
+fs-core = { package = "rust-fs-core", version = "0.3.17" }
 tracing = "0.1.44"
 
 [workspace.lints.rust]
