@@ -167,6 +167,9 @@ pub enum XmlEdit {
         #[serde(default = "one", skip_serializing_if = "is_one")]
         expect: usize,
     },
+    /// Remove every element `element` matches, at any depth below the document
+    /// element; there may be none.
+    RemoveAll { element: XmlMatch },
     /// Add `element` under `parent`, replacing the child `key` matches if there is
     /// one. `expect` pins whether there must be (1) or must not be (0).
     PutChild {

@@ -393,12 +393,22 @@ impl Composition {
                 };
                 for entry in selected {
                     match (entry.place, &self.package) {
-                        (Place::Build, _) => self.target(&entry.partition)?.transform(
-                            &entry.path,
-                            transform,
-                            context,
-                            step,
-                        )?,
+                        (Place::Build, _) => self
+                            .target(&entry.partition)?
+                            .transform(&entry.path, transform, context, step)
+                            .map_err(|source| Error::At {
+                                path: context
+                                    .mounts
+                                    .device_path(&TargetPath {
+                                        partition: entry.partition.clone(),
+                                        path: entry.path.clone(),
+                                    })
+                                    .map_or_else(
+                                        || entry.path.to_string(),
+                                        |path| path.to_string(),
+                                    ),
+                                source: Box::new(source),
+                            })?,
                         (Place::Package, Some(package)) => {
                             let path = entry.path.resolve(&package.decoded);
                             let bytes = std::fs::read(&path).map_err(crate::package::io(&path))?;

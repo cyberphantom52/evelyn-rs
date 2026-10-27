@@ -14,7 +14,11 @@ use xot::{
 pub enum Error {
     #[error("XML input SHA-256 mismatch")]
     HashMismatch,
-    #[error("invalid UTF-8 XML document")]
+    #[error("XML document is not UTF-8")]
+    Utf8,
+    #[error("invalid XML: {0}")]
+    Parse(String),
+    #[error("XML edit failed")]
     InvalidXml,
     #[error("XML edit {edit} expected {expected} matches, found {actual}")]
     Count {
@@ -42,11 +46,37 @@ pub fn apply(
     if before.is_some_and(|before| Sha256Digest::bytes(input) != *before) {
         return Err(Error::HashMismatch);
     }
-    let source = std::str::from_utf8(input).map_err(|_| Error::InvalidXml)?;
+    // Elements no edit could match leave the document alone, unparsed: removing
+    // a name from many files must not depend on files that never mention it.
+    let mentioned = |value: &str| {
+        input
+            .windows(value.len())
+            .any(|window| window == value.as_bytes())
+    };
+    if edits.iter().all(|edit| match edit {
+        XmlEdit::RemoveAll {
+            element:
+                XmlMatch {
+                    predicate: Some(XmlPredicate::Attribute { value, .. }),
+                    ..
+                },
+        } => !value.is_empty() && !mentioned(value),
+        _ => false,
+    }) {
+        return Ok(input.to_vec());
+    }
+    let source = std::str::from_utf8(input).map_err(|_| Error::Utf8)?;
     let mut xot = Xot::new();
-    let document = xot.parse(source).map_err(|_| Error::InvalidXml)?;
+    let document = xot
+        .parse(source)
+        .map_err(|error| Error::Parse(error.to_string()))?;
+    let mut changed = false;
     for (index, edit) in edits.iter().enumerate() {
-        apply_one(&mut xot, document, index, edit)?;
+        changed |= apply_one(&mut xot, document, index, edit)?;
+    }
+    // A document no edit changed is not written out again.
+    if !changed {
+        return Ok(input.to_vec());
     }
     let parameters = Parameters {
         declaration: Some(Declaration {
@@ -61,7 +91,8 @@ pub fn apply(
     Ok(output.into_bytes())
 }
 
-fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Result<(), Error> {
+/// Apply one edit; whether it changed the document.
+fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Result<bool, Error> {
     let invalid = |_| Error::InvalidXml;
     match edit {
         XmlEdit::SetText {
@@ -82,6 +113,7 @@ fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Res
                 }
                 xot.append_text(node, value).map_err(invalid)?;
             }
+            Ok(*expect > 0)
         }
         XmlEdit::Remove { path, expect } => {
             let nodes = select(xot, document, &path.selectors);
@@ -93,6 +125,21 @@ fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Res
                 }
                 xot.remove(node).map_err(invalid)?;
             }
+            Ok(*expect > 0)
+        }
+        XmlEdit::RemoveAll { element } => {
+            let root = xot.document_element(document).map_err(invalid)?;
+            let nodes: Vec<_> = xot
+                .descendants(root)
+                .filter(|node| *node != root && matches(xot, *node, element))
+                .collect();
+            for node in &nodes {
+                // A match inside one already removed went with it.
+                if !xot.is_removed(*node) {
+                    xot.remove(*node).map_err(invalid)?;
+                }
+            }
+            Ok(!nodes.is_empty())
         }
         XmlEdit::PutChild {
             parent,
@@ -121,9 +168,9 @@ fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Res
                 Some(child) => xot.replace(*child, fragment).map_err(invalid)?,
                 None => xot.append(parent, fragment).map_err(invalid)?,
             }
+            Ok(true)
         }
     }
-    Ok(())
 }
 
 /// Parse `element` as it would read inside `parent`: with the namespace prefixes
