@@ -5,6 +5,7 @@
 /_build/
 /output/
 /target/
+/.evelyn/
 .DS_Store
 ._*
 **__pycache__
