@@ -34,10 +34,8 @@ pub struct Built {
     pub outputs: Vec<PathBuf>,
     /// Steps whose bindings, condition or templated asset did not apply here.
     pub skipped: Vec<patch::Skipped>,
-    /// Patterns a step removed that matched nothing.
-    pub absent: Vec<patch::Absent>,
     /// `SetMetadata` patterns that set what was already there.
-    pub unchanged: Vec<patch::Absent>,
+    pub unchanged: Vec<patch::Unchanged>,
     /// ROM partitions the port does not take.
     pub ignored: Vec<Name>,
 }
@@ -55,9 +53,6 @@ pub fn build(request: &BuildRequest<'_>) -> Result<Built, Error> {
     let (targets, report) = compose(request, &sources, &images, &mounts)?;
     for skip in &report.skipped {
         tracing::warn!(recipe = %skip.recipe, step = %skip.step, reason = %skip.reason, "skipped step");
-    }
-    for absent in &report.absent {
-        tracing::info!(step = %absent.step, pattern = %absent.pattern, "nothing to remove");
     }
     for unchanged in &report.unchanged {
         tracing::warn!(step = %unchanged.step, pattern = %unchanged.pattern, "SetMetadata sets what is already there");
@@ -89,7 +84,6 @@ pub fn build(request: &BuildRequest<'_>) -> Result<Built, Error> {
     Ok(Built {
         outputs,
         skipped: report.skipped,
-        absent: report.absent,
         unchanged: report.unchanged,
         ignored: plan.ignored.clone(),
     })

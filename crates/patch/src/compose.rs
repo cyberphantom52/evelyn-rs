@@ -32,9 +32,9 @@ pub struct Context<'a> {
     pub mounts: &'a Mounts,
 }
 
-/// A pattern a step removed that matched nothing.
+/// A `SetMetadata` that set what was already there.
 #[derive(Clone, Debug, Serialize)]
-pub struct Absent {
+pub struct Unchanged {
     pub step: Name,
     pub pattern: String,
 }
@@ -52,9 +52,8 @@ pub struct Composition {
     /// Which firmware each target partition was built from.
     origins: BTreeMap<Name, Firmware>,
     skipped: Vec<Skipped>,
-    absent: Vec<Absent>,
     /// Every `SetMetadata` statement, and whether it changed anything.
-    set: Vec<(Absent, bool)>,
+    set: Vec<(Unchanged, bool)>,
     /// The package a `Within` has open.
     package: Option<Opened>,
 }
@@ -63,9 +62,8 @@ pub struct Composition {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Report {
     pub skipped: Vec<Skipped>,
-    pub absent: Vec<Absent>,
     /// `SetMetadata` patterns that changed nothing: what they set is already there.
-    pub unchanged: Vec<Absent>,
+    pub unchanged: Vec<Unchanged>,
 }
 
 impl Composition {
@@ -74,7 +72,6 @@ impl Composition {
             targets,
             origins,
             skipped: Vec::new(),
-            absent: Vec::new(),
             set: Vec::new(),
             package: None,
         }
@@ -149,25 +146,22 @@ impl Composition {
                     }
                 }
             }
-            Stmt::When { condition, body } => {
+            Stmt::When {
+                condition,
+                body,
+                skip,
+            } => {
                 if self.eval(condition, context, step)?.as_bool()? {
                     for stmt in body {
                         self.exec(stmt, recipe, step, context)?;
                     }
                 } else {
-                    let reason = format!("condition does not hold: {}", ron(condition));
-                    self.skip(recipe, step, reason);
+                    self.skip(recipe, step, skip.clone());
                 }
             }
-            Stmt::Delete { selection, pattern } => {
+            Stmt::Delete { selection } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
-                if selected.is_empty() {
-                    self.absent.push(Absent {
-                        step: step.clone(),
-                        pattern: pattern.clone(),
-                    });
-                }
                 for entry in selected {
                     match (entry.place, &self.package) {
                         (Place::Build, _) => {
@@ -188,12 +182,6 @@ impl Composition {
             Stmt::Copy { selection, to } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
-                if selected.is_empty() {
-                    return Err(Error::NothingSelected {
-                        step: step.clone(),
-                        pattern: ron(selection),
-                    });
-                }
                 let to = to
                     .as_ref()
                     .map(|to| self.resolve_one(to, context, step))
@@ -227,15 +215,9 @@ impl Composition {
                     )?;
                 }
             }
-            Stmt::Reset { selection, pattern } => {
+            Stmt::Reset { selection } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
-                if selected.is_empty() {
-                    return Err(Error::NothingSelected {
-                        step: step.clone(),
-                        pattern: pattern.clone(),
-                    });
-                }
                 for entry in selected {
                     if entry.place != Place::Build {
                         return Err(Error::Unsupported("only the build's entries can be reset"));
@@ -335,15 +317,9 @@ impl Composition {
             } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
-                if selected.is_empty() {
-                    return Err(Error::NothingSelected {
-                        step: step.clone(),
-                        pattern: pattern.clone(),
-                    });
-                }
                 let statement = self.set.len();
                 self.set.push((
-                    Absent {
+                    Unchanged {
                         step: step.clone(),
                         pattern: pattern.clone(),
                     },
@@ -367,12 +343,6 @@ impl Composition {
             } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
-                if selected.is_empty() {
-                    return Err(Error::NothingSelected {
-                        step: step.clone(),
-                        pattern: ron(selection),
-                    });
-                }
                 // Append's string is an expression, evaluated before the edit.
                 let transform = &match transform {
                     Transform::Append(text) => {
@@ -415,7 +385,10 @@ impl Composition {
             }
             Stmt::Assert { condition, message } => {
                 if !self.eval(condition, context, step)?.as_bool()? {
-                    return Err(Error::Assertion(message.clone()));
+                    return Err(Error::Assertion {
+                        step: step.clone(),
+                        message: message.clone(),
+                    });
                 }
             }
             Stmt::Within {
@@ -530,7 +503,6 @@ impl Composition {
             trees,
             Report {
                 skipped: self.skipped,
-                absent: self.absent,
                 unchanged,
             },
         ))

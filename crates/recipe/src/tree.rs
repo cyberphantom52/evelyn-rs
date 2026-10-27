@@ -16,6 +16,8 @@ pub struct Tree {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// A statement over an empty selection does nothing; where that would be a
+/// mistake, the surface operation asserts the selection first.
 pub enum Stmt {
     /// A named unit: what provenance and skip reports refer to.
     Step { id: Name, body: Vec<Stmt> },
@@ -25,10 +27,14 @@ pub enum Stmt {
         value: Expr,
         body: Vec<Stmt>,
     },
-    /// Run the body only if the condition holds.
-    When { condition: Expr, body: Vec<Stmt> },
-    /// Remove every entry selected; `pattern` names the selection in reports.
-    Delete { selection: Expr, pattern: String },
+    /// Run the body only if the condition holds; otherwise report `skip`.
+    When {
+        condition: Expr,
+        body: Vec<Stmt>,
+        skip: String,
+    },
+    /// Remove every entry selected.
+    Delete { selection: Expr },
     /// Copy the selection into the build, at the same path or at `to`.
     /// Overwritten entries keep the build's metadata; new ones have the source's.
     Copy {
@@ -38,7 +44,7 @@ pub enum Stmt {
     /// Give every entry selected, and what is below it, Android's defaults for
     /// where it is on the device. They are worked out from the finished build's
     /// own policy, as the device would; a later `SetMeta` applies over them.
-    Reset { selection: Expr, pattern: String },
+    Reset { selection: Expr },
     /// Move an entry (and its contents) to another path, within or across
     /// partitions, keeping its metadata.
     Move { from: DevicePath, to: DevicePath },
