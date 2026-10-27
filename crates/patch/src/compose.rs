@@ -2,12 +2,12 @@
 //! primitive tree, and each statement and expression has one implementation here
 //! and in [`crate::scope`], whatever surface operation it came from.
 
-use crate::{Error, Images, Target, defaults::Defaults, package::Opened, scope::Scope};
-use model::{
-    DevicePath, EntryKind, Mounts, Name, PartitionTree, RelativePath, SourceRef, TargetPath,
+use crate::{
+    Error, Images, Target, defaults::Defaults, operations::Pending, package::Opened, scope::Scope,
 };
+use model::{DevicePath, Mounts, Name, PartitionTree, RelativePath, SourceRef, TargetPath};
 use recipe::{
-    Data, Firmware, Metadata, Overrides, Recipe, STANDARD_SYSTEM, VENDOR_SIDE,
+    Firmware, Recipe, STANDARD_SYSTEM, VENDOR_SIDE,
     tree::{Expr, Stmt, Transform},
     value::{Place, Value},
 };
@@ -55,19 +55,8 @@ pub struct Composition {
     absent: Vec<Absent>,
     /// Every `SetMetadata` statement, and whether it changed anything.
     set: Vec<(Absent, bool)>,
-    /// `SetMetadata` on new entries, applied after their defaults.
-    deferred: Vec<Deferred>,
     /// The package a `Within` has open.
     package: Option<Opened>,
-}
-
-/// A `SetMetadata` on an entry waiting for Android's defaults.
-struct Deferred {
-    statement: usize,
-    partition: Name,
-    path: RelativePath,
-    overrides: Overrides,
-    step: Name,
 }
 
 /// What a composition reports besides the trees.
@@ -87,7 +76,6 @@ impl Composition {
             skipped: Vec::new(),
             absent: Vec::new(),
             set: Vec::new(),
-            deferred: Vec::new(),
             package: None,
         }
     }
@@ -132,7 +120,11 @@ impl Composition {
         if self.package.is_some()
             && matches!(
                 stmt,
-                Stmt::Copy { .. } | Stmt::Move { .. } | Stmt::SetMeta { .. } | Stmt::Within { .. }
+                Stmt::Copy { .. }
+                    | Stmt::Move { .. }
+                    | Stmt::Reset { .. }
+                    | Stmt::SetMeta { .. }
+                    | Stmt::Within { .. }
             )
         {
             return Err(Error::Unsupported(
@@ -193,11 +185,7 @@ impl Composition {
                     }
                 }
             }
-            Stmt::Copy {
-                selection,
-                to,
-                metadata,
-            } => {
+            Stmt::Copy { selection, to } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
                 if selected.is_empty() {
@@ -215,30 +203,6 @@ impl Composition {
                         "a copy of several entries keeps their paths",
                     ));
                 }
-                // Explicit metadata applies after the defaults, like SetMetadata.
-                let explicit = match metadata {
-                    Metadata::Explicit {
-                        uid,
-                        gid,
-                        mode,
-                        selinux,
-                    } => {
-                        self.set.push((
-                            Absent {
-                                step: step.clone(),
-                                pattern: ron(selection),
-                            },
-                            false,
-                        ));
-                        Some(Overrides {
-                            uid: *uid,
-                            gid: *gid,
-                            mode: *mode,
-                            selinux: selinux.clone(),
-                        })
-                    }
-                    _ => None,
-                };
                 for entry in selected {
                     let Place::Firmware(firmware) = entry.place else {
                         return Err(Error::Unsupported(
@@ -254,25 +218,29 @@ impl Composition {
                         partition: entry.partition.clone(),
                         path: entry.path.clone(),
                     });
-                    let brought = self.target(&to.partition)?.import(
+                    self.target(&to.partition)?.import(
                         tree,
                         &source,
                         &entry.path,
                         &to.path,
-                        metadata,
                         step,
                     )?;
-                    if let Some(overrides) = &explicit {
-                        let statement = self.set.len() - 1;
-                        self.deferred
-                            .extend(brought.into_iter().map(|path| Deferred {
-                                statement,
-                                partition: to.partition.clone(),
-                                path,
-                                overrides: overrides.clone(),
-                                step: step.clone(),
-                            }));
+                }
+            }
+            Stmt::Reset { selection, pattern } => {
+                let selected = self.eval(selection, context, step)?;
+                let selected = selected.as_selection()?;
+                if selected.is_empty() {
+                    return Err(Error::NothingSelected {
+                        step: step.clone(),
+                        pattern: pattern.clone(),
+                    });
+                }
+                for entry in selected {
+                    if entry.place != Place::Build {
+                        return Err(Error::Unsupported("only the build's entries can be reset"));
                     }
+                    self.target(&entry.partition)?.reset(&entry.path);
                 }
             }
             Stmt::Move { from, to } => {
@@ -283,23 +251,18 @@ impl Composition {
                 let below = |path: &RelativePath, root: &RelativePath| {
                     path == root || path.as_ref().starts_with(&format!("{root}/"))
                 };
-                let waiting: Vec<RelativePath> = self
-                    .target(&from.partition)?
-                    .created
+                let source = self.target(&from.partition)?;
+                let waiting: Vec<(RelativePath, Vec<Pending>)> = source
+                    .derived
                     .iter()
-                    .filter(|path| below(path, &from.path))
-                    .map(|path| {
-                        RelativePath::try_from(format!(
-                            "{}{}",
-                            to.path,
-                            &path.as_ref()[from.path.as_ref().len()..]
-                        ))
+                    .filter(|(path, _)| below(path, &from.path))
+                    .map(|(path, pending)| {
+                        let moved =
+                            format!("{}{}", to.path, &path.as_ref()[from.path.as_ref().len()..]);
+                        Ok((RelativePath::try_from(moved)?, pending.clone()))
                     })
-                    .collect::<Result<_, _>>()?;
-                let before: Vec<_> = [&from.partition, &to.partition]
-                    .into_iter()
-                    .map(|partition| Ok(self.target(partition)?.created.clone()))
                     .collect::<Result<_, Error>>()?;
+                source.derived.retain(|path, _| !below(path, &from.path));
                 if from.partition == to.partition {
                     self.target(&to.partition)?
                         .relocate(&from.path, &to.path, step)?;
@@ -314,15 +277,10 @@ impl Composition {
                     self.targets.insert(from.partition.clone(), source);
                     moved?;
                 }
-                self.target(&from.partition)?.created = before[0]
-                    .iter()
-                    .filter(|path| !below(path, &from.path))
-                    .cloned()
-                    .collect();
-                if from.partition != to.partition {
-                    self.target(&to.partition)?.created = before[1].clone();
-                }
-                self.target(&to.partition)?.created.extend(waiting);
+                // Relocating marks what it moved as new; it is not.
+                let destination = self.target(&to.partition)?;
+                destination.derived.retain(|path, _| !below(path, &to.path));
+                destination.derived.extend(waiting);
             }
             Stmt::Write { asset, to } => {
                 let source = asset.resolve(context.assets);
@@ -392,18 +350,13 @@ impl Composition {
                     false,
                 ));
                 for entry in selected {
-                    let target = self.target(&entry.partition)?;
-                    // A new entry gets Android's defaults when the build is done,
-                    // and this after them.
-                    if target.created.contains(&entry.path) {
-                        self.deferred.push(Deferred {
-                            statement,
-                            partition: entry.partition.clone(),
-                            path: entry.path.clone(),
-                            overrides: overrides.clone(),
-                            step: step.clone(),
-                        });
-                    } else if target.set_metadata(&entry.path, overrides, step)? {
+                    let changed = self.target(&entry.partition)?.set_metadata(
+                        &entry.path,
+                        overrides,
+                        statement,
+                        step,
+                    )?;
+                    if changed == Some(true) {
                         self.set[statement].1 = true;
                     }
                 }
@@ -420,9 +373,14 @@ impl Composition {
                         pattern: ron(selection),
                     });
                 }
+                // Append's string is an expression, evaluated before the edit.
                 let transform = &match transform {
-                    Transform::Append(Data::File { from, path }) => {
-                        Transform::Append(Data::Text(firmware_text(*from, path, context)?))
+                    Transform::Append(text) => {
+                        let text = self.eval(text, context, step)?;
+                        let text = text
+                            .as_str()?
+                            .ok_or(Error::Unsupported("Append needs a string that is set"))?;
+                        Transform::Append(Expr::Literal(Value::Str(text.to_owned())))
                     }
                     other => other.clone(),
                 };
@@ -534,8 +492,9 @@ impl Composition {
             .ok_or_else(|| Error::UnknownPartition(name.clone()))
     }
 
-    /// Give new entries Android's defaults, from the finished build's own policy as
-    /// the device labels with it, then the `SetMetadata` that came after them; write
+    /// Give the entries waiting for them Android's defaults, from the finished
+    /// build's own policy as the device labels with it, then what was set over
+    /// them; write
     /// every target's manifest and return the finished trees, with the steps that
     /// were skipped, the removed patterns that matched nothing and the
     /// `SetMetadata` that changed nothing.
@@ -547,19 +506,13 @@ impl Composition {
         if self
             .targets
             .values()
-            .any(|target| !target.created.is_empty())
+            .any(|target| !target.derived.is_empty())
         {
             let defaults = Defaults::new(&self.targets, mounts, images)?;
             for (name, target) in &mut self.targets {
-                target.give_defaults(name, mounts, &defaults)?;
-            }
-        }
-        for deferred in std::mem::take(&mut self.deferred) {
-            let target = self.target(&deferred.partition)?;
-            if target.tree.entries.contains_key(&deferred.path)
-                && target.set_metadata(&deferred.path, &deferred.overrides, &deferred.step)?
-            {
-                self.set[deferred.statement].1 = true;
+                for statement in target.give_defaults(name, mounts, &defaults)? {
+                    self.set[statement].1 = true;
+                }
             }
         }
         let unchanged = self
@@ -586,39 +539,4 @@ impl Composition {
 
 fn ron(value: &impl Serialize) -> String {
     ron::to_string(value).unwrap_or_default()
-}
-
-/// A firmware file's content, as text.
-fn firmware_text(
-    from: Firmware,
-    path: &DevicePath,
-    context: &Context<'_>,
-) -> Result<String, Error> {
-    let [at] = <[TargetPath; 1]>::try_from(context.mounts.resolve(path))
-        .map_err(|_| Error::Unsupported("Append reads one firmware file"))?;
-    let source = crate::scope::source_of(from, &at.partition)?;
-    let tree = context
-        .sources
-        .get(&source)
-        .ok_or_else(|| Error::UnknownSource(source.clone()))?;
-    let mut entry = tree
-        .entries
-        .get(&at.path)
-        .ok_or_else(|| Error::Missing(at.path.clone()))?;
-    if let EntryKind::Hardlink { target } = &entry.kind {
-        entry = tree
-            .entries
-            .get(target)
-            .ok_or_else(|| Error::Missing(target.clone()))?;
-    }
-    let EntryKind::File { content, size, .. } = &entry.kind else {
-        return Err(Error::Unsupported("Append reads a regular file"));
-    };
-    let store = android_fs::Store {
-        images: context.images,
-        root: Path::new("/"),
-    };
-    let mut bytes = Vec::new();
-    std::io::Read::read_to_end(&mut store.open(content, *size)?, &mut bytes)?;
-    String::from_utf8(bytes).map_err(|_| Error::Unsupported("appended files must be UTF-8"))
 }

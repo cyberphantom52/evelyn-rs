@@ -46,25 +46,6 @@ pub fn apply(
     if before.is_some_and(|before| Sha256Digest::bytes(input) != *before) {
         return Err(Error::HashMismatch);
     }
-    // Elements no edit could match leave the document alone, unparsed: removing
-    // a name from many files must not depend on files that never mention it.
-    let mentioned = |value: &str| {
-        input
-            .windows(value.len())
-            .any(|window| window == value.as_bytes())
-    };
-    if edits.iter().all(|edit| match edit {
-        XmlEdit::RemoveAll {
-            element:
-                XmlMatch {
-                    predicate: Some(XmlPredicate::Attribute { value, .. }),
-                    ..
-                },
-        } => !value.is_empty() && !mentioned(value),
-        _ => false,
-    }) {
-        return Ok(input.to_vec());
-    }
     let source = std::str::from_utf8(input).map_err(|_| Error::Utf8)?;
     let mut xot = Xot::new();
     let document = xot

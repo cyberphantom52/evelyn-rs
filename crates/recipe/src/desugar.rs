@@ -1,8 +1,8 @@
 //! Surface recipes (steps of operations, `let:` and `when:`) into the primitive tree.
 
 use crate::{
-    Error, Expr as Surface, Feature, Operation, PackageEdit, Recipe, Step, XmlEdit, XmlMatch,
-    XmlName, XmlPath, XmlPredicate,
+    Data, Error, Expr as Surface, Feature, Metadata, Operation, PackageEdit, Recipe, Step, XmlEdit,
+    XmlMatch, XmlName, XmlPath, XmlPredicate,
     tree::{BinaryOp, Expr, Scope, Stmt, Transform, Tree, UnaryOp},
     value::Value,
 };
@@ -123,17 +123,47 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             pattern,
             to,
             metadata,
-        } => Stmt::Copy {
-            selection: select(
-                pattern.as_ref(),
-                Scope {
-                    inside: Some(*from),
-                    ..Scope::default()
-                },
-            ),
-            to: to.clone(),
-            metadata: metadata.clone(),
-        },
+        } => {
+            let copy = Stmt::Copy {
+                selection: select(
+                    pattern.as_ref(),
+                    Scope {
+                        inside: Some(*from),
+                        ..Scope::default()
+                    },
+                ),
+                to: to.clone(),
+            };
+            // What the copy put in the build, by where it went.
+            let placed = to.as_ref().unwrap_or(pattern).to_string();
+            let reset = || Stmt::Reset {
+                selection: select(&placed, Scope::default()),
+                pattern: placed.clone(),
+            };
+            return match metadata {
+                Metadata::Copy => vec![copy],
+                Metadata::Default => vec![copy, reset()],
+                Metadata::Explicit {
+                    uid,
+                    gid,
+                    mode,
+                    selinux,
+                } => vec![
+                    copy,
+                    reset(),
+                    Stmt::SetMeta {
+                        selection: select(&placed, Scope::default()),
+                        pattern: placed.clone(),
+                        overrides: crate::Overrides {
+                            uid: *uid,
+                            gid: *gid,
+                            mode: *mode,
+                            selinux: selinux.clone(),
+                        },
+                    },
+                ],
+            };
+        }
         Operation::Remove {
             from,
             partition,
@@ -278,20 +308,42 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                     element: feature_match(element, name),
                 })
                 .collect();
-            return ["/*/etc/permissions/*.xml", "/*/etc/extension/*.xml"]
-                .into_iter()
-                .map(|files| Stmt::Edit {
-                    selection: select(files, Scope::default()),
+            // Only the files that mention the feature: one that cannot hold it is
+            // not touched, or even parsed. A feature declared nowhere skips the step.
+            let files = Expr::Containing {
+                selection: Box::new(Expr::Binary {
+                    op: BinaryOp::Or,
+                    left: Box::new(select("/*/etc/permissions/*.xml", Scope::default())),
+                    right: Box::new(select("/*/etc/extension/*.xml", Scope::default())),
+                }),
+                text: Box::new(Expr::Literal(Value::Str(name.clone()))),
+            };
+            Stmt::When {
+                condition: Expr::Unary {
+                    op: UnaryOp::Defined,
+                    expr: Box::new(files.clone()),
+                },
+                body: vec![Stmt::Edit {
+                    selection: files,
                     transform: Transform::Xml {
                         before: None,
-                        edits: edits.clone(),
+                        edits,
                     },
-                })
-                .collect();
+                }],
+            }
         }
         Operation::Append { target, content } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
-            transform: Transform::Append(content.clone()),
+            transform: Transform::Append(match content {
+                Data::Text(text) => Expr::Literal(Value::Str(text.clone())),
+                Data::File { from, path } => Expr::Content(Box::new(select(
+                    path.as_ref(),
+                    Scope {
+                        inside: Some(*from),
+                        ..Scope::default()
+                    },
+                ))),
+            }),
         },
         Operation::AssertHash { target, sha256 } => Stmt::Assert {
             condition: Expr::Binary {

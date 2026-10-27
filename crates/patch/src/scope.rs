@@ -411,6 +411,34 @@ impl Scope<'_> {
                     .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?;
                 Value::Str(target.file(&entry.path)?.2.to_string())
             }
+            Expr::Content(inner) => {
+                let selection = self.eval(inner)?;
+                let [entry] = selection.as_selection()? else {
+                    return Err(Error::Unsupported("Content needs exactly one file"));
+                };
+                Value::Str(
+                    String::from_utf8(self.content(entry)?)
+                        .map_err(|_| Error::Unsupported("Content reads UTF-8 text"))?,
+                )
+            }
+            Expr::Containing { selection, text } => {
+                let selection = self.eval(selection)?;
+                let text = self.eval(text)?;
+                let text = text
+                    .as_str()?
+                    .ok_or(Error::Unsupported("Containing needs a string that is set"))?;
+                let mut found = Vec::new();
+                for entry in selection.as_selection()? {
+                    let content = self.content(entry)?;
+                    if content
+                        .windows(text.len())
+                        .any(|window| window == text.as_bytes())
+                    {
+                        found.push(entry.clone());
+                    }
+                }
+                Value::Selection(found)
+            }
             Expr::Partition(name) => Value::Bool(self.targets.contains_key(name)),
             Expr::Asset(path) => Value::Bool(path.resolve(self.context.assets).exists()),
             Expr::Unary { op, expr } => {
@@ -425,7 +453,7 @@ impl Scope<'_> {
                 match op {
                     // `All` and `Any` stop at the first value that decides them.
                     BinaryOp::And if !left.as_bool()? => Value::Bool(false),
-                    BinaryOp::Or if left.as_bool()? => Value::Bool(true),
+                    BinaryOp::Or if matches!(left, Value::Bool(true)) => Value::Bool(true),
                     BinaryOp::And => (left & self.eval(right)?)?,
                     BinaryOp::Or => (left | self.eval(right)?)?,
                     BinaryOp::Eq => left.equals(&self.eval(right)?)?,
@@ -433,6 +461,53 @@ impl Scope<'_> {
                 }
             }
         })
+    }
+}
+
+impl Scope<'_> {
+    /// The content of a selected file: in the build, a firmware or the open package.
+    fn content(&self, entry: &Located) -> Result<Vec<u8>, Error> {
+        match entry.place {
+            Place::Build => self
+                .targets
+                .get(&entry.partition)
+                .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?
+                .read(&entry.path, self.context.images),
+            Place::Package => {
+                let package = self
+                    .package
+                    .ok_or(Error::Unsupported("no package is open"))?;
+                Ok(std::fs::read(entry.path.resolve(&package.decoded))?)
+            }
+            Place::Firmware(firmware) => {
+                let source = source_of(firmware, &entry.partition)?;
+                let tree = self
+                    .context
+                    .sources
+                    .get(&source)
+                    .ok_or_else(|| Error::UnknownSource(source.clone()))?;
+                let mut found = tree
+                    .entries
+                    .get(&entry.path)
+                    .ok_or_else(|| Error::Missing(entry.path.clone()))?;
+                if let EntryKind::Hardlink { target } = &found.kind {
+                    found = tree
+                        .entries
+                        .get(target)
+                        .ok_or_else(|| Error::Missing(target.clone()))?;
+                }
+                let EntryKind::File { content, size, .. } = &found.kind else {
+                    return Err(Error::Unsupported("only a regular file has content"));
+                };
+                let store = android_fs::Store {
+                    images: self.context.images,
+                    root: std::path::Path::new("/"),
+                };
+                let mut bytes = Vec::new();
+                std::io::Read::read_to_end(&mut store.open(content, *size)?, &mut bytes)?;
+                Ok(bytes)
+            }
+        }
     }
 }
 
