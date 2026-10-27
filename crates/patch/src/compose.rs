@@ -7,7 +7,7 @@ use model::{
     DevicePath, EntryKind, Mounts, Name, PartitionTree, RelativePath, SourceRef, TargetPath,
 };
 use recipe::{
-    Data, Firmware, Recipe, STANDARD_SYSTEM, VENDOR_SIDE,
+    Data, Firmware, Metadata, Overrides, Recipe, STANDARD_SYSTEM, VENDOR_SIDE,
     tree::{Expr, Stmt, Transform},
     value::{Place, Value},
 };
@@ -66,7 +66,7 @@ struct Deferred {
     statement: usize,
     partition: Name,
     path: RelativePath,
-    overrides: recipe::Overrides,
+    overrides: Overrides,
     step: Name,
 }
 
@@ -215,6 +215,30 @@ impl Composition {
                         "a copy of several entries keeps their paths",
                     ));
                 }
+                // Explicit metadata applies after the defaults, like SetMetadata.
+                let explicit = match metadata {
+                    Metadata::Explicit {
+                        uid,
+                        gid,
+                        mode,
+                        selinux,
+                    } => {
+                        self.set.push((
+                            Absent {
+                                step: step.clone(),
+                                pattern: ron(selection),
+                            },
+                            false,
+                        ));
+                        Some(Overrides {
+                            uid: *uid,
+                            gid: *gid,
+                            mode: *mode,
+                            selinux: selinux.clone(),
+                        })
+                    }
+                    _ => None,
+                };
                 for entry in selected {
                     let Place::Firmware(firmware) = entry.place else {
                         return Err(Error::Unsupported(
@@ -230,14 +254,25 @@ impl Composition {
                         partition: entry.partition.clone(),
                         path: entry.path.clone(),
                     });
-                    self.target(&to.partition)?.import(
+                    let brought = self.target(&to.partition)?.import(
                         tree,
                         &source,
                         &entry.path,
                         &to.path,
-                        *metadata,
+                        metadata,
                         step,
                     )?;
+                    if let Some(overrides) = &explicit {
+                        let statement = self.set.len() - 1;
+                        self.deferred
+                            .extend(brought.into_iter().map(|path| Deferred {
+                                statement,
+                                partition: to.partition.clone(),
+                                path,
+                                overrides: overrides.clone(),
+                                step: step.clone(),
+                            }));
+                    }
                 }
             }
             Stmt::Move { from, to } => {

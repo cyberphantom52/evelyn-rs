@@ -132,7 +132,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 },
             ),
             to: to.clone(),
-            metadata: *metadata,
+            metadata: metadata.clone(),
         },
         Operation::Remove {
             from,

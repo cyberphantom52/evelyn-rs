@@ -224,13 +224,24 @@ pub enum Operation {
     },
 }
 
-/// What new entries an import brings get: the firmware's metadata, or Android's
-/// defaults for where they are on the device.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// What new entries an import brings get: the firmware's metadata, Android's
+/// defaults for where they are on the device, or those defaults with what
+/// `Explicit` names set instead.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Metadata {
     #[default]
     Copy,
     Default,
+    Explicit {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uid: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gid: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selinux: Option<String>,
+    },
 }
 
 impl Metadata {
@@ -415,9 +426,19 @@ impl Operation {
                 mode,
                 selinux,
                 ..
+            }
+            | Self::Import {
+                metadata:
+                    Metadata::Explicit {
+                        uid,
+                        gid,
+                        mode,
+                        selinux,
+                    },
+                ..
             } => {
                 if uid.is_none() && gid.is_none() && mode.is_none() && selinux.is_none() {
-                    return Err(Error::Invalid("SetMetadata sets nothing".into()));
+                    return Err(Error::Invalid("metadata that sets nothing".into()));
                 }
                 if mode.is_some_and(|mode| mode > 0o7777) {
                     return Err(Error::Invalid(format!("invalid mode {mode:?}")));

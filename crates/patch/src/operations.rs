@@ -43,17 +43,18 @@ impl Target {
     }
 
     /// Import `path` from a firmware's `source` tree: overwritten entries keep this
-    /// target's metadata; new ones have the source's, or with `Default` get
-    /// Android's defaults when the build is done.
+    /// target's metadata; new ones have the source's, or otherwise get Android's
+    /// defaults when the build is done. Returns the new entries it brought.
     pub(crate) fn import(
         &mut self,
         source: &PartitionTree,
         from: &SourceRef,
         path: &RelativePath,
         to_path: &RelativePath,
-        metadata: Metadata,
+        metadata: &Metadata,
         step: &Name,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<RelativePath>, Error> {
+        let mut brought = Vec::new();
         // A wildcard import keeps every match at its own path.
         let pairs = if layout::is_glob(path) {
             if to_path != path {
@@ -82,8 +83,19 @@ impl Target {
                 }
             }
             let earlier = self.created.clone();
+            let existing: Vec<bool> = selected
+                .keys()
+                .map(|path| self.tree.entries.contains_key(path))
+                .collect();
             self.accept(changed, step);
-            if metadata == Metadata::Default {
+            brought.extend(
+                selected
+                    .keys()
+                    .zip(existing)
+                    .filter(|(_, existed)| !existed)
+                    .map(|(path, _)| path.clone()),
+            );
+            if *metadata != Metadata::Copy {
                 continue;
             }
             // What the source has keeps the source's metadata: what it brought, and
@@ -97,7 +109,7 @@ impl Target {
                             .is_some_and(|entry| matches!(entry.kind, EntryKind::Directory))
             });
         }
-        Ok(())
+        Ok(brought)
     }
 
     /// Write `file` at `to`. This replaces the directory entry, not every alias of
