@@ -263,6 +263,7 @@ dependencies = [
  "diffy",
  "model",
  "recipe",
+ "serde",
  "thiserror",
 ]
 
