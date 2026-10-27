@@ -290,7 +290,7 @@ pub(crate) fn transformed(
     };
     let asset = |path: &RelativePath| text(&std::fs::read(path.resolve(assets))?);
     Ok(match transform {
-        Transform::Bytes { before, edits } => crate::binary::apply(bytes, before.as_ref(), edits)?,
+        Transform::Bytes { before, edits } => crate::binary::apply(bytes, before, edits)?,
         Transform::Xml { before, edits } => crate::xml::apply(bytes, before.as_ref(), edits)?,
         Transform::TextPatch { patch, before } => {
             crate::text::apply(&text(bytes)?, before.as_ref(), &asset(patch)?)?.into_bytes()

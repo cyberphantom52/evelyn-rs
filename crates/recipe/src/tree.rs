@@ -4,10 +4,11 @@
 //! however many surface forms use it.
 
 use crate::{
-    ByteEdit, Data, Firmware, Metadata, Overrides, PropertyTarget, Returns, XmlEdit, value::Value,
+    Data, Firmware, Hex, Metadata, Overrides, PropertyTarget, Returns, XmlEdit, value::Value,
 };
 use model::{DevicePath, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// A recipe as statements, its steps in the order they apply.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -74,8 +75,8 @@ pub enum Transform {
         before: Option<Sha256Digest>,
     },
     Bytes {
-        before: Option<Sha256Digest>,
-        edits: Vec<ByteEdit>,
+        before: Sha256Digest,
+        edits: BTreeMap<u64, Hex>,
     },
     Xml {
         before: Option<Sha256Digest>,
