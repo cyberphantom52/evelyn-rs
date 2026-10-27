@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "android-fs"
+version = "0.1.0"
+dependencies = [
+ "rust-fs-core",
+]
+
+[[package]]
 name = "android-property"
 version = "0.1.0"
 dependencies = [
@@ -243,6 +250,12 @@ dependencies = [
  "typeid",
  "unicode-ident",
 ]
+
+[[package]]
+name = "rust-fs-core"
+version = "0.3.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c73c72ed61d0d97993e46d1e4e5df6cd6c21a4dc05085e3eb5887766e0a8e7fa"
 
 [[package]]
 name = "serde"
