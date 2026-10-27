@@ -322,71 +322,72 @@ impl Scope<'_> {
         Ok(found)
     }
 
-    /// The property files an edit of `key` lands in. With a file, that file; with
-    /// a partition, every file in it defining the key; device-wide, where the
-    /// device's value comes from, or with `every` every definition. Where nothing
-    /// defines it, with `create` the file a new key goes to (the partition's own,
-    /// device-wide product's), else an error.
-    pub fn prop_files(
+    /// The property files that define `key`: with a file, it if it does; with a
+    /// partition, every file in it that does; without, every file in every
+    /// partition that does.
+    pub fn property_files(
         &self,
         key: &str,
         target: Option<&PropertyTarget>,
-        create: bool,
-        every: bool,
     ) -> Result<Vec<Located>, Error> {
-        let located = |partition: Name, path: RelativePath| Located {
-            place: Place::Build,
-            partition,
-            path,
+        let found = match target {
+            Some(PropertyTarget::File(_)) => {
+                let file = self.new_property_file(target)?;
+                self.property(Some(&file.partition), Some(&file.path), key)?
+                    .into_iter()
+                    .collect()
+            }
+            Some(PropertyTarget::Partition(partition)) => {
+                self.partition(partition)?;
+                self.property(Some(partition), None, key)?
+                    .into_iter()
+                    .collect()
+            }
+            None => {
+                let mut found = Vec::new();
+                for partition in self.precedence()? {
+                    found.extend(self.property(Some(&partition), None, key)?);
+                }
+                found
+            }
         };
-        if let Some(PropertyTarget::File(path)) = target {
-            let mut found = Composition::resolve(self.targets, self.context.mounts, path);
-            if found.len() != 1 {
-                return Err(Error::AbsentPath {
-                    step: self.step.clone(),
-                    path: path.clone(),
+        Ok(found
+            .into_iter()
+            .flat_map(|found| {
+                let partition = found.partition;
+                found.files.into_iter().map(move |path| Located {
+                    place: Place::Build,
+                    partition: partition.clone(),
+                    path,
+                })
+            })
+            .collect())
+    }
+
+    /// The file a new key goes to: the file; the partition's own `build.prop`;
+    /// without a target, product's, whose properties load last of the standard
+    /// partitions, so a new key there takes effect.
+    pub fn new_property_file(&self, target: Option<&PropertyTarget>) -> Result<Located, Error> {
+        let partition = match target {
+            Some(PropertyTarget::File(path)) => {
+                let mut found = Composition::resolve(self.targets, self.context.mounts, path);
+                if found.len() != 1 {
+                    return Err(Error::AbsentPath {
+                        step: self.step.clone(),
+                        path: path.clone(),
+                    });
+                }
+                let found = found.remove(0);
+                return Ok(Located {
+                    place: Place::Build,
+                    partition: found.partition,
+                    path: found.path,
                 });
             }
-            let found = found.remove(0);
-            return Ok(vec![located(found.partition, found.path)]);
-        }
-        let partition = target.and_then(PropertyTarget::partition);
-        if let Some(partition) = partition
-            && !self.targets.contains_key(partition)
-        {
-            return Err(Error::AbsentPartition {
-                step: self.step.clone(),
-                partition: partition.clone(),
-            });
-        }
-        let found = if partition.is_none() && every {
-            let mut found = Vec::new();
-            for partition in self.precedence()? {
-                found.extend(self.property(Some(&partition), None, key)?);
+            Some(PropertyTarget::Partition(partition)) => {
+                self.partition(partition)?;
+                partition.clone()
             }
-            found
-        } else {
-            self.property(partition, None, key)?.into_iter().collect()
-        };
-        if !found.is_empty() {
-            return Ok(found
-                .into_iter()
-                .flat_map(|found| {
-                    let partition = found.partition;
-                    found
-                        .files
-                        .into_iter()
-                        .map(move |file| located(partition.clone(), file))
-                })
-                .collect());
-        }
-        if !create {
-            return Err(android_property::Error::Undefined(key.into()).into());
-        }
-        let partition = match partition {
-            Some(partition) => partition.clone(),
-            // Product's properties load last of the standard partitions, so a new
-            // key there takes effect.
             None => match self.targets.keys().find(|name| name.as_ref() == "product") {
                 Some(product) => product.clone(),
                 None => self
@@ -396,10 +397,25 @@ impl Scope<'_> {
                     .ok_or(Error::Unsupported("no partition to hold a new property"))?,
             },
         };
-        let file = self
+        let path = self
             .main_file(&partition)
             .ok_or_else(|| Error::NoPropertyFile(partition.clone()))?;
-        Ok(vec![located(partition, file)])
+        Ok(Located {
+            place: Place::Build,
+            partition,
+            path,
+        })
+    }
+
+    /// A partition the build must have.
+    fn partition(&self, partition: &Name) -> Result<(), Error> {
+        if self.targets.contains_key(partition) {
+            return Ok(());
+        }
+        Err(Error::AbsentPartition {
+            step: self.step.clone(),
+            partition: partition.clone(),
+        })
     }
 
     /// The one rule for each kind of expression.
@@ -410,12 +426,19 @@ impl Scope<'_> {
             Expr::Prop { key, target } => self
                 .get(target.as_ref(), key)?
                 .map_or(Value::Unset, Value::Str),
-            Expr::PropFiles {
-                key,
-                target,
-                create,
-                every,
-            } => Value::Selection(self.prop_files(key, target.as_ref(), *create, *every)?),
+            Expr::PropertyFiles { key, target } => {
+                Value::Selection(self.property_files(key, target.as_ref())?)
+            }
+            Expr::NewPropertyFile(target) => {
+                Value::Selection(vec![self.new_property_file(target.as_ref())?])
+            }
+            Expr::Else(first, otherwise) => {
+                let first = self.eval(first)?;
+                match first.as_selection()?.is_empty() {
+                    true => self.eval(otherwise)?,
+                    false => first,
+                }
+            }
             Expr::Hash(inner) => {
                 let selection = self.eval(inner)?;
                 let [entry] = selection.as_selection()? else {

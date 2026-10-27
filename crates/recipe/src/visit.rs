@@ -86,6 +86,10 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
             walk_expr(selection, visitor, bound)?;
             walk_expr(text, visitor, bound)
         }
+        Expr::Else(first, otherwise) => {
+            walk_expr(first, visitor, bound)?;
+            walk_expr(otherwise, visitor, bound)
+        }
         Expr::Binary { left, right, .. } => {
             walk_expr(left, visitor, bound)?;
             walk_expr(right, visitor, bound)
@@ -93,7 +97,8 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         Expr::Literal(_)
         | Expr::Select { .. }
         | Expr::Prop { .. }
-        | Expr::PropFiles { .. }
+        | Expr::PropertyFiles { .. }
+        | Expr::NewPropertyFile(_)
         | Expr::Partition(_) => Ok(()),
     }
 }
@@ -119,7 +124,9 @@ impl Expr {
             | Self::Select { .. }
             | Self::Containing { .. }
             | Self::Below(_)
-            | Self::PropFiles { .. } => Kind::Selection,
+            | Self::PropertyFiles { .. }
+            | Self::NewPropertyFile(_)
+            | Self::Else(..) => Kind::Selection,
             Self::Binary {
                 op: BinaryOp::Or,
                 left,
@@ -227,6 +234,10 @@ fn check_expr(expr: &Expr) -> Result<(), Error> {
             Expr::Hash(inner) => expect(inner.kind(), &[Kind::Selection], "Hash"),
             Expr::Content(inner) => expect(inner.kind(), &[Kind::Selection], "Content"),
             Expr::Below(inner) => expect(inner.kind(), &[Kind::Selection], "Below"),
+            Expr::Else(first, otherwise) => {
+                expect(first.kind(), &[Kind::Selection], "Else")?;
+                expect(otherwise.kind(), &[Kind::Selection], "Else")
+            }
             Expr::Containing { selection, text } => {
                 expect(selection.kind(), &[Kind::Selection], "Containing")?;
                 expect(text.kind(), &[Kind::Str], "Containing")

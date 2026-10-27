@@ -106,14 +106,17 @@ pub enum Expr {
         key: String,
         target: Option<PropertyTarget>,
     },
-    /// The property files an edit of `key` lands in: where it is defined (in every
-    /// partition when `every`), else, when `create`, the file a new key goes to.
-    PropFiles {
+    /// The property files that define `key`: with a file, it if it does; with a
+    /// partition, the files in it that do; without, those in every partition.
+    PropertyFiles {
         key: String,
         target: Option<PropertyTarget>,
-        create: bool,
-        every: bool,
     },
+    /// The file a new property goes to: the file, the partition's `build.prop`,
+    /// or without a target product's.
+    NewPropertyFile(Option<PropertyTarget>),
+    /// The first selection if it selects anything, else the second.
+    Else(Box<Expr>, Box<Expr>),
     /// The entries selected and everything below them.
     Below(Box<Expr>),
     /// The text of the one file selected, in the build or a firmware.

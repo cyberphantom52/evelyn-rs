@@ -381,7 +381,9 @@ impl Visitor for Partitions<'_> {
                     _ => Ok(()),
                 };
             }
-            Expr::Prop { target, .. } | Expr::PropFiles { target, .. } => target,
+            Expr::Prop { target, .. }
+            | Expr::PropertyFiles { target, .. }
+            | Expr::NewPropertyFile(target) => target,
             _ => return Ok(()),
         };
         match target.as_ref().and_then(crate::PropertyTarget::partition) {

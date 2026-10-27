@@ -233,31 +233,34 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 selinux: selinux.clone(),
             }),
         },
+        // Where the key is defined, everywhere in the target's scope; or added
+        // where a new one goes.
         Operation::SetProperty { key, value, target } => Stmt::Edit {
-            selection: Expr::PropFiles {
-                key: key.clone(),
-                target: target.clone(),
-                create: true,
-                every: target.is_none(),
-            },
+            selection: Expr::Else(
+                Box::new(property_files(key, target)),
+                Box::new(Expr::NewPropertyFile(target.clone())),
+            ),
             transform: Transform::Prop {
                 key: key.clone(),
                 value: Some(value.clone()),
             },
         },
-        // A device-wide removal clears every definition, or a lower one would show.
-        Operation::RemoveProperty { key, target } => Stmt::Edit {
-            selection: Expr::PropFiles {
-                key: key.clone(),
-                target: target.clone(),
-                create: false,
-                every: target.is_none(),
-            },
-            transform: Transform::Prop {
-                key: key.clone(),
-                value: None,
-            },
-        },
+        // Every definition, or a lower one would show; there must be one.
+        Operation::RemoveProperty { key, target } => {
+            return vec![
+                expect(
+                    property_files(key, target),
+                    format!("property {key} is not defined there"),
+                ),
+                Stmt::Edit {
+                    selection: property_files(key, target),
+                    transform: Transform::Prop {
+                        key: key.clone(),
+                        value: None,
+                    },
+                },
+            ];
+        }
         Operation::TextPatch { target, patch } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
             transform: Transform::TextPatch {
@@ -423,6 +426,14 @@ fn feature_file(feature: &Feature) -> &str {
         Feature::Android(_) => "/my_product/etc/permissions/com.oplus.android-features.xml",
         Feature::Oplus(_) => "/my_product/etc/permissions/oplus.feature.android.xml",
         Feature::App { file, .. } => file.as_ref(),
+    }
+}
+
+/// The property files defining `key` in a target's scope.
+fn property_files(key: &str, target: &Option<crate::PropertyTarget>) -> Expr {
+    Expr::PropertyFiles {
+        key: key.to_owned(),
+        target: target.clone(),
     }
 }
 
