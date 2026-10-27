@@ -491,6 +491,15 @@ impl Operation {
                     _ => Ok(()),
                 }
             }
+            Self::StubMethod { class, .. }
+            | Self::ReplaceMethod { class, .. }
+            | Self::InsertMethod { class, .. }
+                if !(class.starts_with('L') && class.ends_with(';') && class.len() > 2) =>
+            {
+                Err(Error::Invalid(format!(
+                    "class {class:?} is not written as Lcom/example/Name;"
+                )))
+            }
             Self::BinaryPatch { edits, .. } => {
                 let mut end = 0;
                 for (offset, bytes) in edits {

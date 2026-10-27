@@ -298,7 +298,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             method,
             returns,
         } => Stmt::Edit {
-            selection: Expr::Class(class.clone()),
+            selection: smali_file(class),
             transform: Transform::StubMethod {
                 class: class.clone(),
                 method: method.clone(),
@@ -310,7 +310,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             method,
             body,
         } => Stmt::Edit {
-            selection: Expr::Class(class.clone()),
+            selection: smali_file(class),
             transform: Transform::ReplaceMethod {
                 class: class.clone(),
                 method: method.clone(),
@@ -322,7 +322,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             method,
             body,
         } => Stmt::Edit {
-            selection: Expr::Class(class.clone()),
+            selection: smali_file(class),
             transform: Transform::InsertMethod {
                 class: class.clone(),
                 method: method.clone(),
@@ -406,25 +406,29 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             message: format!("{target} does not have SHA-256 {sha256}"),
         },
     };
-    // An operation on one named file needs it there.
-    let target = match operation {
+    // An operation on one named file, or class, needs it there.
+    let named = |target: String| {
+        let message = format!("{target} is not there");
+        (select(&target, Scope::default()), message)
+    };
+    let (selection, message) = match operation {
         Operation::SetMetadata {
             pattern: target, ..
         }
         | Operation::TextPatch { target, .. }
         | Operation::BinaryPatch { target, .. }
         | Operation::Xml { target, .. }
-        | Operation::Append { target, .. } => target.to_string(),
-        Operation::EnableFeature(feature) => feature_file(feature).to_owned(),
+        | Operation::Append { target, .. } => named(target.to_string()),
+        Operation::EnableFeature(feature) => named(feature_file(feature).to_owned()),
+        Operation::StubMethod { class, .. }
+        | Operation::ReplaceMethod { class, .. }
+        | Operation::InsertMethod { class, .. } => (
+            smali_file(class),
+            format!("class {class} is not in the package"),
+        ),
         _ => return vec![stmt],
     };
-    vec![
-        expect(
-            select(&target, Scope::default()),
-            format!("{target} is not there"),
-        ),
-        stmt,
-    ]
+    vec![expect(selection, message), stmt]
 }
 
 /// The file a feature of its kind is declared in.
@@ -434,6 +438,13 @@ fn feature_file(feature: &Feature) -> &str {
         Feature::Oplus(_) => "/my_product/etc/permissions/oplus.feature.android.xml",
         Feature::App { file, .. } => file.as_ref(),
     }
+}
+
+/// The smali file defining `Lcom/example/Name;` inside a package:
+/// `smali*/com/example/Name.smali`, whichever dex it is in.
+fn smali_file(class: &str) -> Expr {
+    let name = class.trim_start_matches('L').trim_end_matches(';');
+    select(&format!("/smali*/{name}.smali"), Scope::default())
 }
 
 /// A recipe asset, as a selection.

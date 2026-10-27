@@ -94,8 +94,7 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         | Expr::Select { .. }
         | Expr::Prop { .. }
         | Expr::PropFiles { .. }
-        | Expr::Partition(_)
-        | Expr::Class(_) => Ok(()),
+        | Expr::Partition(_) => Ok(()),
     }
 }
 
@@ -118,7 +117,6 @@ impl Expr {
             Self::Literal(Value::List(_)) => Kind::List,
             Self::Literal(Value::Selection(_))
             | Self::Select { .. }
-            | Self::Class(_)
             | Self::Containing { .. }
             | Self::Below(_)
             | Self::PropFiles { .. } => Kind::Selection,
