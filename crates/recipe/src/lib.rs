@@ -17,7 +17,8 @@ pub mod visit;
 pub use expr::Expr;
 pub use metadata::{MetadataPolicy, MetadataSpec};
 pub use profile::{
-    ROM, STANDARD_SYSTEM, STOCK, VENDOR_SIDE, default_mount_point, system_mount_point,
+    Device, Port, Profile, ROM, STANDARD_SYSTEM, STOCK, Settings, SlotScheme, Stock, SuperLayout,
+    VENDOR_SIDE, default_mount_point, system_mount_point,
 };
 
 use model::{DevicePath, Name, RelativePath, Sha256Digest};
@@ -42,6 +43,12 @@ pub enum Error {
         path: PathBuf,
         #[source]
         source: Box<ron::error::SpannedError>,
+    },
+    #[error("invalid profile {path}: {source}")]
+    Toml {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
     },
     #[error("cannot encode recipe: {0}")]
     Encode(#[from] ron::Error),
