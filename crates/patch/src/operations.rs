@@ -5,7 +5,7 @@ use model::{
 };
 use recipe::{
     Overrides, Returns,
-    tree::{Expr, Transform},
+    tree::{Expr, MethodEdit, Transform},
     value::Value,
 };
 use std::{collections::BTreeSet, path::Path};
@@ -297,8 +297,12 @@ pub(crate) fn transformed(
         Transform::TextPatch { patch, before } => {
             crate::text::apply(&text(bytes)?, before.as_ref(), &asset(patch)?)?.into_bytes()
         }
-        Transform::SetProp { key, value } => {
-            android_property::set(&text(bytes)?, key, value, None)?.into_bytes()
+        Transform::Prop {
+            key,
+            value: Some(value),
+        } => android_property::set(&text(bytes)?, key, value, None)?.into_bytes(),
+        Transform::Prop { key, value: None } => {
+            android_property::remove(&text(bytes)?, key, None)?.into_bytes()
         }
         // The string is evaluated before the edit, where expressions are.
         Transform::Append(Expr::Literal(Value::Str(data))) => {
@@ -315,31 +319,30 @@ pub(crate) fn transformed(
         Transform::Append(_) => {
             return Err(Error::Unsupported("Append's string is evaluated first"));
         }
-        Transform::DelProp { key } => {
-            android_property::remove(&text(bytes)?, key, None)?.into_bytes()
-        }
-        Transform::StubMethod {
+        Transform::Smali {
             class,
             method,
-            returns,
+            edit,
         } => {
-            let stub = match returns {
-                Returns::Void => smali::Stub::Void,
-                Returns::Zero => smali::Stub::Zero,
-                Returns::One => smali::Stub::One,
-            };
-            smali::stub_method(&text(bytes)?, class, method, stub)?.into_bytes()
+            let source = text(bytes)?;
+            match edit {
+                MethodEdit::Stub(returns) => {
+                    let stub = match returns {
+                        Returns::Void => smali::Stub::Void,
+                        Returns::Zero => smali::Stub::Zero,
+                        Returns::One => smali::Stub::One,
+                    };
+                    smali::stub_method(&source, class, method, stub)?
+                }
+                MethodEdit::Replace(body) => {
+                    smali::replace_method(&source, class, method, &asset(body)?)?
+                }
+                MethodEdit::Insert(body) => {
+                    smali::insert_method(&source, class, method, &asset(body)?)?
+                }
+            }
+            .into_bytes()
         }
-        Transform::ReplaceMethod {
-            class,
-            method,
-            body,
-        } => smali::replace_method(&text(bytes)?, class, method, &asset(body)?)?.into_bytes(),
-        Transform::InsertMethod {
-            class,
-            method,
-            body,
-        } => smali::insert_method(&text(bytes)?, class, method, &asset(body)?)?.into_bytes(),
     })
 }
 
