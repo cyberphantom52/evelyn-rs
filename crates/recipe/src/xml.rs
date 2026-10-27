@@ -97,13 +97,35 @@ pub enum XmlPredicate {
 }
 
 /// Element selectors from the document element down, written as one string:
-/// `resources/string[@name='app_name']`. A `/` inside a predicate or a `{namespace}`
-/// is part of it.
+/// `resources/string[@name='app_name']`. A step after `//` matches at any depth
+/// below, not just among children: `//feature[@name='x']`. A `/` inside a
+/// predicate or a `{namespace}` is part of it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct XmlPath {
     text: String,
-    pub selectors: Vec<XmlMatch>,
+    pub selectors: Vec<XmlStep>,
+}
+
+/// One step of an `XmlPath`.
+#[derive(Clone, Debug)]
+pub struct XmlStep {
+    /// Below at any depth, rather than among the children.
+    pub descendant: bool,
+    pub matches: XmlMatch,
+}
+
+impl XmlPath {
+    /// Every element `matches` selects, at any depth.
+    pub(crate) fn anywhere(matches: XmlMatch, text: String) -> Self {
+        Self {
+            text,
+            selectors: vec![XmlStep {
+                descendant: true,
+                matches,
+            }],
+        }
+    }
 }
 
 impl TryFrom<String> for XmlPath {
@@ -126,13 +148,23 @@ impl TryFrom<String> for XmlPath {
             }
         }
         parts.push(&text[start..]);
-        if parts.iter().any(|part| part.is_empty()) {
+        // An empty part is a `//`: the step after it matches at any depth.
+        if parts.last().is_some_and(|part| part.is_empty()) {
             return Err(format!("invalid XML path {text:?}"));
         }
-        let selectors = parts
-            .into_iter()
-            .map(|part| XmlMatch::try_from(MatchForm::Short(part.to_owned())))
-            .collect::<Result<_, _>>()?;
+        let mut selectors = Vec::new();
+        let mut descendant = false;
+        for part in parts {
+            if part.is_empty() {
+                descendant = true;
+                continue;
+            }
+            selectors.push(XmlStep {
+                descendant,
+                matches: XmlMatch::try_from(MatchForm::Short(part.to_owned()))?,
+            });
+            descendant = false;
+        }
         Ok(Self { text, selectors })
     }
 }
@@ -151,6 +183,14 @@ fn is_one(expect: &usize) -> bool {
     *expect == 1
 }
 
+fn some_one() -> Option<usize> {
+    Some(1)
+}
+
+fn is_some_one(expect: &Option<usize>) -> bool {
+    *expect == Some(1)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum XmlEdit {
@@ -161,15 +201,13 @@ pub enum XmlEdit {
         expect: usize,
         value: String,
     },
-    /// Remove every match; `expect` (default 1) pins how many.
+    /// Remove every match; `expect` (default 1) pins how many, and `None` lets
+    /// there be any number, none included.
     Remove {
         path: XmlPath,
-        #[serde(default = "one", skip_serializing_if = "is_one")]
-        expect: usize,
+        #[serde(default = "some_one", skip_serializing_if = "is_some_one")]
+        expect: Option<usize>,
     },
-    /// Remove every element `element` matches, at any depth below the document
-    /// element; there may be none.
-    RemoveAll { element: XmlMatch },
     /// Add `element` under `parent`, replacing the child `key` matches if there is
     /// one. `expect` pins whether there must be (1) or must not be (0).
     PutChild {

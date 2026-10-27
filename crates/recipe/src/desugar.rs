@@ -355,8 +355,12 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         Operation::DisableFeature(name) => {
             let edits: Vec<XmlEdit> = ["feature", "oplus-feature", "app_feature"]
                 .into_iter()
-                .map(|element| XmlEdit::RemoveAll {
-                    element: feature_match(element, name),
+                .map(|element| XmlEdit::Remove {
+                    path: XmlPath::anywhere(
+                        feature_match(element, name),
+                        format!("//{element}[@name='{name}']"),
+                    ),
+                    expect: None,
                 })
                 .collect();
             // Only the files that mention the feature: one that cannot hold it is
