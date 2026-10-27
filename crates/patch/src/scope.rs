@@ -423,6 +423,47 @@ impl Scope<'_> {
                     .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?;
                 Value::Str(target.file(&entry.path)?.2.to_string())
             }
+            Expr::Below(inner) => {
+                let mut found = Vec::new();
+                for entry in self.eval(inner)?.as_selection()? {
+                    let tree = match entry.place {
+                        Place::Build => {
+                            &self
+                                .targets
+                                .get(&entry.partition)
+                                .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?
+                                .tree
+                        }
+                        Place::Firmware(firmware) => {
+                            let source = source_of(firmware, &entry.partition)?;
+                            self.context
+                                .sources
+                                .get(&source)
+                                .ok_or_else(|| Error::UnknownSource(source.clone()))?
+                        }
+                        Place::Package | Place::Asset => {
+                            return Err(Error::Unsupported(
+                                "Below selects in the build or a firmware",
+                            ));
+                        }
+                    };
+                    let prefix = format!("{}/", entry.path);
+                    found.push(entry.clone());
+                    found.extend(
+                        tree.entries
+                            .keys()
+                            .filter(|path| path.as_ref().starts_with(&prefix))
+                            .map(|path| Located {
+                                place: entry.place,
+                                partition: entry.partition.clone(),
+                                path: path.clone(),
+                            }),
+                    );
+                }
+                found.sort();
+                found.dedup();
+                Value::Selection(found)
+            }
             Expr::Content(inner) => {
                 let selection = self.eval(inner)?;
                 let [entry] = selection.as_selection()? else {

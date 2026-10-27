@@ -69,7 +69,6 @@ fn walk_stmt<'a>(
         }
         Stmt::Delete { selection, .. }
         | Stmt::Copy { selection, .. }
-        | Stmt::Reset { selection, .. }
         | Stmt::SetMetadata { selection, .. }
         | Stmt::Edit { selection, .. } => walk_expr(selection, visitor, bound),
         Stmt::Assert { condition, .. } => walk_expr(condition, visitor, bound),
@@ -79,9 +78,10 @@ fn walk_stmt<'a>(
 fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result<(), Error> {
     visitor.expr(expr, bound)?;
     match expr {
-        Expr::Hash(inner) | Expr::Content(inner) | Expr::Unary { expr: inner, .. } => {
-            walk_expr(inner, visitor, bound)
-        }
+        Expr::Hash(inner)
+        | Expr::Content(inner)
+        | Expr::Below(inner)
+        | Expr::Unary { expr: inner, .. } => walk_expr(inner, visitor, bound),
         Expr::Containing { selection, text } => {
             walk_expr(selection, visitor, bound)?;
             walk_expr(text, visitor, bound)
@@ -120,6 +120,7 @@ impl Expr {
             | Self::Select { .. }
             | Self::Class(_)
             | Self::Containing { .. }
+            | Self::Below(_)
             | Self::PropFiles { .. } => Kind::Selection,
             Self::Binary {
                 op: BinaryOp::Or,
@@ -188,7 +189,6 @@ impl Check {
             }
             Stmt::Delete { selection, .. }
             | Stmt::Copy { selection, .. }
-            | Stmt::Reset { selection, .. }
             | Stmt::SetMetadata { selection, .. }
             | Stmt::Edit { selection, .. } => {
                 expect(selection.kind(), &[Kind::Selection], "a selection")?;
@@ -228,6 +228,7 @@ fn check_expr(expr: &Expr) -> Result<(), Error> {
         match expr {
             Expr::Hash(inner) => expect(inner.kind(), &[Kind::Selection], "Hash"),
             Expr::Content(inner) => expect(inner.kind(), &[Kind::Selection], "Content"),
+            Expr::Below(inner) => expect(inner.kind(), &[Kind::Selection], "Below"),
             Expr::Containing { selection, text } => {
                 expect(selection.kind(), &[Kind::Selection], "Containing")?;
                 expect(text.kind(), &[Kind::Str], "Containing")

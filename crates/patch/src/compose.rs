@@ -8,7 +8,7 @@ use crate::{
 use model::{DevicePath, Mounts, Name, PartitionTree, RelativePath, SourceRef, TargetPath};
 use recipe::{
     Firmware, Recipe, STANDARD_SYSTEM, VENDOR_SIDE,
-    tree::{Expr, Stmt, Transform},
+    tree::{Assigned, Expr, Stmt, Transform},
     value::{Located, Place, Value},
 };
 use serde::Serialize;
@@ -117,11 +117,7 @@ impl Composition {
         step: &Name,
         context: &Context<'_>,
     ) -> Result<(), Error> {
-        if self.package.is_some()
-            && matches!(
-                stmt,
-                Stmt::Reset { .. } | Stmt::SetMetadata { .. } | Stmt::Within { .. }
-            )
+        if self.package.is_some() && matches!(stmt, Stmt::SetMetadata { .. } | Stmt::Within { .. })
         {
             return Err(Error::Unsupported(
                 "inside a package only Edit, Write, Delete, Let, When and Assert run",
@@ -209,23 +205,27 @@ impl Composition {
                     }
                 }
             }
-            Stmt::Reset { selection } => {
-                let selected = self.eval(selection, context, step)?;
-                let selected = selected.as_selection()?;
-                for entry in selected {
-                    if entry.place != Place::Build {
-                        return Err(Error::Unsupported("only the build's entries can be reset"));
-                    }
-                    self.target(&entry.partition)?.reset(&entry.path);
-                }
-            }
             Stmt::SetMetadata {
                 selection,
                 pattern,
-                overrides,
+                metadata,
             } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
+                let overrides = match metadata {
+                    Assigned::Defaults => {
+                        for entry in selected {
+                            if entry.place != Place::Build {
+                                return Err(Error::Unsupported(
+                                    "only the build's entries get Android's defaults",
+                                ));
+                            }
+                            self.target(&entry.partition)?.reset(&entry.path);
+                        }
+                        return Ok(());
+                    }
+                    Assigned::Fields(overrides) => overrides,
+                };
                 let statement = self.set.len();
                 self.set.push((
                     Unchanged {
