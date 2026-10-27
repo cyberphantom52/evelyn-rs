@@ -76,6 +76,94 @@ string_type!(Sha256Digest, "SHA-256 digest", |s: &str| s.len() == 64
     && s.bytes()
         .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
 
+impl DevicePath {
+    /// The path's components, after the leading `/`.
+    pub fn components(&self) -> impl Iterator<Item = &str> {
+        self.0[1..].split('/')
+    }
+}
+
+/// Where each partition is mounted on the device, for resolving device paths.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Mounts(Vec<(String, Name)>);
+
+impl Mounts {
+    /// Mount points are absolute, like `/` or `/vendor`.
+    pub fn new(mounts: impl IntoIterator<Item = (String, Name)>) -> Self {
+        Self(mounts.into_iter().collect())
+    }
+
+    /// The partitions and partition-relative paths `path` refers to. A literal path
+    /// belongs to the partition with the longest matching mount point; where globs
+    /// in its leading components match other mount points, those partitions too.
+    pub fn resolve(&self, path: &DevicePath) -> Vec<TargetPath> {
+        let components: Vec<&str> = path.components().collect();
+        let mut literal: Option<(usize, TargetPath)> = None;
+        let mut globbed = Vec::new();
+        for (mount, partition) in &self.0 {
+            let mount: Vec<&str> = mount.split('/').filter(|c| !c.is_empty()).collect();
+            if mount.len() >= components.len()
+                || !mount.iter().zip(&components).all(|(m, c)| glob(c, m))
+            {
+                continue;
+            }
+            let Ok(rest) = RelativePath::try_from(components[mount.len()..].join("/")) else {
+                continue;
+            };
+            let target = TargetPath {
+                partition: partition.clone(),
+                path: rest,
+            };
+            if components[..mount.len()]
+                .iter()
+                .any(|c| c.contains(['*', '?']))
+            {
+                globbed.push(target);
+            } else if literal
+                .as_ref()
+                .is_none_or(|(depth, _)| mount.len() > *depth)
+            {
+                literal = Some((mount.len(), target));
+            }
+        }
+        literal
+            .map(|(_, target)| target)
+            .into_iter()
+            .chain(globbed)
+            .collect()
+    }
+
+    /// The directory a partition provides on the device: its mount point, or for
+    /// the partition mounted at `/` (a system-as-root `system`), `/<name>`.
+    pub fn directory(&self, partition: &Name) -> Option<String> {
+        let (mount, _) = self.0.iter().find(|(_, p)| p == partition)?;
+        Some(if mount == "/" {
+            format!("/{partition}")
+        } else {
+            mount.clone()
+        })
+    }
+
+    /// The device path of `path` in `partition`, if the partition is mounted.
+    pub fn device_path(&self, target: &TargetPath) -> Option<DevicePath> {
+        let (mount, _) = self.0.iter().find(|(_, p)| *p == target.partition)?;
+        DevicePath::try_from(format!("{}/{}", mount.trim_end_matches('/'), target.path)).ok()
+    }
+}
+
+/// `*` matches any run of characters within a component and `?` any one.
+fn glob(pattern: &str, name: &str) -> bool {
+    fn matches(pattern: &[u8], name: &[u8]) -> bool {
+        match pattern.split_first() {
+            None => name.is_empty(),
+            Some((b'*', rest)) => (0..=name.len()).any(|skip| matches(rest, &name[skip..])),
+            Some((b'?', rest)) => !name.is_empty() && matches(rest, &name[1..]),
+            Some((byte, rest)) => name.first() == Some(byte) && matches(rest, &name[1..]),
+        }
+    }
+    matches(pattern.as_bytes(), name.as_bytes())
+}
+
 impl RelativePath {
     /// Join onto `root`. Validation already rules out absolute and `..` components.
     pub fn resolve(&self, root: &Path) -> PathBuf {
