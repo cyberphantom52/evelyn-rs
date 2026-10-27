@@ -195,8 +195,8 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             },
             transform: Transform::DelProp { key: key.clone() },
         },
-        Operation::TextPatch(path, patch) => Stmt::Edit {
-            selection: select(path.as_ref(), Scope::default()),
+        Operation::TextPatch { target, patch } => Stmt::Edit {
+            selection: select(target.as_ref(), Scope::default()),
             transform: Transform::TextPatch {
                 patch: patch.clone(),
                 before: None,
@@ -293,16 +293,16 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             selection: select(target.as_ref(), Scope::default()),
             transform: Transform::Append(content.clone()),
         },
-        Operation::AssertHash(path, sha256) => Stmt::Assert {
+        Operation::AssertHash { target, sha256 } => Stmt::Assert {
             condition: Expr::Binary {
                 op: BinaryOp::Eq,
                 left: Box::new(Expr::Hash(Box::new(select(
-                    path.as_ref(),
+                    target.as_ref(),
                     Scope::default(),
                 )))),
                 right: Box::new(Expr::Literal(Value::Str(sha256.to_string()))),
             },
-            message: format!("{path} does not have SHA-256 {sha256}"),
+            message: format!("{target} does not have SHA-256 {sha256}"),
         },
     };
     vec![stmt]
