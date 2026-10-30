@@ -160,15 +160,15 @@ impl Mounts {
 
 /// `*` matches any run of characters and `?` any one.
 pub fn glob(pattern: &str, name: &str) -> bool {
-    fn matches(pattern: &[u8], name: &[u8]) -> bool {
-        match pattern.split_first() {
-            None => name.is_empty(),
-            Some((b'*', rest)) => (0..=name.len()).any(|skip| matches(rest, &name[skip..])),
-            Some((b'?', rest)) => !name.is_empty() && matches(rest, &name[1..]),
-            Some((byte, rest)) => name.first() == Some(byte) && matches(rest, &name[1..]),
-        }
+    match pattern.chars().next() {
+        None => name.is_empty(),
+        Some('*') => (0..=name.len())
+            .filter(|at| name.is_char_boundary(*at))
+            .any(|at| glob(&pattern[1..], &name[at..])),
+        Some(c) => name.chars().next().is_some_and(|n| {
+            (c == '?' || c == n) && glob(&pattern[c.len_utf8()..], &name[n.len_utf8()..])
+        }),
     }
-    matches(pattern.as_bytes(), name.as_bytes())
 }
 
 impl RelativePath {

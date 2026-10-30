@@ -102,22 +102,11 @@ pub(crate) fn expand(tree: &PartitionTree, pattern: &RelativePath) -> Vec<Relati
 pub(crate) fn glob_matches(pattern: &RelativePath, path: &RelativePath) -> bool {
     let pattern: Vec<_> = pattern.as_ref().split('/').collect();
     let parts: Vec<_> = path.as_ref().split('/').collect();
-    parts.len() == pattern.len() && pattern.iter().zip(&parts).all(|(p, n)| wildcard(p, n))
-}
-
-pub(crate) fn wildcard(pattern: &str, name: &str) -> bool {
-    match pattern.chars().next() {
-        None => name.is_empty(),
-        Some('*') => (0..=name.len())
-            .filter(|i| name.is_char_boundary(*i))
-            .any(|i| wildcard(&pattern[1..], &name[i..])),
-        Some(c) => {
-            name.chars().next().is_some_and(|n| c == '?' || c == n) && {
-                let n = name.chars().next().map_or(0, char::len_utf8);
-                wildcard(&pattern[c.len_utf8()..], &name[n..])
-            }
-        }
-    }
+    parts.len() == pattern.len()
+        && pattern
+            .iter()
+            .zip(&parts)
+            .all(|(p, n)| android_firmware::glob(p, n))
 }
 
 /// Create any missing directories above `path`. Each takes the metadata of the same
