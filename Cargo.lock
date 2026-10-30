@@ -720,6 +720,7 @@ dependencies = [
  "thiserror",
  "toolchain",
  "xot",
+ "zip",
 ]
 
 [[package]]

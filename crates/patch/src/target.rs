@@ -25,6 +25,8 @@ pub enum Error {
     #[error(transparent)]
     Property(#[from] android_property::Error),
     #[error(transparent)]
+    Align(#[from] crate::align::Error),
+    #[error(transparent)]
     Binary(#[from] crate::binary::Error),
     #[error(transparent)]
     Text(#[from] crate::text::Error),

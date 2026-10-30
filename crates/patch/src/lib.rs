@@ -2,6 +2,7 @@
 //! conditions read from the composed firmware, operations guarded by the content
 //! checks the recipe declares, plus capture of new operations and preview of their effect.
 
+mod align;
 mod apktool;
 mod binary;
 pub mod capture;

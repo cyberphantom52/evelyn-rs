@@ -71,7 +71,7 @@ still in the tree until the remaining ports are moved over.
 - [ ] Flash-test the ZIP output
 - [ ] Port the remaining ROMs and devices to recipes: NothingOS 13, OxygenOS 15/16, Pixel 12–14, raphaeldyn
 - [ ] Remove the shell implementation once nothing uses it
-- [ ] Build super images, align and sign APKs in-process instead of with `lpmake`, `zipalign` and `apksigner`, after testing edge cases against those tools
+- [ ] Build super images in-process instead of with `lpmake`, after testing edge cases against it
 - [ ] Sparse image output
 - [ ] Port system-as-root ROMs to devices with the older `/system` layout (and the reverse), as the old shell's `merge_partition` did
 - [ ] Patch boot images (`boot`, `vendor_boot`) in Evelyn instead of beforehand, and check the first-stage fstab in `vendor_boot` as well as `vendor/etc`
