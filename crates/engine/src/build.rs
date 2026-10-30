@@ -70,7 +70,6 @@ pub fn build(request: &BuildRequest<'_>) -> Result<Built, Error> {
             root,
         };
         android_fs::build::image(
-            request.tools,
             tree,
             &store,
             &image,

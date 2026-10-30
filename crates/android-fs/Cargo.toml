@@ -7,15 +7,12 @@ publish.workspace = true
 
 [dependencies]
 model.workspace = true
-toolchain.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 thiserror.workspace = true
 fs-core.workspace = true
 fs-ext4.workspace = true
-tar.workspace = true
-base64.workspace = true
-percent-encoding.workspace = true
+fs-erofs.workspace = true
 
 [lints]
 workspace = true

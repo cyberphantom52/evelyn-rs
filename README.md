@@ -11,6 +11,7 @@ streams straight from the source into the new image.
 ## Requirements
 
 - Rust (the toolchain is pinned in `rust-toolchain.toml`)
+- A C compiler, which builds liblz4 for EROFS compression
 - Java, for apktool
 - Python 3, to install the pinned host tools:
 
