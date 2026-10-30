@@ -70,9 +70,59 @@ string_type!(DevicePath, "device path", |s: &str| s.len() > 1
     && s[1..]
         .split('/')
         .all(|part| !part.is_empty() && part != "." && part != ".."));
-string_type!(Sha256Digest, "SHA-256 digest", |s: &str| s.len() == 64
-    && s.bytes()
-        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
+
+/// Bytes as lowercase hex, two digits each.
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The bytes `text` writes as hex, two digits each, or `None` if it is not that.
+pub fn unhex(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&text[at..at + 2], 16).ok())
+        .collect()
+}
+
+/// A SHA-256 digest, written as 64 lowercase hex digits.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Sha256Digest([u8; 32]);
+
+impl TryFrom<String> for Sha256Digest {
+    type Error = Error;
+    fn try_from(value: String) -> Result<Self, Error> {
+        unhex(&value)
+            .filter(|_| !value.bytes().any(|b| b.is_ascii_uppercase()))
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(Self)
+            .ok_or(Error::Invalid {
+                kind: "SHA-256 digest",
+                value,
+            })
+    }
+}
+
+impl From<Sha256Digest> for String {
+    fn from(value: Sha256Digest) -> Self {
+        hex(&value.0)
+    }
+}
+
+impl fmt::Display for Sha256Digest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&hex(&self.0))
+    }
+}
+
+impl fmt::Debug for Sha256Digest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Sha256Digest({self})")
+    }
+}
 
 impl DevicePath {
     /// The path's components, after the leading `/`.
@@ -189,14 +239,12 @@ impl Sha256Digest {
         Ok(writer.finish()?.1)
     }
 
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
     fn finish(digest: Sha256) -> Self {
-        Self(
-            digest
-                .finalize()
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect(),
-        )
+        Self(digest.finalize().into())
     }
 }
 
