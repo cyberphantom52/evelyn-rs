@@ -21,14 +21,9 @@ pub fn decode(
     Ok(())
 }
 
-/// Rebuild a decoded package and zipalign it to `output`. APKs are then signed
-/// with Evelyn's key in `tools/keys`; JARs are not verified and stay unsigned.
-pub fn build(
-    tools: &Tools,
-    decoded: &Path,
-    output: &Path,
-    sign: bool,
-) -> Result<(), toolchain::Error> {
+/// Rebuild a decoded package and align it to `output`. APKs are then signed with
+/// Evelyn's key in `tools/keys`; JARs are not verified and stay unsigned.
+pub fn build(tools: &Tools, decoded: &Path, output: &Path, sign: bool) -> Result<(), crate::Error> {
     let unaligned = output.with_extension("unaligned");
     let aligned = output.with_extension("aligned");
     toolchain::run(
@@ -39,13 +34,7 @@ pub fn build(
             .arg(&unaligned)
             .arg(decoded),
     )?;
-    toolchain::run(
-        tools
-            .command("zipalign")?
-            .args(["-P", "16", "-f", "4"])
-            .arg(&unaligned)
-            .arg(if sign { &aligned } else { output }),
-    )?;
+    crate::align::align(&unaligned, if sign { &aligned } else { output })?;
     let _ = std::fs::remove_file(unaligned);
     if sign {
         let keys = tools.file("keys")?;
