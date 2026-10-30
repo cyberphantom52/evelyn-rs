@@ -1,7 +1,7 @@
-//! Construct filesystem and super images with the pinned host tools.
+//! Construct filesystem images: EROFS with the pinned mkfs.erofs, ext4 in-process.
 
 use crate::{Error, Store};
-use model::{EntryKind, Filesystem, Name, PartitionTree};
+use model::{Filesystem, Name, PartitionTree};
 use std::{fs, io::BufWriter, path::Path};
 use toolchain::Tools;
 
@@ -27,61 +27,43 @@ pub fn image(
                 tools
                     .command("mkfs.erofs")?
                     .args(["--quiet", "-zlz4hc,12", "-C", "32768", "--tar=f"])
-                    .args(["-T", &EPOCH.to_string(), "-U", &uuid])
+                    .args(["-T", &EPOCH.to_string(), "-U", &hyphenated(uuid)])
                     .arg(output),
                 |stdin| crate::writer::write_tar(store, tree, BufWriter::new(stdin), EPOCH),
             )?;
         }
         Filesystem::Ext4 => {
-            let (blocks, inodes) = ext4_size(tree);
             let label = if mount_point == "/" {
                 "/"
             } else {
                 partition.as_ref()
             };
-            toolchain::run(
-                tools
-                    .command("mke2fs.android")?
-                    .args(["-O", "^has_journal", "-L", label, "-I", "256"])
-                    .args(["-N", &inodes.to_string(), "-M", mount_point])
-                    .args(["-m", "0", "-t", "ext4", "-b", "4096", "-U", &uuid])
-                    .args(["-E", &format!("hash_seed={uuid}")])
-                    .env("E2FSPROGS_FAKE_TIME", EPOCH.to_string())
-                    .arg(output)
-                    .arg(blocks.to_string()),
-            )?;
-            crate::writer::populate_ext4(store, tree, output, EPOCH)?;
+            crate::writer::write_ext4(store, tree, output, label, uuid, EPOCH)?;
         }
     }
     Ok(fs::metadata(output)?.len())
 }
 
-/// Content blocks plus 10% and 4 MiB of headroom, like the AOSP build defaults.
-fn ext4_size(tree: &PartitionTree) -> (u64, u64) {
-    let blocks: u64 = tree
-        .entries
-        .values()
-        .map(|entry| match &entry.kind {
-            EntryKind::File { size, .. } => size.div_ceil(4096),
-            EntryKind::Hardlink { .. } => 0,
-            _ => 1,
-        })
-        .sum();
-    (
-        blocks + blocks / 10 + 1024,
-        tree.entries.len() as u64 + 1000,
-    )
+/// Stable UUID derived from the partition name, so rebuilds produce identical images.
+fn uuid(partition: &Name) -> [u8; 16] {
+    let hex = model::Sha256Digest::bytes(partition.as_ref().as_bytes()).to_string();
+    let mut uuid: [u8; 16] = std::array::from_fn(|at| {
+        u8::from_str_radix(&hex[2 * at..2 * at + 2], 16).expect("a SHA-256 digest is hex")
+    });
+    // Version 4, RFC 4122 variant.
+    uuid[6] = 0x40 | (uuid[6] & 0x0f);
+    uuid[8] = 0xa0 | (uuid[8] & 0x0f);
+    uuid
 }
 
-/// Stable UUID derived from the partition name, so rebuilds produce identical images.
-fn uuid(partition: &Name) -> String {
-    let hex = model::Sha256Digest::bytes(partition.as_ref().as_bytes()).to_string();
+fn hyphenated(uuid: [u8; 16]) -> String {
+    let hex: String = uuid.iter().map(|byte| format!("{byte:02x}")).collect();
     format!(
-        "{}-{}-4{}-a{}-{}",
+        "{}-{}-{}-{}-{}",
         &hex[..8],
         &hex[8..12],
-        &hex[13..16],
-        &hex[17..20],
-        &hex[20..32]
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
     )
 }

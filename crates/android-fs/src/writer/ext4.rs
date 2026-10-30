@@ -11,6 +11,8 @@ use std::{
     },
 };
 
+const BLOCK_SIZE: u64 = 4096;
+
 /// The image file as a block device. It is a scratch output that is rebuilt from
 /// scratch after any failure, so writes are never synced while populating.
 struct ImageDevice {
@@ -74,26 +76,63 @@ fn metadata(
     Ok(())
 }
 
-/// Populate a freshly made mke2fs image in place.
-pub fn populate_ext4(
+/// Content blocks plus 10% and 4 MiB of headroom, like the AOSP build defaults,
+/// and an inode for every entry plus 1000.
+fn size(tree: &PartitionTree) -> (u64, u64) {
+    let blocks: u64 = tree
+        .entries
+        .values()
+        .map(|entry| match &entry.kind {
+            EntryKind::File { size, .. } => size.div_ceil(BLOCK_SIZE),
+            EntryKind::Hardlink { .. } => 0,
+            _ => 1,
+        })
+        .sum();
+    (
+        blocks + blocks / 10 + 1024,
+        tree.entries.len() as u64 + 1000,
+    )
+}
+
+/// Format a new ext4 image at `image`, without a journal, and populate it with `tree`.
+pub fn write_ext4(
     store: &Store<'_>,
     tree: &PartitionTree,
     image: &Path,
+    label: &str,
+    uuid: [u8; 16],
     epoch: u64,
 ) -> Result<(), Error> {
-    let file = fs::OpenOptions::new().read(true).write(true).open(image)?;
-    let device = ImageDevice {
-        size: file.metadata()?.len(),
+    let (blocks, inodes) = size(tree);
+    let inodes = u32::try_from(inodes)
+        .map_err(|_| Error::Unsupported(format!("{inodes} inodes do not fit in ext4")))?;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(image)?;
+    file.set_len(blocks * BLOCK_SIZE)?;
+    let device = Arc::new(fs_ext4::fs_core_bridge::CoreDevice::new(ImageDevice {
+        size: blocks * BLOCK_SIZE,
         file,
-    };
+    }));
+    fs_ext4::mkfs::format_filesystem_with_options(
+        &*device,
+        Some(label),
+        Some(uuid),
+        blocks * BLOCK_SIZE,
+        BLOCK_SIZE as u32,
+        &fs_ext4::mkfs::FormatOptions {
+            inodes_count: Some(inodes),
+            ..fs_ext4::mkfs::FormatOptions::new(fs_ext4::features::FsFlavor::Ext4)
+        },
+    )?;
     let runtime = Arc::new(FixedRuntime {
         epoch: epoch as i64,
         generation: AtomicU32::new(1),
     });
-    let fs = fs_ext4::Filesystem::mount_with_runtime(
-        Arc::new(fs_ext4::fs_core_bridge::CoreDevice::new(device)),
-        runtime,
-    )?;
+    let fs = fs_ext4::Filesystem::mount_with_runtime(device, runtime)?;
     fs.apply_rmdir("/lost+found")?;
     for (path, entry) in &tree.entries {
         let absolute = format!("/{path}");
@@ -132,5 +171,13 @@ pub fn populate_ext4(
     }
     metadata(&fs, 2, "/", &tree.root)?;
     fs.flush()?;
+    // The formatter leaves off a last block group too small for its metadata, as
+    // mke2fs does, so the volume can end before the file.
+    let formatted = fs.sb.blocks_count * BLOCK_SIZE;
+    drop(fs);
+    fs::OpenOptions::new()
+        .write(true)
+        .open(image)?
+        .set_len(formatted)?;
     Ok(())
 }
