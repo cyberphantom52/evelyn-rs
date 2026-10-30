@@ -1,11 +1,8 @@
-use crate::{EntryKind, PartitionTree};
+use crate::{EntryKind, PartitionTree, Region};
 use crate::{Error, Store};
 use android_firmware::AndroidMetadata;
 use std::{
-    fs,
     io::Read,
-    os::unix::fs::FileExt,
-    path::Path,
     sync::{
         Arc,
         atomic::{AtomicU32, Ordering},
@@ -14,16 +11,15 @@ use std::{
 
 const BLOCK_SIZE: u64 = 4096;
 
-/// The image file as a block device. It is a scratch output that is rebuilt from
-/// scratch after any failure, so writes are never synced while populating.
+/// The region the filesystem is built in, as a block device of `size` bytes.
 struct ImageDevice {
-    file: fs::File,
+    region: Region,
     size: u64,
 }
 
 impl fs_core::BlockRead for ImageDevice {
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> fs_core::Result<()> {
-        Ok(self.file.read_exact_at(buf, offset)?)
+        Ok(self.region.read_exact_at(buf, offset)?)
     }
 
     fn size_bytes(&self) -> u64 {
@@ -34,7 +30,7 @@ impl fs_core::BlockRead for ImageDevice {
 /// `flush` keeps its no-op default.
 impl fs_core::BlockDevice for ImageDevice {
     fn write_at(&self, offset: u64, buf: &[u8]) -> fs_core::Result<()> {
-        Ok(self.file.write_all_at(buf, offset)?)
+        Ok(self.region.write_all_at(buf, offset)?)
     }
 
     fn is_writable(&self) -> bool {
@@ -95,28 +91,23 @@ fn size(tree: &PartitionTree) -> (u64, u64) {
     )
 }
 
-/// Format a new ext4 image at `image`, without a journal, and populate it with `tree`.
+/// Format ext4 in `region`, without a journal, and populate it with `tree`. Returns
+/// the filesystem's size.
 pub(super) fn write(
     store: &Store<'_>,
     tree: &PartitionTree,
-    image: &Path,
+    region: Region,
     label: &str,
     uuid: [u8; 16],
     epoch: u64,
-) -> Result<(), Error> {
+) -> Result<u64, Error> {
     let (blocks, inodes) = size(tree);
     let inodes = u32::try_from(inodes)
         .map_err(|_| Error::Unsupported(format!("{inodes} inodes do not fit in ext4")))?;
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(image)?;
-    file.set_len(blocks * BLOCK_SIZE)?;
+    region.reserve(blocks * BLOCK_SIZE)?;
     let device = Arc::new(fs_ext4::fs_core_bridge::CoreDevice::new(ImageDevice {
         size: blocks * BLOCK_SIZE,
-        file,
+        region,
     }));
     fs_ext4::mkfs::format_filesystem_with_options(
         &*device,
@@ -173,12 +164,6 @@ pub(super) fn write(
     metadata(&fs, 2, "/", &tree.root)?;
     fs.flush()?;
     // The formatter leaves off a last block group too small for its metadata, so
-    // the volume can end before the file.
-    let formatted = fs.sb.blocks_count * BLOCK_SIZE;
-    drop(fs);
-    fs::OpenOptions::new()
-        .write(true)
-        .open(image)?
-        .set_len(formatted)?;
-    Ok(())
+    // the volume can end before the space reserved for it.
+    Ok(fs.sb.blocks_count * BLOCK_SIZE)
 }

@@ -1,12 +1,10 @@
 use crate::{EntryKind, PartitionTree};
-use crate::{Error, Store};
+use crate::{Error, Region, Store};
 use android_firmware::AndroidMetadata;
 use fs_erofs::mkfs::{self, BuildOptions, Compression, Content, Node, NodeMeta, XattrSpec};
 use std::{
     collections::BTreeMap,
-    fs,
     io::{self, BufWriter, Write},
-    path::Path,
 };
 
 fn xattrs(metadata: &AndroidMetadata) -> Result<Vec<XattrSpec>, Error> {
@@ -47,15 +45,15 @@ fn insert<'a>(
     Ok(())
 }
 
-/// Build `tree` into a new EROFS image at `image`, LZ4HC-compressed into 32 KiB
-/// pclusters: file contents are read from `store` as they are written.
+/// Build `tree` as EROFS in `region`, LZ4HC-compressed into 32 KiB pclusters: file
+/// contents are read from `store` as they are written. Returns the image's size.
 pub(super) fn write(
     store: &Store<'_>,
     tree: &PartitionTree,
-    image: &Path,
+    region: Region,
     uuid: [u8; 16],
     epoch: u64,
-) -> Result<(), Error> {
+) -> Result<u64, Error> {
     let mut root = BTreeMap::new();
     // Entries are sorted, so every directory is added before what it holds.
     for (path, entry) in &tree.entries {
@@ -103,8 +101,8 @@ pub(super) fn write(
         compression: Some(Compression::LZ4HC_12_32K),
         ..BuildOptions::default()
     };
-    let mut sink = BufWriter::new(fs::File::create(image)?);
-    mkfs::build_image_to(root, 12, options, &mut sink)?;
+    let mut sink = BufWriter::new(region);
+    let size = mkfs::build_image_to(root, 12, options, &mut sink)?;
     sink.flush()?;
-    Ok(())
+    Ok(size)
 }
