@@ -3,7 +3,8 @@ mod patch;
 use android_fs::Artifact;
 use clap::{Parser, Subcommand, ValueEnum};
 use engine::Output;
-use recipe::{Profile, Recipe};
+use engine::Profile;
+use recipe::Recipe;
 use serde::Serialize;
 use std::{
     io::{self, Write},
@@ -126,6 +127,8 @@ enum Error {
     Recipe(#[from] recipe::Error),
     #[error(transparent)]
     Engine(#[from] engine::Error),
+    #[error(transparent)]
+    Profile(#[from] engine::profile::Error),
     #[error(transparent)]
     Image(#[from] android_fs::Error),
     #[error("cannot write JSON result: {0}")]

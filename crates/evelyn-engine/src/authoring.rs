@@ -52,7 +52,7 @@ pub fn prepare_file(request: PrepareRequest<'_>) -> Result<PreparedFile, Error> 
                     |_| Error::Authoring("no composed target; run `evelyn build` first"),
                 )?;
                 let has = |path: &str| tree.entries.keys().any(|entry| entry.as_ref() == path);
-                recipe::system_mount_point(has)
+                android_firmware::system_mount_point(has)
                     .ok_or(Error::SystemLayout)?
                     .to_owned()
             }
