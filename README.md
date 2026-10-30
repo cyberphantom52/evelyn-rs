@@ -52,12 +52,13 @@ directory.
 - `devices/<device>/<rom>/<version>/`: a port (`port.toml`) and its recipes (`*.ron`)
 - `roms/`: recipes shared by every device on a ROM
 - `crates/`: the Rust workspace
-  - `android-fs`: EROFS and ext4 images: read, scan, write
+  - `android-firmware`: partition names and paths, mount points, Treble sides, the `super` layout and Android file metadata
+  - `android-fs`: EROFS and ext4 images (raw or sparse) read in place, scanned into partition trees and built back
   - `android-property`: `.prop` files
   - `smali`: smali parser and method edits
-  - `evelyn-patch`: the patch engine
-  - `evelyn-recipe`, `model`: device, port and recipe formats
-  - `evelyn-engine`: the build pipeline
+  - `evelyn-recipe`: the recipe language
+  - `evelyn-patch`: applies recipes to partition trees
+  - `evelyn-engine`: device and port profiles, planning and the build pipeline
   - `toolchain`: the pinned host tools
   - `cli`: the `evelyn` binary
 - `tools/`: the host tool manager, the ZIP packaging template and the debug recipe
