@@ -1,4 +1,5 @@
-//! Pinned host tools installed by `tools/manager.py` into `tools/bin` and `tools/scripts`.
+//! Pinned host tools installed by `tools/manager.py`: the Java tools in `tools/scripts`,
+//! and files such as the signing keys.
 
 use std::{
     io,
@@ -33,14 +34,6 @@ pub struct Tools {
 impl Tools {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
-    }
-
-    /// A native tool from `bin/`, with the bundled `bin/lib64` on its library path.
-    pub fn command(&self, name: &str) -> Result<Command, Error> {
-        let path = self.installed(Path::new("bin").join(name))?;
-        let mut command = Command::new(path);
-        command.env("LD_LIBRARY_PATH", self.root.join("bin/lib64"));
-        Ok(command)
     }
 
     /// A Java tool from `scripts/`, run with the host `java`.

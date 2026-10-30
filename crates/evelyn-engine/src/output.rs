@@ -1,46 +1,27 @@
 //! Publish built images in the requested output format.
 
-use crate::Output;
+use crate::build::Images;
 use crate::{BuildRequest, Error};
-use android_firmware::Name;
 use std::{fs, path::PathBuf};
 
-/// `images` are in `super` order.
-pub(crate) fn publish(
-    request: &BuildRequest<'_>,
-    images: &[(Name, PathBuf)],
-) -> Result<Vec<PathBuf>, Error> {
+pub(crate) fn publish(request: &BuildRequest<'_>, images: Images) -> Result<Vec<PathBuf>, Error> {
     fs::create_dir_all(request.output_dir)?;
     let profile = &request.plan.profile;
-    let outputs = match request.plan.output {
-        Output::Partitions => images
-            .iter()
+    Ok(match images {
+        Images::Partitions(images) => images
+            .into_iter()
             .map(|(name, image)| {
                 let output = request.output_dir.join(format!("{name}.img"));
                 fs::rename(image, &output)?;
                 Ok(output)
             })
             .collect::<Result<_, Error>>()?,
-        Output::Super => {
-            let layout = profile
-                .device
-                .super_layout
-                .as_ref()
-                .expect("checked by Plan::load");
+        Images::Super(super_image) if request.plan.output == crate::Output::Super => {
             let output = request.output_dir.join("super.img");
-            tracing::info!(path = %output.display(), "building super image");
-            crate::super_image::build(request.tools, layout, images, &output)?;
+            fs::rename(super_image, &output)?;
             vec![output]
         }
-        Output::Zip => {
-            let layout = profile
-                .device
-                .super_layout
-                .as_ref()
-                .expect("checked by Plan::load");
-            let super_image = request.work_dir.join("images").join("super.img");
-            tracing::info!("building super image");
-            crate::super_image::build(request.tools, layout, images, &super_image)?;
+        Images::Super(super_image) => {
             let output = request
                 .output_dir
                 .join(format!("{}.zip", profile.device.device));
@@ -56,6 +37,5 @@ pub(crate) fn publish(
             fs::remove_file(super_image)?;
             vec![output]
         }
-    };
-    Ok(outputs)
+    })
 }

@@ -7,7 +7,6 @@ mod fstab;
 mod needs;
 mod output;
 pub mod profile;
-mod super_image;
 pub use authoring::{
     CaptureKind, CaptureRequest, CapturedRecipe, PrepareRequest, PreparedFile, capture_file,
     prepare_file, preview_trees,

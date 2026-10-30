@@ -53,7 +53,7 @@ directory.
 - `roms/`: recipes shared by every device on a ROM
 - `crates/`: the Rust workspace
   - `android-firmware`: partition names and paths, mount points, Treble sides, the `super` layout and Android file metadata
-  - `android-fs`: EROFS and ext4 images (raw or sparse) read in place, scanned into partition trees and built back
+  - `android-fs`: EROFS and ext4 images (raw or sparse) read in place, scanned into partition trees and built back, alone or straight into a `super` image
   - `android-property`: `.prop` files
   - `smali`: smali parser and method edits
   - `evelyn-recipe`: the recipe language
@@ -72,7 +72,6 @@ still in the tree until the remaining ports are moved over.
 - [ ] Flash-test the ZIP output
 - [ ] Port the remaining ROMs and devices to recipes: NothingOS 13, OxygenOS 15/16, Pixel 12–14, raphaeldyn
 - [ ] Remove the shell implementation once nothing uses it
-- [ ] Build super images in-process instead of with `lpmake`, after testing edge cases against it
 - [ ] Sparse image output
 - [ ] Port system-as-root ROMs to devices with the older `/system` layout (and the reverse), as the old shell's `merge_partition` did
 - [ ] Patch boot images (`boot`, `vendor_boot`) in Evelyn instead of beforehand, and check the first-stage fstab in `vendor_boot` as well as `vendor/etc`

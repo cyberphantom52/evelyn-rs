@@ -6,6 +6,8 @@ pub mod defaults;
 mod device;
 mod format;
 mod image;
+pub mod lp;
+mod region;
 mod scan;
 mod store;
 mod tree;
@@ -18,6 +20,7 @@ use thiserror::Error;
 
 pub use format::{Artifact, ImageFormat};
 pub use image::Image;
+pub use region::Region;
 pub use scan::scan;
 pub use store::Store;
 pub use tree::{Content, Entry, EntryKind, PartitionTree, Provenance};
@@ -42,6 +45,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("unsupported or inconsistent image data: {0}")]
     Unsupported(String),
+    #[error("cannot build super image: {0}")]
+    Super(String),
     #[error("EROFS backend: {0}")]
     Erofs(#[from] fs_erofs::Error),
 }

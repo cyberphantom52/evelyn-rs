@@ -10,9 +10,10 @@
 //!   packages/                           decoded APK/JAR workspaces
 //!   images/<partition>.img              built filesystem images
 
-use crate::{Error, Plan};
+use crate::{Error, Output, Plan};
 use android_firmware::{Mounts, Name, RelativePath, SourceRef};
 use android_fs::Image;
+use android_fs::lp::SuperImage;
 use android_fs::{Artifact, PartitionTree};
 use serde::Serialize;
 use std::{
@@ -60,26 +61,57 @@ pub fn build(request: &BuildRequest<'_>) -> Result<Built, Error> {
     crate::fstab::check(&targets, &images)?;
     let output = request.work_dir.join("images");
     reset(&output)?;
-    let mut built = Vec::new();
-    for partition in &plan.partitions {
+    // Builds `partition` in `region`, or in its own image file when there is none.
+    let build = |partition: &crate::PlannedPartition, region: Option<android_fs::Region>| {
         let (root, tree) = &targets[&partition.name];
-        let image = output.join(format!("{}.img", partition.name));
         tracing::info!(partition = %partition.name, filesystem = ?tree.filesystem, "building image");
         let store = android_fs::Store {
             images: &images,
             root,
         };
-        android_fs::build::image(
-            tree,
-            &store,
-            &image,
-            tree.filesystem,
-            &partition.name,
-            &mount_point(partition, &sources[&partition.base])?,
-        )?;
-        built.push((partition.name.clone(), image));
-    }
-    let outputs = crate::output::publish(request, &built)?;
+        let mount = mount_point(partition, &sources[&partition.base])?;
+        let (name, filesystem) = (&partition.name, tree.filesystem);
+        Ok::<_, Error>(match region {
+            Some(region) => {
+                android_fs::build::image(tree, &store, region, filesystem, name, &mount)?
+            }
+            None => {
+                let image = output.join(format!("{name}.img"));
+                android_fs::build::image_file(tree, &store, &image, filesystem, name, &mount)?
+            }
+        })
+    };
+    let built = match plan.output {
+        Output::Partitions => {
+            let mut images = Vec::new();
+            for partition in &plan.partitions {
+                build(partition, None)?;
+                images.push((
+                    partition.name.clone(),
+                    output.join(format!("{}.img", partition.name)),
+                ));
+            }
+            Images::Partitions(images)
+        }
+        // Every partition is built straight into its place in `super`.
+        Output::Super | Output::Zip => {
+            let layout = plan
+                .profile
+                .device
+                .super_layout
+                .clone()
+                .expect("checked by Plan::load");
+            let path = output.join("super.img");
+            let mut image = SuperImage::create(&path, layout)?;
+            for partition in &plan.partitions {
+                let size = build(partition, Some(image.region()?))?;
+                image.add(partition.name.clone(), size)?;
+            }
+            image.finish()?;
+            Images::Super(path)
+        }
+    };
+    let outputs = crate::output::publish(request, built)?;
     Ok(Built {
         outputs,
         skipped: report.skipped,
@@ -123,6 +155,13 @@ fn open(
 }
 
 pub(crate) type Targets = BTreeMap<Name, (PathBuf, PartitionTree)>;
+
+/// What a build wrote: each partition's image in `super` order, or one `super` image
+/// holding them all.
+pub(crate) enum Images {
+    Partitions(Vec<(Name, PathBuf)>),
+    Super(PathBuf),
+}
 
 /// Where `partition` is mounted: the plan's, or for `system`, as `tree` is laid out.
 pub(crate) fn mount_point(
