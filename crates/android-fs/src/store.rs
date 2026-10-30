@@ -1,7 +1,7 @@
 //! Where file contents are read from: source images and a tree's own blobs.
 
 use crate::{Content, PartitionTree};
-use crate::{Error, image::Source};
+use crate::{Error, Image};
 use android_firmware::SourceRef;
 use std::{
     collections::BTreeMap,
@@ -13,7 +13,7 @@ use std::{
 /// Opens file contents for one tree: `Image` contents from the open source images,
 /// `Blob` contents from the tree's `content/` directory.
 pub struct Store<'a> {
-    pub images: &'a BTreeMap<SourceRef, Source>,
+    pub images: &'a BTreeMap<SourceRef, Image>,
     pub root: &'a Path,
 }
 

@@ -12,7 +12,7 @@
 
 use crate::{Error, Plan};
 use android_firmware::{Mounts, Name, RelativePath, SourceRef};
-use android_fs::image::Source;
+use android_fs::Image;
 use android_fs::{Artifact, PartitionTree};
 use serde::Serialize;
 use std::{
@@ -97,8 +97,8 @@ fn reset(path: &Path) -> Result<(), Error> {
 }
 
 /// Open a source image for reading; sparse images are read as the raw image they hold.
-pub(crate) fn open_image(source: &SourceRef, artifact: &Artifact) -> Result<Source, Error> {
-    Source::detect(&artifact.path).map_err(|_| Error::SourceFilesystem(source.clone()))
+pub(crate) fn open_image(source: &SourceRef, artifact: &Artifact) -> Result<Image, Error> {
+    Image::detect(&artifact.path).map_err(|_| Error::SourceFilesystem(source.clone()))
 }
 
 /// Open a source image and its scanned tree, scanning only when the image changed.
@@ -106,7 +106,7 @@ fn open(
     request: &BuildRequest<'_>,
     source: &SourceRef,
     artifact: &Artifact,
-) -> Result<(Source, PartitionTree), Error> {
+) -> Result<(Image, PartitionTree), Error> {
     let image = open_image(source, artifact)?;
     let cache = request.work_dir.join("sources").join(source.to_string());
     if let Ok(tree) = android_fs::read_tree(&cache)

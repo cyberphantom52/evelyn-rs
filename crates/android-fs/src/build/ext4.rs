@@ -96,7 +96,7 @@ fn size(tree: &PartitionTree) -> (u64, u64) {
 }
 
 /// Format a new ext4 image at `image`, without a journal, and populate it with `tree`.
-pub fn write_ext4(
+pub(super) fn write(
     store: &Store<'_>,
     tree: &PartitionTree,
     image: &Path,
@@ -172,8 +172,8 @@ pub fn write_ext4(
     }
     metadata(&fs, 2, "/", &tree.root)?;
     fs.flush()?;
-    // The formatter leaves off a last block group too small for its metadata, as
-    // mke2fs does, so the volume can end before the file.
+    // The formatter leaves off a last block group too small for its metadata, so
+    // the volume can end before the file.
     let formatted = fs.sb.blocks_count * BLOCK_SIZE;
     drop(fs);
     fs::OpenOptions::new()

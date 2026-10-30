@@ -47,9 +47,9 @@ fn insert<'a>(
     Ok(())
 }
 
-/// Build `tree` into a new EROFS image at `image`, as `mkfs.erofs -zlz4hc,12 -C 32768`
-/// would: file contents are read from `store` as they are written.
-pub fn write_erofs(
+/// Build `tree` into a new EROFS image at `image`, LZ4HC-compressed into 32 KiB
+/// pclusters: file contents are read from `store` as they are written.
+pub(super) fn write(
     store: &Store<'_>,
     tree: &PartitionTree,
     image: &Path,

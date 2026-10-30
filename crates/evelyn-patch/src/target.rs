@@ -3,7 +3,7 @@
 
 use android_firmware::{Filesystem, Name, RelativePath, Sha256Digest, Sha256Writer, SourceRef};
 use android_fs::{Content, Entry, EntryKind, PartitionTree, Provenance};
-use android_fs::{Store, image::Source};
+use android_fs::{Image, Store};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -80,7 +80,7 @@ pub enum Error {
 }
 
 /// Open source images, by source reference.
-pub type Images = BTreeMap<SourceRef, Source>;
+pub type Images = BTreeMap<SourceRef, Image>;
 
 pub struct Target {
     root: PathBuf,
