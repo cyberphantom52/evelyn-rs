@@ -39,9 +39,7 @@ impl Tools {
     pub fn command(&self, name: &str) -> Result<Command, Error> {
         let path = self.installed(Path::new("bin").join(name))?;
         let mut command = Command::new(path);
-        command
-            .env("LD_LIBRARY_PATH", self.root.join("bin/lib64"))
-            .env("MKE2FS_CONFIG", self.root.join("bin/mke2fs.conf"));
+        command.env("LD_LIBRARY_PATH", self.root.join("bin/lib64"));
         Ok(command)
     }
 
