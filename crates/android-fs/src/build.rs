@@ -38,10 +38,8 @@ pub fn image(
 
 /// Stable UUID derived from the partition name, so rebuilds produce identical images.
 fn uuid(partition: &Name) -> [u8; 16] {
-    let hex = android_firmware::Sha256Digest::bytes(partition.as_ref().as_bytes()).to_string();
-    let mut uuid: [u8; 16] = std::array::from_fn(|at| {
-        u8::from_str_radix(&hex[2 * at..2 * at + 2], 16).expect("a SHA-256 digest is hex")
-    });
+    let digest = android_firmware::Sha256Digest::bytes(partition.as_ref().as_bytes());
+    let mut uuid: [u8; 16] = std::array::from_fn(|at| digest.as_bytes()[at]);
     // Version 4, RFC 4122 variant.
     uuid[6] = 0x40 | (uuid[6] & 0x0f);
     uuid[8] = 0xa0 | (uuid[8] & 0x0f);

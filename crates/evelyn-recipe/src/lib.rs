@@ -333,24 +333,16 @@ impl TryFrom<String> for Hex {
     type Error = String;
 
     fn try_from(text: String) -> Result<Self, String> {
-        let invalid = || format!("invalid hex bytes {text:?}");
-        if text.is_empty() || !text.len().is_multiple_of(2) {
-            return Err(invalid());
-        }
-        (0..text.len())
-            .step_by(2)
-            .map(|at| {
-                u8::from_str_radix(text.get(at..at + 2).ok_or_else(invalid)?, 16)
-                    .map_err(|_| invalid())
-            })
-            .collect::<Result<_, _>>()
+        android_firmware::unhex(&text)
+            .filter(|bytes| !bytes.is_empty())
             .map(Self)
+            .ok_or_else(|| format!("invalid hex bytes {text:?}"))
     }
 }
 
 impl From<Hex> for String {
     fn from(hex: Hex) -> Self {
-        hex.0.iter().map(|byte| format!("{byte:02x}")).collect()
+        android_firmware::hex(&hex.0)
     }
 }
 
