@@ -21,7 +21,7 @@ pub use profile::{
 };
 pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate, XmlStep};
 
-use model::{DevicePath, Name, RelativePath, Sha256Digest};
+use android_firmware::{DevicePath, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -55,7 +55,7 @@ pub enum Error {
     #[error("invalid configuration: {0}")]
     Invalid(String),
     #[error(transparent)]
-    Model(#[from] model::Error),
+    Firmware(#[from] android_firmware::Error),
 }
 
 fn read(path: &Path) -> Result<String, Error> {
@@ -320,7 +320,7 @@ pub enum PropertyTarget {
 }
 
 impl TryFrom<String> for PropertyTarget {
-    type Error = model::Error;
+    type Error = android_firmware::Error;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         if value.starts_with('/') {

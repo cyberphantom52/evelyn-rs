@@ -1,9 +1,7 @@
 use crate::Error;
 use crate::image::{Kind, Source};
-use model::{
-    Content, Entry, EntryKind, Name, PartitionTree, Provenance, RelativePath, Sha256Digest,
-    Sha256Writer, SourceRef,
-};
+use android_firmware::{Name, RelativePath, Sha256Digest, Sha256Writer, SourceRef};
+use model::{Content, Entry, EntryKind, PartitionTree, Provenance};
 use std::{
     collections::{BTreeMap, btree_map},
     io,

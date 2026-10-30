@@ -1,6 +1,5 @@
-use crate::{
-    AndroidMetadata, Content, Entry, EntryKind, Error, Filesystem, Name, RelativePath, Sha256Digest,
-};
+use crate::{Content, Entry, EntryKind, Error};
+use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 

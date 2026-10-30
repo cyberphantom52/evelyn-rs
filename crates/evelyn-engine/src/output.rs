@@ -1,7 +1,8 @@
 //! Publish built images in the requested output format.
 
 use crate::{BuildRequest, Error};
-use model::{Name, Output};
+use android_firmware::Name;
+use model::Output;
 use std::{fs, path::PathBuf};
 
 /// `images` are in `super` order.

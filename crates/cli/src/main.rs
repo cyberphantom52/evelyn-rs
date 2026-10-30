@@ -122,6 +122,8 @@ enum Error {
     #[error(transparent)]
     Model(#[from] model::Error),
     #[error(transparent)]
+    Firmware(#[from] android_firmware::Error),
+    #[error(transparent)]
     Recipe(#[from] recipe::Error),
     #[error(transparent)]
     Engine(#[from] engine::Error),

@@ -3,7 +3,7 @@
 //! a silent result.
 
 use crate::Firmware;
-use model::{Name, RelativePath};
+use android_firmware::{Name, RelativePath};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

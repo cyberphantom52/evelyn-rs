@@ -1,7 +1,8 @@
 //! Construct EROFS and ext4 filesystem images.
 
 use crate::{Error, Store};
-use model::{Filesystem, Name, PartitionTree};
+use android_firmware::{Filesystem, Name};
+use model::PartitionTree;
 use std::{fs, path::Path};
 
 /// Fixed timestamp for reproducible images (2009-01-01, as AOSP builds use).
@@ -34,7 +35,7 @@ pub fn image(
 
 /// Stable UUID derived from the partition name, so rebuilds produce identical images.
 fn uuid(partition: &Name) -> [u8; 16] {
-    let hex = model::Sha256Digest::bytes(partition.as_ref().as_bytes()).to_string();
+    let hex = android_firmware::Sha256Digest::bytes(partition.as_ref().as_bytes()).to_string();
     let mut uuid: [u8; 16] = std::array::from_fn(|at| {
         u8::from_str_radix(&hex[2 * at..2 * at + 2], 16).expect("a SHA-256 digest is hex")
     });

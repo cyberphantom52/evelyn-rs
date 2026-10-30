@@ -8,7 +8,8 @@
 //! when the firmware sets it.
 
 use crate::{Composition, Error, Target, compose::Context, layout, package::Opened};
-use model::{DevicePath, EntryKind, Name, PartitionTree, RelativePath, SourceRef};
+use android_firmware::{DevicePath, Name, RelativePath, SourceRef};
+use model::{EntryKind, PartitionTree};
 use recipe::{
     Firmware, PropertyTarget,
     tree::{BinaryOp, Expr, Scope as Range, Source, UnaryOp},
@@ -446,7 +447,9 @@ impl Scope<'_> {
                 };
                 if let (Place::Package, Some(package)) = (entry.place, self.package) {
                     let bytes = std::fs::read(entry.path.resolve(&package.decoded))?;
-                    return Ok(Value::Str(model::Sha256Digest::bytes(&bytes).to_string()));
+                    return Ok(Value::Str(
+                        android_firmware::Sha256Digest::bytes(&bytes).to_string(),
+                    ));
                 }
                 let target = self
                     .targets

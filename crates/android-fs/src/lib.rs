@@ -20,6 +20,8 @@ pub use store::Store;
 pub enum Error {
     #[error(transparent)]
     Model(#[from] model::Error),
+    #[error(transparent)]
+    Firmware(#[from] android_firmware::Error),
     #[error("ext4 backend: {0}")]
     Ext4(#[from] fs_ext4::Error),
     #[error("filesystem IO: {0}")]

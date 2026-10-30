@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+android-firmware.workspace = true
 android-fs.workspace = true
 android-property.workspace = true
 toolchain.workspace = true

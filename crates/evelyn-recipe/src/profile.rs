@@ -15,7 +15,7 @@ use crate::{
     tree::{Expr, Stmt},
     visit::Visitor,
 };
-use model::{Filesystem, Name};
+use android_firmware::{Filesystem, Name};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,

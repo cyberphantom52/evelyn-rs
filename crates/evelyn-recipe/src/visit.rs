@@ -7,7 +7,7 @@ use crate::{
     tree::{BinaryOp, Expr, Stmt, Transform, Tree, UnaryOp},
     value::Value,
 };
-use model::Name;
+use android_firmware::Name;
 
 pub trait Visitor {
     /// Called for every statement, with the names enclosing `Let`s bind.

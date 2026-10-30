@@ -1,6 +1,6 @@
 //! Turn an edited copy of a file into recipe operations.
 
-use model::{DevicePath, RelativePath, Sha256Digest};
+use android_firmware::{DevicePath, RelativePath, Sha256Digest};
 use recipe::{Hex, Operation};
 use std::collections::BTreeMap;
 use thiserror::Error;

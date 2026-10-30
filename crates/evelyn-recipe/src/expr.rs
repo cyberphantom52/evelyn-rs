@@ -2,7 +2,7 @@
 //! into the primitive tree's expressions, where their types are checked.
 
 use crate::PropertyTarget;
-use model::{DevicePath, Name};
+use android_firmware::{DevicePath, Name};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

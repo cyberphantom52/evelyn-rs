@@ -10,6 +10,7 @@ rust-version = "1.99.1"
 publish = false
 
 [workspace.dependencies]
+android-firmware = { path = "crates/android-firmware" }
 android-fs = { path = "crates/android-fs" }
 android-property = { path = "crates/android-property" }
 engine = { package = "evelyn-engine", path = "crates/evelyn-engine" }

@@ -2,14 +2,15 @@
 //! Every edit keeps hardlink groups intact: when a group's canonical entry is dropped,
 //! its lexicographically first surviving member is promoted to canonical.
 
-use model::{Entry, EntryKind, PartitionTree, Provenance, RelativePath, SourceRef};
+use android_firmware::{RelativePath, SourceRef};
+use model::{Entry, EntryKind, PartitionTree, Provenance};
 use std::collections::BTreeMap;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("invalid path: {0}")]
-    Model(#[from] model::Error),
+    Firmware(#[from] android_firmware::Error),
     #[error("path does not exist: {0}")]
     MissingPath(RelativePath),
     #[error("destination already exists: {0}")]
