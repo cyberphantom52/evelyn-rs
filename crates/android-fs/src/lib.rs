@@ -4,7 +4,6 @@
 pub mod build;
 pub mod defaults;
 pub mod device;
-pub mod erofs;
 pub mod image;
 mod reader;
 mod store;

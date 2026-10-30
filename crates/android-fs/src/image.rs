@@ -2,18 +2,18 @@
 
 use crate::Error;
 use crate::device::{Device, into_io};
-use crate::erofs::Erofs;
 use fs_core::BlockRead;
 use fs_ext4::fs_core_bridge::CoreDevice;
 use model::{AndroidMetadata, Filesystem};
 use std::{
+    collections::BTreeMap,
     io::{self, Read},
     path::Path,
     sync::Arc,
 };
 
 enum Backend {
-    Erofs(Erofs<Device>),
+    Erofs(Box<fs_erofs::Filesystem>),
     Ext4(Box<fs_ext4::Filesystem>),
 }
 
@@ -41,7 +41,7 @@ impl Source {
         let mut prefix = [0u8; 1084];
         device.read_at(0, &mut prefix).map_err(into_io)?;
         Ok(Self(if prefix[1024..1028] == [0xe2, 0xe1, 0xf5, 0xe0] {
-            Backend::Erofs(Erofs::open(device)?)
+            Backend::Erofs(Box::new(fs_erofs::Filesystem::open(Arc::new(device))?))
         } else if prefix[1080..1082] == [0x53, 0xef] {
             let fs = fs_ext4::Filesystem::mount(Arc::new(CoreDevice::new(device)))?;
             // Without journal replay, a dirty filesystem would read stale data.
@@ -94,7 +94,7 @@ impl Source {
 
     pub fn root(&self) -> Result<u64, Error> {
         Ok(match &self.0 {
-            Backend::Erofs(fs) => fs.root(),
+            Backend::Erofs(fs) => fs.root_inode()?.nid,
             Backend::Ext4(_) => 2,
         })
     }
@@ -102,8 +102,18 @@ impl Source {
     pub fn inode(&self, id: u64) -> Result<Inode, Error> {
         let (mode, uid, gid, size, links, xattrs) = match &self.0 {
             Backend::Erofs(fs) => {
-                let inode = fs.inode(id)?;
-                let xattrs = fs.xattrs(&inode)?;
+                let inode = fs.read_inode(id)?;
+                let xattrs = fs
+                    .xattrs(&inode)?
+                    .into_iter()
+                    .map(|(name, value)| {
+                        String::from_utf8(name)
+                            .map(|name| (name, value))
+                            .map_err(|_| {
+                                Error::Unsupported(format!("non-UTF-8 xattr name on inode {id}"))
+                            })
+                    })
+                    .collect::<Result<BTreeMap<_, _>, _>>()?;
                 (
                     inode.mode,
                     inode.uid,
@@ -155,7 +165,11 @@ impl Source {
     /// Directory entries other than `.` and `..`, sorted by name.
     pub fn children(&self, id: u64) -> Result<Vec<(Vec<u8>, u64)>, Error> {
         let mut result: Vec<_> = match &self.0 {
-            Backend::Erofs(fs) => fs.read_dir(&fs.inode(id)?)?,
+            Backend::Erofs(fs) => fs
+                .read_dir(&fs.read_inode(id)?)?
+                .into_iter()
+                .map(|entry| (entry.name, entry.nid))
+                .collect(),
             Backend::Ext4(fs) => fs
                 .read_dir_ino(id as u32)?
                 .into_iter()
@@ -169,7 +183,7 @@ impl Source {
 
     pub fn link(&self, id: u64) -> Result<Vec<u8>, Error> {
         Ok(match &self.0 {
-            Backend::Erofs(fs) => fs.read_all(&fs.inode(id)?)?,
+            Backend::Erofs(fs) => fs.read_symlink_target(&fs.read_inode(id)?)?,
             Backend::Ext4(fs) => fs.read_link_ino(id as u32)?,
         })
     }
@@ -177,34 +191,44 @@ impl Source {
     /// Stream the first `size` bytes of a regular file.
     pub fn file(&self, id: u64, size: u64) -> Result<Box<dyn Read + '_>, Error> {
         Ok(match &self.0 {
-            Backend::Erofs(fs) => Box::new(fs.contents(&fs.inode(id)?)?),
-            Backend::Ext4(fs) => Box::new(Ext4File {
-                fs,
-                ino: id as u32,
-                size,
-                offset: 0,
-            }),
+            Backend::Erofs(fs) => {
+                let inode = fs.read_inode(id)?;
+                Box::new(File::new(size, move |offset, output| {
+                    fs.read_file(&inode, offset, output)?;
+                    Ok(output.len())
+                }))
+            }
+            Backend::Ext4(fs) => Box::new(File::new(size, move |offset, output| {
+                Ok(fs.read_ino(id as u32, offset, output)?)
+            })),
         })
     }
 }
 
-struct Ext4File<'a> {
-    fs: &'a fs_ext4::Filesystem,
-    ino: u32,
+/// The first `size` bytes of a file, read from an image at increasing offsets.
+struct File<F> {
+    read_at: F,
     size: u64,
     offset: u64,
 }
 
-impl Read for Ext4File<'_> {
+impl<F: FnMut(u64, &mut [u8]) -> Result<usize, Error>> File<F> {
+    fn new(size: u64, read_at: F) -> Self {
+        Self {
+            read_at,
+            size,
+            offset: 0,
+        }
+    }
+}
+
+impl<F: FnMut(u64, &mut [u8]) -> Result<usize, Error>> Read for File<F> {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         let count = (self.size - self.offset).min(output.len() as u64) as usize;
         if count == 0 {
             return Ok(0);
         }
-        let count = self
-            .fs
-            .read_ino(self.ino, self.offset, &mut output[..count])
-            .map_err(io::Error::other)?;
+        let count = (self.read_at)(self.offset, &mut output[..count]).map_err(io::Error::other)?;
         self.offset += count as u64;
         Ok(count)
     }
