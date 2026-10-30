@@ -17,7 +17,7 @@ mod xml;
 pub use expr::Expr;
 pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate, XmlStep};
 
-use android_firmware::{DevicePath, Name, RelativePath, Sha256Digest};
+use android_firmware::{DevicePath, Firmware, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -55,10 +55,6 @@ fn read(path: &Path) -> Result<String, Error> {
     })
 }
 
-/// The firmware a partition or import comes from.
-pub const ROM: &str = "rom";
-pub const STOCK: &str = "stock";
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recipe {
@@ -89,22 +85,6 @@ impl PropertyTarget {
         match self {
             Self::Partition(name) => Some(name),
             Self::File(_) => None,
-        }
-    }
-}
-
-/// The firmware an import reads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum Firmware {
-    Rom,
-    Stock,
-}
-
-impl Firmware {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Rom => ROM,
-            Self::Stock => STOCK,
         }
     }
 }

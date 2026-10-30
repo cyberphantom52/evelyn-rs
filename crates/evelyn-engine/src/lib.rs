@@ -15,10 +15,11 @@ pub use authoring::{
 pub use build::{BuildRequest, Built, build};
 pub use profile::Profile;
 
+use android_firmware::Firmware;
 use android_firmware::{Filesystem, Mounts, Name, SourceRef};
 use android_firmware::{STANDARD_SYSTEM, VENDOR_SIDE};
 use android_fs::{Artifact, ImageFormat};
-use recipe::{ROM, Recipe, STOCK};
+use recipe::Recipe;
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -121,8 +122,8 @@ pub struct PlannedPartition {
     pub mount_point: Option<String>,
 }
 
-/// The two firmware a port is built from, each a directory of partition images.
-pub struct Firmware<'a> {
+/// Where the port's two firmwares are: each a directory of partition images.
+pub struct FirmwareDirs<'a> {
     pub rom: &'a Path,
     pub stock: &'a Path,
 }
@@ -147,7 +148,7 @@ impl Plan {
     pub fn load(
         path: &Path,
         output: Output,
-        firmware: &Firmware<'_>,
+        firmware: &FirmwareDirs<'_>,
         extra: &[PathBuf],
     ) -> Result<Self, Error> {
         let profile = Profile::load(path)?;
@@ -187,7 +188,7 @@ impl Plan {
         let stock = filesystems(images(firmware.stock)?)?;
         let mut partitions = Vec::new();
         let mut ignored = Vec::new();
-        let mut plan_partition = |name: &Name, source: &str| -> Result<(), Error> {
+        let mut plan_partition = |name: &Name, source: Firmware| -> Result<(), Error> {
             let settings = profile
                 .settings(name.as_ref())?
                 .cloned()
@@ -195,7 +196,7 @@ impl Plan {
             partitions.push(PlannedPartition {
                 name: name.clone(),
                 base: SourceRef {
-                    source: Name::try_from(source.to_owned())?,
+                    source,
                     partition: name.clone(),
                 },
                 filesystem: settings.filesystem,
@@ -207,7 +208,7 @@ impl Plan {
         };
         for name in STANDARD_SYSTEM {
             if let Some(name) = rom.keys().find(|key| key.as_ref() == name) {
-                plan_partition(name, ROM)?;
+                plan_partition(name, Firmware::Rom)?;
             }
         }
         for name in rom.keys() {
@@ -215,7 +216,7 @@ impl Plan {
                 continue;
             }
             if profile.takes_from_rom(name.as_ref()) {
-                plan_partition(name, ROM)?;
+                plan_partition(name, Firmware::Rom)?;
             } else {
                 tracing::warn!(partition = %name, "the ROM's partition is not in port.toml; leaving it out");
                 ignored.push(name.clone());
@@ -241,15 +242,14 @@ impl Plan {
         device.sort_by_key(|name| Profile::device_order(name));
         for name in device {
             check_fingerprint(name, &stock[name], &profile.device.stock.fingerprint)?;
-            plan_partition(name, STOCK)?;
+            plan_partition(name, Firmware::Stock)?;
         }
 
         let mut sources = Vec::new();
         for source in required_sources(&partitions, &recipes)? {
-            let images = if source.source.as_ref() == ROM {
-                &rom
-            } else {
-                &stock
+            let images = match source.source {
+                Firmware::Rom => &rom,
+                Firmware::Stock => &stock,
             };
             let Some(image) = images.get(&source.partition) else {
                 // Steps that run check their imports; a skipped step needs none.
@@ -369,7 +369,7 @@ fn required_sources(
     for (firmware, path) in reads.reads {
         for found in mounts.resolve(&path) {
             sources.insert(SourceRef {
-                source: Name::try_from(firmware.name().to_owned())?,
+                source: firmware,
                 partition: found.partition,
             });
         }

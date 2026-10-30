@@ -94,8 +94,8 @@ pub(crate) struct FirmwareArgs {
 }
 
 impl FirmwareArgs {
-    pub(crate) fn firmware(&self) -> engine::Firmware<'_> {
-        engine::Firmware {
+    pub(crate) fn firmware(&self) -> engine::FirmwareDirs<'_> {
+        engine::FirmwareDirs {
             rom: &self.rom,
             stock: &self.stock,
         }

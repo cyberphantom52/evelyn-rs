@@ -154,7 +154,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                         ..Scope::default()
                     },
                 ),
-                format!("{pattern} is not in the {} firmware", from.name()),
+                format!("{pattern} is not in the {from} firmware"),
             );
             return match metadata {
                 Metadata::Copy => vec![found, copy],

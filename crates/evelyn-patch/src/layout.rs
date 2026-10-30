@@ -58,7 +58,7 @@ pub fn select(
                 && partition == &source.partition
                 && sha256 == &source.source_sha256
             {
-                *name = Some(identity.source.clone());
+                *name = Some(identity.source);
             }
         }
     }
