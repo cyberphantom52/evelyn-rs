@@ -51,10 +51,7 @@ pub fn prepare_file(request: PrepareRequest<'_>) -> Result<PreparedFile, Error> 
                 let tree = android_fs::read_tree(&targets.join(partition.name.as_ref())).map_err(
                     |_| Error::Authoring("no composed target; run `evelyn build` first"),
                 )?;
-                let has = |path: &str| tree.entries.keys().any(|entry| entry.as_ref() == path);
-                android_firmware::system_mount_point(has)
-                    .ok_or(Error::SystemLayout)?
-                    .to_owned()
+                crate::build::mount_point(partition, &tree)?
             }
         };
         mounts.push((mount, partition.name.clone()));

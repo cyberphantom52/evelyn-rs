@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::image::{Kind, Source};
 use crate::{Content, Entry, EntryKind, PartitionTree, Provenance};
-use android_firmware::{Name, RelativePath, Sha256Digest, Sha256Writer, SourceRef};
+use android_firmware::{RelativePath, Sha256Digest, Sha256Writer, SourceRef};
 use std::{
     collections::{BTreeMap, btree_map},
     io,
@@ -87,7 +87,6 @@ impl Scan<'_> {
 pub fn scan(
     source: &Source,
     identity: &SourceRef,
-    partition: Name,
     source_sha256: Sha256Digest,
 ) -> Result<PartitionTree, Error> {
     let root_id = source.root()?;
@@ -97,7 +96,7 @@ pub fn scan(
         identity,
         tree: PartitionTree {
             schema: 2,
-            partition,
+            partition: identity.partition.clone(),
             filesystem: source.filesystem(),
             source_sha256,
             root: root.metadata,
