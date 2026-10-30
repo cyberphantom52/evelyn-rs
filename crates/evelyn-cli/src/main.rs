@@ -194,7 +194,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             Inspect::Props { image, key } => {
                 let source = android_fs::image::Source::detect(&image)?;
                 let mut found = Vec::new();
-                for (file, data) in source.read_files(|path| path.ends_with(".prop"))? {
+                for (file, data) in source.read_files(android_property::is_property_file)? {
                     let text = String::from_utf8_lossy(&data);
                     for entry in android_property::entries(&text) {
                         if key.as_deref().is_none_or(|key| key == entry.key) {

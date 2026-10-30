@@ -245,7 +245,7 @@ impl Scope<'_> {
                         };
                         for entry in entries.flatten() {
                             let name = entry.file_name().to_string_lossy().into_owned();
-                            if layout::wildcard(segment, &name) {
+                            if android_firmware::glob(segment, &name) {
                                 next.push(join(&name));
                             }
                         }
@@ -286,7 +286,7 @@ impl Scope<'_> {
                     range
                         .partition
                         .as_ref()
-                        .is_none_or(|glob| layout::wildcard(glob, name.as_ref()))
+                        .is_none_or(|glob| android_firmware::glob(glob, name.as_ref()))
                 })
                 .collect();
             if selected.is_empty() {
@@ -625,7 +625,7 @@ fn property_files(target: &Target) -> Vec<RelativePath> {
         .entries
         .iter()
         .filter(|(path, entry)| {
-            path.as_ref().ends_with(".prop")
+            android_property::is_property_file(path.as_ref())
                 && matches!(
                     entry.kind,
                     EntryKind::File { .. } | EntryKind::Hardlink { .. }

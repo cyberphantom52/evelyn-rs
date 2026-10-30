@@ -15,6 +15,12 @@ pub enum Error {
     Undefined(String),
 }
 
+/// Whether a file at `path` is a property file Android reads (`build.prop`,
+/// `default.prop`, ...).
+pub fn is_property_file(path: &str) -> bool {
+    path.ends_with(".prop")
+}
+
 /// Set every assignment of `key`, appending one when there is none. `expect`
 /// pins how many assignments there must be.
 pub fn set(input: &str, key: &str, value: &str, expect: Option<usize>) -> Result<String, Error> {
