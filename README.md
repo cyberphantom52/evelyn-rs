@@ -55,9 +55,9 @@ directory.
   - `android-fs`: EROFS and ext4 images: read, scan, write
   - `android-property`: `.prop` files
   - `smali`: smali parser and method edits
-  - `patch`: the patch engine
-  - `recipe`, `model`: device, port and recipe formats
-  - `engine`: the build pipeline
+  - `evelyn-patch`: the patch engine
+  - `evelyn-recipe`, `model`: device, port and recipe formats
+  - `evelyn-engine`: the build pipeline
   - `toolchain`: the pinned host tools
   - `cli`: the `evelyn` binary
 - `tools/`: the host tool manager, the ZIP packaging template and the debug recipe
