@@ -5,13 +5,13 @@
 //! stream straight from it into the new image, and only edited files are written.
 //!
 //! Work directory layout (reused across builds):
-//!   sources/<source>.<partition>.json  scanned trees, reused while the image hash matches
+//!   sources/<source>.<partition>/       scanned trees, reused while the image hash matches
 //!   targets/<partition>/                composed trees and the blobs edits wrote
 //!   packages/                           decoded APK/JAR workspaces
 //!   images/<partition>.img              built filesystem images
 
 use crate::{Error, Plan};
-use android_firmware::{Mounts, Name, SourceRef};
+use android_firmware::{Mounts, Name, RelativePath, SourceRef};
 use android_fs::image::Source;
 use android_fs::{Artifact, PartitionTree};
 use serde::Serialize;
@@ -75,7 +75,7 @@ pub fn build(request: &BuildRequest<'_>) -> Result<Built, Error> {
             &image,
             tree.filesystem,
             &partition.name,
-            &mount_point(&sources, partition)?,
+            &mount_point(partition, &sources[&partition.base])?,
         )?;
         built.push((partition.name.clone(), image));
     }
@@ -108,39 +108,33 @@ fn open(
     artifact: &Artifact,
 ) -> Result<(Source, PartitionTree), Error> {
     let image = open_image(source, artifact)?;
-    let sources = request.work_dir.join("sources");
-    fs::create_dir_all(&sources)?;
-    let cache = sources.join(format!("{source}.json"));
-    if let Ok(bytes) = fs::read(&cache)
-        && let Ok(tree) = serde_json::from_slice::<PartitionTree>(&bytes)
+    let cache = request.work_dir.join("sources").join(source.to_string());
+    if let Ok(tree) = android_fs::read_tree(&cache)
         && tree.source_sha256 == artifact.sha256
         && tree.partition == source.partition
     {
         return Ok((image, tree));
     }
     tracing::info!(%source, "scanning source image");
-    let tree = android_fs::scan(
-        &image,
-        source,
-        source.partition.clone(),
-        artifact.sha256.clone(),
-    )?;
-    fs::write(&cache, serde_json::to_vec(&tree)?)?;
+    let tree = android_fs::scan(&image, source, artifact.sha256.clone())?;
+    fs::create_dir_all(&cache)?;
+    android_fs::write_tree(&cache, &tree)?;
     Ok((image, tree))
 }
 
 pub(crate) type Targets = BTreeMap<Name, (PathBuf, PartitionTree)>;
 
-/// Where `partition` is mounted: the plan's, or for `system`, as its image is laid out.
+/// Where `partition` is mounted: the plan's, or for `system`, as `tree` is laid out.
 pub(crate) fn mount_point(
-    sources: &patch::Sources,
     partition: &crate::PlannedPartition,
+    tree: &PartitionTree,
 ) -> Result<String, Error> {
     if let Some(mount) = &partition.mount_point {
         return Ok(mount.clone());
     }
-    let tree = &sources[&partition.base];
-    let has = |path: &str| tree.entries.keys().any(|entry| entry.as_ref() == path);
+    let has = |path: &str| {
+        RelativePath::try_from(path.to_owned()).is_ok_and(|path| tree.entries.contains_key(&path))
+    };
     android_firmware::system_mount_point(has)
         .map(str::to_owned)
         .ok_or(Error::SystemLayout)
@@ -150,7 +144,10 @@ pub(crate) fn mount_point(
 pub(crate) fn mounts(plan: &Plan, sources: &patch::Sources) -> Result<Mounts, Error> {
     let mut mounts = Vec::new();
     for partition in &plan.partitions {
-        mounts.push((mount_point(sources, partition)?, partition.name.clone()));
+        mounts.push((
+            mount_point(partition, &sources[&partition.base])?,
+            partition.name.clone(),
+        ));
     }
     Ok(Mounts::new(mounts))
 }
