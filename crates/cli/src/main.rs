@@ -1,7 +1,8 @@
 mod patch;
 
+use android_fs::Artifact;
 use clap::{Parser, Subcommand, ValueEnum};
-use model::{Artifact, Output};
+use engine::Output;
 use recipe::{Profile, Recipe};
 use serde::Serialize;
 use std::{
@@ -119,8 +120,6 @@ impl From<OutputArg> for Output {
 
 #[derive(Debug, Error)]
 enum Error {
-    #[error(transparent)]
-    Model(#[from] model::Error),
     #[error(transparent)]
     Firmware(#[from] android_firmware::Error),
     #[error(transparent)]

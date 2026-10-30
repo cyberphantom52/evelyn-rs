@@ -2,8 +2,8 @@
 //! every edit writes a new blob, and blobs are never changed in place.
 
 use android_firmware::{Filesystem, Name, RelativePath, Sha256Digest, Sha256Writer, SourceRef};
+use android_fs::{Content, Entry, EntryKind, PartitionTree, Provenance};
 use android_fs::{Store, image::Source};
-use model::{Content, Entry, EntryKind, PartitionTree, Provenance};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -16,8 +16,6 @@ use thiserror::Error;
 pub enum Error {
     #[error(transparent)]
     Recipe(#[from] recipe::Error),
-    #[error(transparent)]
-    Model(#[from] model::Error),
     #[error(transparent)]
     Firmware(#[from] android_firmware::Error),
     #[error(transparent)]

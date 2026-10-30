@@ -3,7 +3,7 @@
 //! its lexicographically first surviving member is promoted to canonical.
 
 use android_firmware::{RelativePath, SourceRef};
-use model::{Entry, EntryKind, PartitionTree, Provenance};
+use android_fs::{Entry, EntryKind, PartitionTree, Provenance};
 use std::collections::BTreeMap;
 use thiserror::Error;
 

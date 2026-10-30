@@ -1,7 +1,7 @@
 //! Semantic comparison of two partition trees.
 
 use android_firmware::{Name, RelativePath};
-use model::{EntryKind, PartitionTree};
+use android_fs::{EntryKind, PartitionTree};
 use serde::Serialize;
 use std::{collections::BTreeMap, mem::discriminant};
 use thiserror::Error;

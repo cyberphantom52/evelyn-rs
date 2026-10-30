@@ -1,6 +1,6 @@
 use crate::{Error, Target, compose::Context, layout};
 use android_firmware::{AndroidMetadata, Name, RelativePath, Sha256Digest, SourceRef};
-use model::{Entry, EntryKind, PartitionTree, Provenance};
+use android_fs::{Entry, EntryKind, PartitionTree, Provenance};
 use recipe::{
     Overrides, Returns,
     tree::{Expr, MethodEdit, Transform},

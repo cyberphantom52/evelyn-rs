@@ -4,8 +4,8 @@
 
 use crate::{Composition, Error, Images, Target};
 use android_firmware::{AndroidMetadata, DevicePath, Mounts, Name, TargetPath};
+use android_fs::EntryKind;
 use android_fs::defaults::{FileContexts, FileKind, FsConfig, capability_xattr};
-use model::EntryKind;
 use std::collections::BTreeMap;
 
 /// `fs_config_files` and `fs_config_dirs`, in the order Android reads them.

@@ -14,7 +14,6 @@ android-firmware = { path = "crates/android-firmware" }
 android-fs = { path = "crates/android-fs" }
 android-property = { path = "crates/android-property" }
 engine = { package = "evelyn-engine", path = "crates/evelyn-engine" }
-model = { path = "crates/model" }
 patch = { package = "evelyn-patch", path = "crates/evelyn-patch" }
 recipe = { package = "evelyn-recipe", path = "crates/evelyn-recipe" }
 toolchain = { path = "crates/toolchain" }

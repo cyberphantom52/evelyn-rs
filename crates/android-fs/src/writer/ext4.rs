@@ -1,6 +1,6 @@
+use crate::{EntryKind, PartitionTree};
 use crate::{Error, Store};
 use android_firmware::AndroidMetadata;
-use model::{EntryKind, PartitionTree};
 use std::{
     fs,
     io::Read,
