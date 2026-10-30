@@ -60,7 +60,7 @@ directory.
   - `evelyn-patch`: applies recipes to partition trees
   - `evelyn-engine`: device and port profiles, planning and the build pipeline
   - `toolchain`: the pinned host tools
-  - `cli`: the `evelyn` binary
+  - `evelyn-cli`: the `evelyn` binary
 - `tools/`: the host tool manager, the ZIP packaging template and the debug recipe
 
 The shell implementation (`build.sh`, `tools/*.sh`, the `patch.sh` files) is

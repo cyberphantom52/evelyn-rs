@@ -220,24 +220,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
-name = "cli"
-version = "0.1.0"
-dependencies = [
- "android-firmware",
- "android-fs",
- "android-property",
- "clap",
- "directories",
- "evelyn-engine",
- "evelyn-recipe",
- "serde",
- "serde_json",
- "thiserror",
- "toolchain",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -366,6 +348,24 @@ name = "equivalent"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
+
+[[package]]
+name = "evelyn-cli"
+version = "0.1.0"
+dependencies = [
+ "android-firmware",
+ "android-fs",
+ "android-property",
+ "clap",
+ "directories",
+ "evelyn-engine",
+ "evelyn-recipe",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "toolchain",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "evelyn-engine"
