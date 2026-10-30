@@ -1,91 +1,13 @@
-//! Firmware identities, Android metadata, and validated paths.
+//! Identifying an image file from its magic bytes.
 
-use android_firmware::{AndroidMetadata, Name, RelativePath, Sha256Digest, SourceRef};
+use crate::Error;
+use android_firmware::Sha256Digest;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
     io::{self, Read},
     path::{Path, PathBuf},
 };
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("invalid {kind}: {value:?}")]
-    Invalid { kind: &'static str, value: String },
-    #[error(transparent)]
-    Firmware(#[from] android_firmware::Error),
-    #[error("cannot read {path}: {source}")]
-    Read {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-}
-
-/// Where a file's bytes are: unchanged in a source image, or in a tree's own store.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum Content {
-    /// Inode `inode` of source image `source`.
-    Image { source: SourceRef, inode: u64 },
-    /// A file in the tree's `content/` directory, written by an edit.
-    Blob(Name),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum EntryKind {
-    File {
-        content: Content,
-        sha256: Sha256Digest,
-        size: u64,
-    },
-    Directory,
-    Symlink {
-        target: Vec<u8>,
-    },
-    Hardlink {
-        target: RelativePath,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Entry {
-    pub kind: EntryKind,
-    pub metadata: AndroidMetadata,
-    pub provenance: Vec<Provenance>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum Provenance {
-    Image {
-        source: Option<Name>,
-        partition: Name,
-        path: RelativePath,
-        sha256: Sha256Digest,
-    },
-    Asset {
-        path: RelativePath,
-        sha256: Sha256Digest,
-    },
-    Step {
-        id: Name,
-    },
-}
-
-mod tree;
-pub use tree::PartitionTree;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Output {
-    Partitions,
-    Super,
-    Zip,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -97,8 +19,9 @@ pub enum ImageFormat {
 }
 
 impl ImageFormat {
-    /// Identify a format from an image's first 2 KiB.
-    fn of(prefix: &[u8]) -> Self {
+    /// Identify a format from the start of an image. A prefix too short to hold a
+    /// format's magic does not match it.
+    pub(crate) fn of(prefix: &[u8]) -> Self {
         let magic = |at: usize, bytes: &[u8]| prefix.get(at..at + bytes.len()) == Some(bytes);
         if magic(0, &[0x3a, 0xff, 0x26, 0xed]) {
             Self::AndroidSparse

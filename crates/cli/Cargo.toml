@@ -19,7 +19,6 @@ android-property.workspace = true
 clap.workspace = true
 directories.workspace = true
 engine.workspace = true
-model.workspace = true
 recipe.workspace = true
 serde.workspace = true
 serde_json.workspace = true

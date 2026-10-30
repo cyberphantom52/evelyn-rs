@@ -1,9 +1,9 @@
 //! Image files as random-access devices, with Android sparse images expanded on the fly.
 
+use crate::ImageFormat;
 use fs_core::{BlockDevice, BlockRead, FileDevice};
 use std::{io, path::Path};
 
-const SPARSE_MAGIC: u32 = 0xED26_FF3A;
 const RAW: u16 = 0xCAC1;
 const FILL: u16 = 0xCAC2;
 const DONT_CARE: u16 = 0xCAC3;
@@ -22,7 +22,7 @@ impl Device {
         if file.size_bytes() >= 28 {
             file.read_at(0, &mut magic).map_err(into_io)?;
         }
-        if u32::from_le_bytes(magic) == SPARSE_MAGIC {
+        if ImageFormat::of(&magic) == ImageFormat::AndroidSparse {
             Ok(Self::Sparse(Sparse::open(file)?))
         } else {
             Ok(Self::Raw(file))

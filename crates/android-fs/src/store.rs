@@ -1,8 +1,8 @@
 //! Where file contents are read from: source images and a tree's own blobs.
 
+use crate::{Content, PartitionTree};
 use crate::{Error, image::Source};
 use android_firmware::SourceRef;
-use model::{Content, PartitionTree};
 use std::{
     collections::BTreeMap,
     fs,

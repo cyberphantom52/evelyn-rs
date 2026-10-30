@@ -66,7 +66,7 @@ pub(crate) fn run(command: Command) -> Result<(), Error> {
             tools,
         } => {
             let plan =
-                engine::Plan::load(&port, model::Output::Partitions, &firmware.firmware(), &[])?;
+                engine::Plan::load(&port, engine::Output::Partitions, &firmware.firmware(), &[])?;
             print(&engine::prepare_file(engine::PrepareRequest {
                 tools: &toolchain::Tools::new(tools),
                 work_dir: &crate::resolve_work_dir(work_dir, &plan)?,

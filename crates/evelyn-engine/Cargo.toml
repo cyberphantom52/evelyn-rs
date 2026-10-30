@@ -15,7 +15,6 @@ patch.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 toolchain.workspace = true
-model.workspace = true
 recipe.workspace = true
 serde.workspace = true
 thiserror.workspace = true

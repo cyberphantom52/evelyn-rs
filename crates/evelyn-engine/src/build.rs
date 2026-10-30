@@ -13,7 +13,7 @@
 use crate::{Error, Plan};
 use android_firmware::{Mounts, Name, SourceRef};
 use android_fs::image::Source;
-use model::{Artifact, PartitionTree};
+use android_fs::{Artifact, PartitionTree};
 use recipe::Firmware;
 use serde::Serialize;
 use std::{

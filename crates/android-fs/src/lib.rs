@@ -4,22 +4,34 @@
 pub mod build;
 pub mod defaults;
 pub mod device;
+mod format;
 pub mod image;
 mod reader;
 mod store;
+mod tree;
 mod writer;
 
-use model::PartitionTree;
-use std::{fs, io, path::Path};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 use thiserror::Error;
 
+pub use format::{Artifact, ImageFormat};
 pub use reader::scan;
 pub use store::Store;
+pub use tree::{Content, Entry, EntryKind, PartitionTree, Provenance};
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error(transparent)]
-    Model(#[from] model::Error),
+    #[error("invalid partition tree: {0}")]
+    InvalidTree(String),
+    #[error("cannot read {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
     #[error(transparent)]
     Firmware(#[from] android_firmware::Error),
     #[error("ext4 backend: {0}")]

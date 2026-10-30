@@ -7,7 +7,7 @@
 
 use crate::{Error, build::Targets};
 use android_firmware::Filesystem;
-use model::EntryKind;
+use android_fs::EntryKind;
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::Read,

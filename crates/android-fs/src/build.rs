@@ -1,8 +1,8 @@
 //! Construct EROFS and ext4 filesystem images.
 
+use crate::PartitionTree;
 use crate::{Error, Store};
 use android_firmware::{Filesystem, Name};
-use model::PartitionTree;
 use std::{fs, path::Path};
 
 /// Fixed timestamp for reproducible images (2009-01-01, as AOSP builds use).

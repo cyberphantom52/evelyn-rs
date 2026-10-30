@@ -9,7 +9,7 @@
 
 use crate::{Composition, Error, Target, compose::Context, layout, package::Opened};
 use android_firmware::{DevicePath, Name, RelativePath, SourceRef};
-use model::{EntryKind, PartitionTree};
+use android_fs::{EntryKind, PartitionTree};
 use recipe::{
     Firmware, PropertyTarget,
     tree::{BinaryOp, Expr, Scope as Range, Source, UnaryOp},

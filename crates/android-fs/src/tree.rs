@@ -1,7 +1,63 @@
-use crate::{Content, Entry, EntryKind, Error};
-use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath, Sha256Digest};
+//! A partition as Evelyn works on it: every entry with its Android metadata, and where
+//! each file's bytes are.
+
+use crate::Error;
+use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath, Sha256Digest, SourceRef};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Where a file's bytes are: unchanged in a source image, or in a tree's own store.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum Content {
+    /// Inode `inode` of source image `source`.
+    Image { source: SourceRef, inode: u64 },
+    /// A file in the tree's `content/` directory, written by an edit.
+    Blob(Name),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum EntryKind {
+    File {
+        content: Content,
+        sha256: Sha256Digest,
+        size: u64,
+    },
+    Directory,
+    Symlink {
+        target: Vec<u8>,
+    },
+    Hardlink {
+        target: RelativePath,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Entry {
+    pub kind: EntryKind,
+    pub metadata: AndroidMetadata,
+    pub provenance: Vec<Provenance>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum Provenance {
+    Image {
+        source: Option<Name>,
+        partition: Name,
+        path: RelativePath,
+        sha256: Sha256Digest,
+    },
+    Asset {
+        path: RelativePath,
+        sha256: Sha256Digest,
+    },
+    Step {
+        id: Name,
+    },
+}
 
 /// A partition's entries with their Android metadata. File bytes stay in the source
 /// image until an edit writes a blob into the tree's `content/` directory.
@@ -18,10 +74,7 @@ pub struct PartitionTree {
 
 impl PartitionTree {
     pub fn validate(&self) -> Result<(), Error> {
-        let invalid = |value: String| Error::Invalid {
-            kind: "partition tree",
-            value,
-        };
+        let invalid = Error::InvalidTree;
         if self.schema != 2 {
             return Err(invalid(format!("unsupported schema {}", self.schema)));
         }

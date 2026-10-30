@@ -5,7 +5,7 @@ pub use patch::capture::CaptureKind;
 use crate::Error;
 use crate::Plan;
 use android_firmware::{DevicePath, Mounts, Name, RelativePath, Sha256Digest};
-use model::{Content, EntryKind};
+use android_fs::{Content, EntryKind};
 use recipe::{Recipe, Step};
 use serde::{Deserialize, Serialize};
 use std::{

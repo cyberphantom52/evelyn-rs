@@ -1,7 +1,7 @@
 //! Read-only access to EROFS and ext4 images.
 
-use crate::Error;
 use crate::device::{Device, into_io};
+use crate::{Error, ImageFormat};
 use android_firmware::{AndroidMetadata, Filesystem};
 use fs_core::BlockRead;
 use fs_ext4::fs_core_bridge::CoreDevice;
@@ -40,22 +40,26 @@ impl Source {
         let device = Device::open(path)?;
         let mut prefix = [0u8; 1084];
         device.read_at(0, &mut prefix).map_err(into_io)?;
-        Ok(Self(if prefix[1024..1028] == [0xe2, 0xe1, 0xf5, 0xe0] {
-            Backend::Erofs(Box::new(fs_erofs::Filesystem::open(Arc::new(device))?))
-        } else if prefix[1080..1082] == [0x53, 0xef] {
-            let fs = fs_ext4::Filesystem::mount(Arc::new(CoreDevice::new(device)))?;
-            // Without journal replay, a dirty filesystem would read stale data.
-            if fs.sb.feature_incompat & 4 != 0 || fs.sb.state & 1 == 0 {
-                return Err(Error::Unsupported(
-                    "ext4 source requires journal recovery or a clean filesystem".into(),
-                ));
+        Ok(Self(match ImageFormat::of(&prefix) {
+            ImageFormat::Erofs => {
+                Backend::Erofs(Box::new(fs_erofs::Filesystem::open(Arc::new(device))?))
             }
-            Backend::Ext4(Box::new(fs))
-        } else {
-            return Err(Error::Unsupported(format!(
-                "{} is not EROFS or ext4",
-                path.display()
-            )));
+            ImageFormat::Ext4 => {
+                let fs = fs_ext4::Filesystem::mount(Arc::new(CoreDevice::new(device)))?;
+                // Without journal replay, a dirty filesystem would read stale data.
+                if fs.sb.feature_incompat & 4 != 0 || fs.sb.state & 1 == 0 {
+                    return Err(Error::Unsupported(
+                        "ext4 source requires journal recovery or a clean filesystem".into(),
+                    ));
+                }
+                Backend::Ext4(Box::new(fs))
+            }
+            _ => {
+                return Err(Error::Unsupported(format!(
+                    "{} is not EROFS or ext4",
+                    path.display()
+                )));
+            }
         }))
     }
 
