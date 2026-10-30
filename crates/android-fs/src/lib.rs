@@ -29,8 +29,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("unsupported or inconsistent image data: {0}")]
     Unsupported(String),
-    #[error(transparent)]
-    Tool(#[from] toolchain::Error),
+    #[error("EROFS backend: {0}")]
+    Erofs(#[from] fs_erofs::Error),
 }
 
 /// Load a tree manifest. Blobs are trusted to match it: they are written once by an
