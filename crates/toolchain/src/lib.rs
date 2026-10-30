@@ -1,9 +1,9 @@
 //! Pinned host tools installed by `tools/manager.py` into `tools/bin` and `tools/scripts`.
 
 use std::{
-    io::{self, Read, Write},
+    io,
     path::{Path, PathBuf},
-    process::{Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus},
 };
 use thiserror::Error;
 
@@ -87,62 +87,6 @@ pub fn run(command: &mut Command) -> Result<Vec<u8>, Error> {
         });
     }
     Ok(output.stdout)
-}
-
-/// Run to completion while `feed` writes the tool's stdin, returning stdout.
-/// Output is drained concurrently so a chatty tool cannot block the writer.
-pub fn run_with_input<E: From<Error>>(
-    command: &mut Command,
-    feed: impl FnOnce(&mut dyn Write) -> Result<(), E>,
-) -> Result<Vec<u8>, E> {
-    let tool = command_name(command);
-    tracing::debug!(command = ?command, "running with input");
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|source| Error::Spawn {
-            tool: tool.clone(),
-            source,
-        })?;
-    let mut stdin = child.stdin.take().expect("piped stdin");
-    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
-    let (fed, out, err) = std::thread::scope(|scope| {
-        let out = scope.spawn(move || drain(stdout));
-        let err = scope.spawn(move || drain(stderr));
-        let fed = feed(&mut stdin);
-        drop(stdin);
-        (
-            fed,
-            out.join().unwrap_or_default(),
-            err.join().unwrap_or_default(),
-        )
-    });
-    let status = child.wait().map_err(|source| Error::Spawn {
-        tool: tool.clone(),
-        source,
-    })?;
-    if !status.success() {
-        let mut text = String::from_utf8_lossy(&out).into_owned();
-        text.push_str(&String::from_utf8_lossy(&err));
-        return Err(Error::Failed {
-            tool,
-            status,
-            output: text,
-        }
-        .into());
-    }
-    fed?;
-    Ok(out)
-}
-
-fn drain(pipe: Option<impl Read>) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    if let Some(mut pipe) = pipe {
-        let _ = pipe.read_to_end(&mut bytes);
-    }
-    bytes
 }
 
 fn command_name(command: &Command) -> String {
