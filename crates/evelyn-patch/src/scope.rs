@@ -8,10 +8,10 @@
 //! when the firmware sets it.
 
 use crate::{Composition, Error, Target, compose::Context, layout, package::Opened};
-use android_firmware::{DevicePath, Name, RelativePath, SourceRef};
+use android_firmware::{DevicePath, Firmware, Name, RelativePath, SourceRef};
 use android_fs::{EntryKind, PartitionTree};
 use recipe::{
-    Firmware, PropertyTarget,
+    PropertyTarget,
     tree::{BinaryOp, Expr, Scope as Range, Source, UnaryOp},
     value::{Located, Place, Value},
 };
@@ -210,7 +210,7 @@ impl Scope<'_> {
                 .mounts
                 .resolve(&DevicePath::try_from(pattern.to_owned())?)
             {
-                let source = source_of(firmware, &at.partition)?;
+                let source = source_of(firmware, &at.partition);
                 let tree = self
                     .context
                     .sources
@@ -469,7 +469,7 @@ impl Scope<'_> {
                                 .tree
                         }
                         Place::Firmware(firmware) => {
-                            let source = source_of(firmware, &entry.partition)?;
+                            let source = source_of(firmware, &entry.partition);
                             self.context
                                 .sources
                                 .get(&source)
@@ -567,7 +567,7 @@ impl Scope<'_> {
                 Ok(std::fs::read(entry.path.resolve(&package.decoded))?)
             }
             Place::Firmware(firmware) => {
-                let source = source_of(firmware, &entry.partition)?;
+                let source = source_of(firmware, &entry.partition);
                 let tree = self
                     .context
                     .sources
@@ -599,11 +599,11 @@ impl Scope<'_> {
 }
 
 /// A build source, from a firmware and a partition.
-pub(crate) fn source_of(from: Firmware, partition: &Name) -> Result<SourceRef, Error> {
-    Ok(SourceRef {
-        source: Name::try_from(from.name().to_owned())?,
+pub(crate) fn source_of(from: Firmware, partition: &Name) -> SourceRef {
+    SourceRef {
+        source: from,
         partition: partition.clone(),
-    })
+    }
 }
 
 /// The entries `path` names in a tree: every match of a glob, else the entry if

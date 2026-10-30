@@ -14,7 +14,6 @@ use crate::{Error, Plan};
 use android_firmware::{Mounts, Name, SourceRef};
 use android_fs::image::Source;
 use android_fs::{Artifact, PartitionTree};
-use recipe::Firmware;
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
@@ -183,14 +182,7 @@ fn compose(
     let origins = plan
         .partitions
         .iter()
-        .map(|partition| {
-            let origin = if partition.base.source.as_ref() == recipe::ROM {
-                Firmware::Rom
-            } else {
-                Firmware::Stock
-            };
-            (partition.name.clone(), origin)
-        })
+        .map(|partition| (partition.name.clone(), partition.base.source))
         .collect();
     let mut composition = patch::Composition::new(targets, origins);
     for planned in &plan.recipes {

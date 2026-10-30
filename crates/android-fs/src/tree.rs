@@ -2,7 +2,9 @@
 //! each file's bytes are.
 
 use crate::Error;
-use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath, Sha256Digest, SourceRef};
+use android_firmware::{
+    AndroidMetadata, Filesystem, Firmware, Name, RelativePath, Sha256Digest, SourceRef,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -45,7 +47,7 @@ pub struct Entry {
 #[serde(deny_unknown_fields)]
 pub enum Provenance {
     Image {
-        source: Option<Name>,
+        source: Option<Firmware>,
         partition: Name,
         path: RelativePath,
         sha256: Sha256Digest,

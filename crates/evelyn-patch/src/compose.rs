@@ -6,11 +6,12 @@ use crate::{
     Error, Images, Target, defaults::Defaults, operations::Pending, package::Opened, scope::Scope,
 };
 use android_firmware::{
-    DevicePath, Mounts, Name, RelativePath, STANDARD_SYSTEM, SourceRef, TargetPath, VENDOR_SIDE,
+    DevicePath, Firmware, Mounts, Name, RelativePath, STANDARD_SYSTEM, SourceRef, TargetPath,
+    VENDOR_SIDE,
 };
 use android_fs::PartitionTree;
 use recipe::{
-    Firmware, Recipe,
+    Recipe,
     tree::{Assigned, Expr, Stmt, Transform},
     value::{Located, Place, Value},
 };
@@ -349,7 +350,7 @@ impl Composition {
                 "a package takes assets, not firmware files",
             ));
         }
-        let source = crate::scope::source_of(firmware, &entry.partition)?;
+        let source = crate::scope::source_of(firmware, &entry.partition);
         let tree = context
             .sources
             .get(&source)
