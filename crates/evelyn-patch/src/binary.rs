@@ -1,6 +1,6 @@
 //! Bytes overwritten at offsets of a file whose whole content is checked first.
 
-use model::Sha256Digest;
+use android_firmware::Sha256Digest;
 use recipe::Hex;
 use std::collections::BTreeMap;
 use thiserror::Error;

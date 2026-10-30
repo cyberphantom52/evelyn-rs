@@ -5,7 +5,8 @@
 use crate::{
     Error, Images, Target, defaults::Defaults, operations::Pending, package::Opened, scope::Scope,
 };
-use model::{DevicePath, Mounts, Name, PartitionTree, RelativePath, SourceRef, TargetPath};
+use android_firmware::{DevicePath, Mounts, Name, RelativePath, SourceRef, TargetPath};
+use model::PartitionTree;
 use recipe::{
     Firmware, Recipe, STANDARD_SYSTEM, VENDOR_SIDE,
     tree::{Assigned, Expr, Stmt, Transform},

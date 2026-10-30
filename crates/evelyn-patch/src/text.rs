@@ -1,6 +1,6 @@
 //! Unified diffs applied to a file whose exact content is pinned by its SHA-256.
 
-use model::Sha256Digest;
+use android_firmware::Sha256Digest;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]

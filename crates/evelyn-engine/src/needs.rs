@@ -1,7 +1,7 @@
 //! What a recipe needs before it can apply: the assets it reads from its directory
 //! and the firmware partitions it reads, gathered by walking its primitive tree.
 
-use model::{DevicePath, Name, RelativePath};
+use android_firmware::{DevicePath, Name, RelativePath};
 use recipe::{
     Error, Firmware,
     tree::{Expr, MethodEdit, Source, Stmt, Transform},

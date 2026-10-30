@@ -1,8 +1,6 @@
 use crate::{Error, Target, compose::Context, layout};
-use model::{
-    AndroidMetadata, Entry, EntryKind, Name, PartitionTree, Provenance, RelativePath, Sha256Digest,
-    SourceRef,
-};
+use android_firmware::{AndroidMetadata, Name, RelativePath, Sha256Digest, SourceRef};
+use model::{Entry, EntryKind, PartitionTree, Provenance};
 use recipe::{
     Overrides, Returns,
     tree::{Expr, MethodEdit, Transform},
@@ -167,7 +165,7 @@ impl Target {
     pub(crate) fn give_defaults(
         &mut self,
         partition: &Name,
-        mounts: &model::Mounts,
+        mounts: &android_firmware::Mounts,
         defaults: &crate::defaults::Defaults,
     ) -> Result<Vec<usize>, Error> {
         let mut changed = Vec::new();
@@ -175,7 +173,7 @@ impl Target {
             let Some(entry) = self.tree.entries.get_mut(&path) else {
                 continue;
             };
-            let at = model::TargetPath {
+            let at = android_firmware::TargetPath {
                 partition: partition.clone(),
                 path: path.clone(),
             };

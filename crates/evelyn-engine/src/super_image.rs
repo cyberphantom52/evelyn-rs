@@ -1,7 +1,7 @@
 //! Super (dynamic partitions) images, built with `lpmake`.
 
 use crate::Error;
-use model::Name;
+use android_firmware::Name;
 use recipe::{SlotScheme, SuperLayout};
 use std::{fs, path::Path, path::PathBuf};
 use toolchain::Tools;

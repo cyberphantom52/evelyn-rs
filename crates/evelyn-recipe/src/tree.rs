@@ -4,7 +4,7 @@
 //! however many surface forms use it.
 
 use crate::{Firmware, Hex, Overrides, PropertyTarget, Returns, XmlEdit, value::Value};
-use model::{DevicePath, Name, RelativePath, Sha256Digest};
+use android_firmware::{DevicePath, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

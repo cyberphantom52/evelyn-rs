@@ -11,8 +11,9 @@
 //!   images/<partition>.img              built filesystem images
 
 use crate::{Error, Plan};
+use android_firmware::{Mounts, Name, SourceRef};
 use android_fs::image::Source;
-use model::{Artifact, Mounts, Name, PartitionTree, SourceRef};
+use model::{Artifact, PartitionTree};
 use recipe::Firmware;
 use serde::Serialize;
 use std::{

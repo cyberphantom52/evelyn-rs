@@ -13,7 +13,8 @@ pub use authoring::{
 };
 pub use build::{BuildRequest, Built, build};
 
-use model::{Artifact, Filesystem, ImageFormat, Mounts, Name, Output, SourceRef};
+use android_firmware::{Filesystem, Mounts, Name, SourceRef};
+use model::{Artifact, ImageFormat, Output};
 use recipe::{Profile, ROM, Recipe, STANDARD_SYSTEM, STOCK, VENDOR_SIDE};
 use serde::Serialize;
 use std::{
@@ -47,6 +48,8 @@ pub enum Error {
     Recipe(#[from] recipe::Error),
     #[error(transparent)]
     Model(#[from] model::Error),
+    #[error(transparent)]
+    Firmware(#[from] android_firmware::Error),
     #[error("step IDs must be unique across recipes: {0}")]
     DuplicateStep(Name),
     #[error("{fstab} mounts {partition}, which this build does not have")]

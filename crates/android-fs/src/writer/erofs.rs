@@ -1,6 +1,7 @@
 use crate::{Error, Store};
+use android_firmware::AndroidMetadata;
 use fs_erofs::mkfs::{self, BuildOptions, Compression, Content, Node, NodeMeta, XattrSpec};
-use model::{AndroidMetadata, EntryKind, PartitionTree};
+use model::{EntryKind, PartitionTree};
 use std::{
     collections::BTreeMap,
     fs,

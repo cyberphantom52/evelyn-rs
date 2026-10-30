@@ -1,11 +1,9 @@
 //! Mutable partition trees. Untouched files keep referring to their source image;
 //! every edit writes a new blob, and blobs are never changed in place.
 
+use android_firmware::{Filesystem, Name, RelativePath, Sha256Digest, Sha256Writer, SourceRef};
 use android_fs::{Store, image::Source};
-use model::{
-    Content, Entry, EntryKind, Filesystem, Name, PartitionTree, Provenance, RelativePath,
-    Sha256Digest, Sha256Writer, SourceRef,
-};
+use model::{Content, Entry, EntryKind, PartitionTree, Provenance};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -20,6 +18,8 @@ pub enum Error {
     Recipe(#[from] recipe::Error),
     #[error(transparent)]
     Model(#[from] model::Error),
+    #[error(transparent)]
+    Firmware(#[from] android_firmware::Error),
     #[error(transparent)]
     Android(#[from] android_fs::Error),
     #[error(transparent)]
@@ -51,7 +51,10 @@ pub enum Error {
     #[error("step {step} removes from a scope that selects no partition of this build")]
     EmptyScope { step: Name },
     #[error("step {step} touches {path}, which is in no partition this build has")]
-    AbsentPath { step: Name, path: model::DevicePath },
+    AbsentPath {
+        step: Name,
+        path: android_firmware::DevicePath,
+    },
     #[error("step {step} touches partition {partition}, which this firmware does not have")]
     AbsentPartition { step: Name, partition: Name },
     #[error("partition {partition} defines {key} with different values in different files")]
@@ -59,7 +62,7 @@ pub enum Error {
     #[error("partition {0} has no build.prop for a new property")]
     NoPropertyFile(Name),
     #[error("source {0} was not extracted")]
-    UnknownSource(model::SourceRef),
+    UnknownSource(android_firmware::SourceRef),
     #[error(transparent)]
     Defaults(#[from] android_fs::defaults::Error),
     #[error("no file_contexts label for new entry {0}")]

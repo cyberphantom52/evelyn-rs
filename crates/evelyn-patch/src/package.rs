@@ -3,7 +3,7 @@
 //! body leaves the directory partially changed; the next decode replaces it.
 
 use crate::{Target, compose::Context};
-use model::{Name, RelativePath, Sha256Digest, TargetPath};
+use android_firmware::{Name, RelativePath, Sha256Digest, TargetPath};
 use recipe::{
     tree::{Expr, Stmt},
     visit::{self, Visitor},

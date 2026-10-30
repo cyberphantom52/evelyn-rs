@@ -2,7 +2,7 @@
 //! again in full, so its formatting may change; its content changes only where
 //! the edits say.
 
-use model::Sha256Digest;
+use android_firmware::Sha256Digest;
 use recipe::{XmlEdit, XmlMatch, XmlName, XmlPredicate, XmlStep};
 use thiserror::Error;
 use xot::{

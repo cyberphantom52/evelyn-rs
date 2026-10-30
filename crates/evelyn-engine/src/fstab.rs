@@ -6,7 +6,8 @@
 //! `vendor_boot` is patched outside Evelyn and normally matches it.
 
 use crate::{Error, build::Targets};
-use model::{EntryKind, Filesystem};
+use android_firmware::Filesystem;
+use model::EntryKind;
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::Read,

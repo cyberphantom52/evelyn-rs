@@ -2,9 +2,9 @@
 
 use crate::Error;
 use crate::device::{Device, into_io};
+use android_firmware::{AndroidMetadata, Filesystem};
 use fs_core::BlockRead;
 use fs_ext4::fs_core_bridge::CoreDevice;
-use model::{AndroidMetadata, Filesystem};
 use std::{
     collections::BTreeMap,
     io::{self, Read},

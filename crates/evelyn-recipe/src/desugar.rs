@@ -6,7 +6,7 @@ use crate::{
     tree::{Assigned, BinaryOp, Expr, MethodEdit, Scope, Source, Stmt, Transform, Tree, UnaryOp},
     value::Value,
 };
-use model::RelativePath;
+use android_firmware::RelativePath;
 
 impl Recipe {
     /// The recipe as primitives, its steps in dependency order.
