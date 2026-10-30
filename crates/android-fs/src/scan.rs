@@ -1,5 +1,5 @@
 use crate::Error;
-use crate::image::{Kind, Source};
+use crate::image::{Image, Kind};
 use crate::{Content, Entry, EntryKind, PartitionTree, Provenance};
 use android_firmware::{RelativePath, Sha256Digest, Sha256Writer, SourceRef};
 use std::{
@@ -8,7 +8,7 @@ use std::{
 };
 
 struct Scan<'a> {
-    source: &'a Source,
+    image: &'a Image,
     identity: &'a SourceRef,
     tree: PartitionTree,
     /// Inode -> (first path seen, links seen, link count recorded in the image).
@@ -17,7 +17,7 @@ struct Scan<'a> {
 
 impl Scan<'_> {
     fn directory(&mut self, id: u64, parent: &str) -> Result<(), Error> {
-        for (name, id) in self.source.children(id)? {
+        for (name, id) in self.image.children(id)? {
             let name = String::from_utf8(name)
                 .map_err(|_| Error::Unsupported("non-UTF-8 filename".into()))?;
             let path = RelativePath::try_from(if parent.is_empty() {
@@ -25,7 +25,7 @@ impl Scan<'_> {
             } else {
                 format!("{parent}/{name}")
             })?;
-            let inode = self.source.inode(id)?;
+            let inode = self.image.inode(id)?;
             let kind = match (inode.kind, self.links.entry(id)) {
                 (Kind::Directory, _) => EntryKind::Directory,
                 (_, btree_map::Entry::Occupied(mut link)) => {
@@ -39,11 +39,11 @@ impl Scan<'_> {
                     link.insert((path.clone(), 1, inode.links));
                     if kind == Kind::Symlink {
                         EntryKind::Symlink {
-                            target: self.source.link(id)?,
+                            target: self.image.link(id)?,
                         }
                     } else {
                         let mut hash = Sha256Writer::new(io::sink());
-                        let size = io::copy(&mut self.source.file(id, inode.size)?, &mut hash)?;
+                        let size = io::copy(&mut self.image.file(id, inode.size)?, &mut hash)?;
                         if size != inode.size {
                             return Err(Error::Unsupported(format!(
                                 "short content read at {path}"
@@ -85,19 +85,19 @@ impl Scan<'_> {
 /// Describe a source image as a tree whose file contents stay in the image: every
 /// entry with its Android metadata, and each file's content hash.
 pub fn scan(
-    source: &Source,
+    image: &Image,
     identity: &SourceRef,
     source_sha256: Sha256Digest,
 ) -> Result<PartitionTree, Error> {
-    let root_id = source.root()?;
-    let root = source.inode(root_id)?;
+    let root_id = image.root()?;
+    let root = image.inode(root_id)?;
     let mut extraction = Scan {
-        source,
+        image,
         identity,
         tree: PartitionTree {
             schema: 2,
             partition: identity.partition.clone(),
-            filesystem: source.filesystem(),
+            filesystem: image.filesystem(),
             source_sha256,
             root: root.metadata,
             entries: BTreeMap::new(),

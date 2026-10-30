@@ -31,9 +31,9 @@ pub struct Inode {
     pub metadata: AndroidMetadata,
 }
 
-pub struct Source(Backend);
+pub struct Image(Backend);
 
-impl Source {
+impl Image {
     /// Open an EROFS or ext4 image, raw or Android sparse, recognizing it by its
     /// superblock magic.
     pub fn detect(path: &Path) -> Result<Self, Error> {

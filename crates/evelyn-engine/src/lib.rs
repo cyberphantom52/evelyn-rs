@@ -288,7 +288,7 @@ fn check_fingerprint(partition: &Name, image: &Path, expected: &str) -> Result<(
     let key = format!("ro.{partition}.build.fingerprint");
     let mut found = Vec::new();
     for (_, bytes) in
-        android_fs::image::Source::detect(image)?.read_files(android_property::is_property_file)?
+        android_fs::Image::detect(image)?.read_files(android_property::is_property_file)?
     {
         if let Some(value) = std::str::from_utf8(&bytes)
             .ok()

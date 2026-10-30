@@ -2,6 +2,9 @@
 
 use crate::PartitionTree;
 use crate::{Error, Store};
+
+mod erofs;
+mod ext4;
 use android_firmware::{Filesystem, Name};
 use std::{fs, path::Path};
 
@@ -20,14 +23,14 @@ pub fn image(
 ) -> Result<u64, Error> {
     let uuid = uuid(partition);
     match filesystem {
-        Filesystem::Erofs => crate::writer::write_erofs(store, tree, output, uuid, EPOCH)?,
+        Filesystem::Erofs => erofs::write(store, tree, output, uuid, EPOCH)?,
         Filesystem::Ext4 => {
             let label = if mount_point == "/" {
                 "/"
             } else {
                 partition.as_ref()
             };
-            crate::writer::write_ext4(store, tree, output, label, uuid, EPOCH)?;
+            ext4::write(store, tree, output, label, uuid, EPOCH)?;
         }
     }
     Ok(fs::metadata(output)?.len())

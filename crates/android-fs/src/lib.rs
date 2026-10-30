@@ -3,13 +3,12 @@
 
 pub mod build;
 pub mod defaults;
-pub mod device;
+mod device;
 mod format;
-pub mod image;
-mod reader;
+mod image;
+mod scan;
 mod store;
 mod tree;
-mod writer;
 
 use std::{
     fs, io,
@@ -18,7 +17,8 @@ use std::{
 use thiserror::Error;
 
 pub use format::{Artifact, ImageFormat};
-pub use reader::scan;
+pub use image::Image;
+pub use scan::scan;
 pub use store::Store;
 pub use tree::{Content, Entry, EntryKind, PartitionTree, Provenance};
 
