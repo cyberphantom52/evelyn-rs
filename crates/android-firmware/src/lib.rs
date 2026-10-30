@@ -1,5 +1,6 @@
 //! Android firmware facts and addressing: partition names and paths, the device paths
-//! partitions are mounted under, the metadata Android gives a file, and content hashes.
+//! partitions are mounted under, which side of Treble a partition is on, the `super`
+//! layout, the metadata Android gives a file, and content hashes.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -157,8 +158,8 @@ impl Mounts {
     }
 }
 
-/// `*` matches any run of characters within a component and `?` any one.
-fn glob(pattern: &str, name: &str) -> bool {
+/// `*` matches any run of characters and `?` any one.
+pub fn glob(pattern: &str, name: &str) -> bool {
     fn matches(pattern: &[u8], name: &[u8]) -> bool {
         match pattern.split_first() {
             None => name.is_empty(),
@@ -282,4 +283,65 @@ impl AndroidMetadata {
 pub enum Filesystem {
     Erofs,
     Ext4,
+}
+
+/// Treble's vendor side, in the order partitions are laid out in `super`. A device
+/// lists the ones it has; recipes may name any of them, for conditions.
+pub const VENDOR_SIDE: [&str; 4] = ["odm", "vendor", "vendor_dlkm", "odm_dlkm"];
+/// System-side partitions every port takes from the ROM, in `super` order.
+pub const STANDARD_SYSTEM: [&str; 4] = ["system", "system_ext", "product", "system_dlkm"];
+
+/// The mount point a partition gets unless the port overrides it: `/<name>`, except
+/// `system`, which depends on the image (see `system_mount_point`).
+pub fn default_mount_point(partition: &str) -> Option<String> {
+    (partition != "system").then(|| format!("/{partition}"))
+}
+
+/// `/` for a system-as-root `system` image, whose top level is the device's root
+/// with `/system` beneath it, or `/system` for an older one, whose top level is
+/// `/system` itself.
+pub fn system_mount_point(has: impl Fn(&str) -> bool) -> Option<&'static str> {
+    if has("system/build.prop") {
+        Some("/")
+    } else if has("build.prop") {
+        Some("/system")
+    } else {
+        None
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperLayout {
+    pub size: u64,
+    pub metadata_size: u32,
+    pub slots: SlotScheme,
+    /// The one dynamic partition group, named as the vendor names it.
+    pub group: Name,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlotScheme {
+    Single,
+    Ab,
+    VirtualAb,
+}
+
+impl SuperLayout {
+    pub fn metadata_slots(&self) -> u32 {
+        match self.slots {
+            SlotScheme::Single => 2,
+            SlotScheme::Ab | SlotScheme::VirtualAb => 3,
+        }
+    }
+
+    /// A slot's group may use the whole device, except on A/B, where both slots
+    /// hold full copies.
+    pub fn group_capacity(&self) -> u64 {
+        match self.slots {
+            SlotScheme::Ab => self.size / 2,
+            SlotScheme::Single | SlotScheme::VirtualAb => self.size,
+        }
+    }
 }

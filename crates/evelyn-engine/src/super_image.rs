@@ -2,7 +2,7 @@
 
 use crate::Error;
 use android_firmware::Name;
-use recipe::{SlotScheme, SuperLayout};
+use android_firmware::{SlotScheme, SuperLayout};
 use std::{fs, path::Path, path::PathBuf};
 use toolchain::Tools;
 

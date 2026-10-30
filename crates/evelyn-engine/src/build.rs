@@ -142,7 +142,7 @@ pub(crate) fn mount_point(
     }
     let tree = &sources[&partition.base];
     let has = |path: &str| tree.entries.keys().any(|entry| entry.as_ref() == path);
-    recipe::system_mount_point(has)
+    android_firmware::system_mount_point(has)
         .map(str::to_owned)
         .ok_or(Error::SystemLayout)
 }

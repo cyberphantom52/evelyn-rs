@@ -10,27 +10,37 @@
 //! the standard system side always comes from the ROM, and any other ROM partition
 //! only when `port.toml` lists it (by name or glob).
 
-use crate::{
-    Error, Recipe, read,
+use android_firmware::{Filesystem, Name, STANDARD_SYSTEM, SuperLayout, VENDOR_SIDE, glob};
+use recipe::{
+    Recipe,
     tree::{Expr, Stmt},
     visit::Visitor,
 };
-use android_firmware::{Filesystem, Name};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
 };
+use thiserror::Error;
 
-/// Treble's vendor side, in the order partitions are laid out in `super`. A device
-/// lists the ones it has; recipes may name any of them, for conditions.
-pub const VENDOR_SIDE: [&str; 4] = ["odm", "vendor", "vendor_dlkm", "odm_dlkm"];
-/// System-side partitions every port takes from the ROM, in `super` order.
-pub const STANDARD_SYSTEM: [&str; 4] = ["system", "system_ext", "product", "system_dlkm"];
-/// The firmware a partition or import comes from.
-pub const ROM: &str = "rom";
-pub const STOCK: &str = "stock";
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("cannot read {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("invalid profile {path}: {source}")]
+    Toml {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
+    #[error("invalid profile: {0}")]
+    Invalid(String),
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -53,42 +63,6 @@ pub struct Device {
 pub struct Stock {
     /// Each device partition's `ro.<partition>.build.fingerprint` must equal this.
     pub fingerprint: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SuperLayout {
-    pub size: u64,
-    pub metadata_size: u32,
-    pub slots: SlotScheme,
-    /// The one dynamic partition group, named as the vendor names it.
-    pub group: Name,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SlotScheme {
-    Single,
-    Ab,
-    VirtualAb,
-}
-
-impl SuperLayout {
-    pub fn metadata_slots(&self) -> u32 {
-        match self.slots {
-            SlotScheme::Single => 2,
-            SlotScheme::Ab | SlotScheme::VirtualAb => 3,
-        }
-    }
-
-    /// A slot's group may use the whole device, except on A/B, where both slots
-    /// hold full copies.
-    pub fn group_capacity(&self) -> u64 {
-        match self.slots {
-            SlotScheme::Ab => self.size / 2,
-            SlotScheme::Single | SlotScheme::VirtualAb => self.size,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -335,7 +309,7 @@ impl Profile {
 
     /// Every partition `recipe` names must be one this port can have. Device paths
     /// are checked when they are resolved, against the build's mount points.
-    pub fn validate_recipe(&self, recipe: &Recipe) -> Result<(), Error> {
+    pub fn validate_recipe(&self, recipe: &Recipe) -> Result<(), recipe::Error> {
         recipe.tree()?.walk(&mut Partitions {
             profile: self,
             step: None,
@@ -350,11 +324,11 @@ struct Partitions<'a> {
 }
 
 impl Partitions<'_> {
-    fn known(&self, partition: &str) -> Result<(), Error> {
+    fn known(&self, partition: &str) -> Result<(), recipe::Error> {
         if self.profile.known(partition) {
             return Ok(());
         }
-        Err(Error::Invalid(format!(
+        Err(recipe::Error::Invalid(format!(
             "step {} refers to partition {partition}, which this port neither defines nor takes by default",
             self.step.as_ref().map_or("?", |step| step.as_ref())
         )))
@@ -362,7 +336,7 @@ impl Partitions<'_> {
 }
 
 impl Visitor for Partitions<'_> {
-    fn stmt(&mut self, stmt: &Stmt, _bound: &[&Name]) -> Result<(), Error> {
+    fn stmt(&mut self, stmt: &Stmt, _bound: &[&Name]) -> Result<(), recipe::Error> {
         match stmt {
             Stmt::Step { id, .. } => {
                 self.step = Some(id.clone());
@@ -372,7 +346,7 @@ impl Visitor for Partitions<'_> {
         }
     }
 
-    fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), Error> {
+    fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), recipe::Error> {
         let target = match expr {
             Expr::Partition(name) => return self.known(name.as_ref()),
             Expr::Select { scope, .. } => {
@@ -386,50 +360,22 @@ impl Visitor for Partitions<'_> {
             | Expr::NewPropertyFile(target) => target,
             _ => return Ok(()),
         };
-        match target.as_ref().and_then(crate::PropertyTarget::partition) {
+        match target.as_ref().and_then(recipe::PropertyTarget::partition) {
             Some(partition) => self.known(partition.as_ref()),
             None => Ok(()),
         }
     }
 }
 
-/// The mount point a partition gets unless the port overrides it: `/<name>`, except
-/// `system`, which depends on the image (see `system_mount_point`).
-pub fn default_mount_point(partition: &str) -> Option<String> {
-    (partition != "system").then(|| format!("/{partition}"))
-}
-
-/// `/` for a system-as-root `system` image, whose top level is the device's root
-/// with `/system` beneath it, or `/system` for an older one, whose top level is
-/// `/system` itself.
-pub fn system_mount_point(has: impl Fn(&str) -> bool) -> Option<&'static str> {
-    if has("system/build.prop") {
-        Some("/")
-    } else if has("build.prop") {
-        Some("/system")
-    } else {
-        None
-    }
-}
-
 fn toml_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, Error> {
-    toml::from_str(&read(path)?).map_err(|source| Error::Toml {
+    let text = fs::read_to_string(path).map_err(|source| Error::Read {
+        path: path.into(),
+        source,
+    })?;
+    toml::from_str(&text).map_err(|source| Error::Toml {
         path: path.into(),
         source,
     })
-}
-
-/// `*` matches any run of characters and `?` any one.
-fn glob(pattern: &str, name: &str) -> bool {
-    fn matches(pattern: &[u8], name: &[u8]) -> bool {
-        match pattern.split_first() {
-            None => name.is_empty(),
-            Some((b'*', rest)) => (0..=name.len()).any(|skip| matches(rest, &name[skip..])),
-            Some((b'?', rest)) => !name.is_empty() && matches(rest, &name[1..]),
-            Some((byte, rest)) => name.first() == Some(byte) && matches(rest, &name[1..]),
-        }
-    }
-    matches(pattern.as_bytes(), name.as_bytes())
 }
 
 fn literals(pattern: &str) -> usize {

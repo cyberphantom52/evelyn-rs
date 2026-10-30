@@ -5,10 +5,12 @@
 use crate::{
     Error, Images, Target, defaults::Defaults, operations::Pending, package::Opened, scope::Scope,
 };
-use android_firmware::{DevicePath, Mounts, Name, RelativePath, SourceRef, TargetPath};
+use android_firmware::{
+    DevicePath, Mounts, Name, RelativePath, STANDARD_SYSTEM, SourceRef, TargetPath, VENDOR_SIDE,
+};
 use android_fs::PartitionTree;
 use recipe::{
-    Firmware, Recipe, STANDARD_SYSTEM, VENDOR_SIDE,
+    Firmware, Recipe,
     tree::{Assigned, Expr, Stmt, Transform},
     value::{Located, Place, Value},
 };

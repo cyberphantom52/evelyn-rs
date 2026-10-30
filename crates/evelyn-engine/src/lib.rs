@@ -6,16 +6,19 @@ mod flashable;
 mod fstab;
 mod needs;
 mod output;
+pub mod profile;
 mod super_image;
 pub use authoring::{
     CaptureKind, CaptureRequest, CapturedRecipe, PrepareRequest, PreparedFile, capture_file,
     prepare_file, preview_trees,
 };
 pub use build::{BuildRequest, Built, build};
+pub use profile::Profile;
 
 use android_firmware::{Filesystem, Mounts, Name, SourceRef};
+use android_firmware::{STANDARD_SYSTEM, VENDOR_SIDE};
 use android_fs::{Artifact, ImageFormat};
-use recipe::{Profile, ROM, Recipe, STANDARD_SYSTEM, STOCK, VENDOR_SIDE};
+use recipe::{ROM, Recipe, STOCK};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -46,6 +49,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Recipe(#[from] recipe::Error),
+    #[error(transparent)]
+    Profile(#[from] profile::Error),
     #[error(transparent)]
     Firmware(#[from] android_firmware::Error),
     #[error("step IDs must be unique across recipes: {0}")]
@@ -196,7 +201,7 @@ impl Plan {
                 filesystem: settings.filesystem,
                 mount_point: settings
                     .mount_point
-                    .or_else(|| recipe::default_mount_point(name.as_ref())),
+                    .or_else(|| android_firmware::default_mount_point(name.as_ref())),
             });
             Ok(())
         };

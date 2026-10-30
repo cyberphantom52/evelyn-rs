@@ -1,4 +1,5 @@
-//! Versioned declarative patch recipes and device profiles.
+//! The recipe language: versioned declarative patch recipes, desugared into a
+//! primitive tree whose types and partitions are checked before any firmware is read.
 //!
 //! Where checks belong: loading a profile or recipe checks everything knowable
 //! without firmware (schema, references between steps, which partitions a port can
@@ -9,16 +10,11 @@
 
 mod desugar;
 mod expr;
-mod profile;
 pub mod tree;
 pub mod value;
 pub mod visit;
 mod xml;
 pub use expr::Expr;
-pub use profile::{
-    Device, Port, Profile, ROM, STANDARD_SYSTEM, STOCK, Settings, SlotScheme, Stock, SuperLayout,
-    VENDOR_SIDE, default_mount_point, system_mount_point,
-};
 pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate, XmlStep};
 
 use android_firmware::{DevicePath, Name, RelativePath, Sha256Digest};
@@ -44,12 +40,6 @@ pub enum Error {
         #[source]
         source: Box<ron::error::SpannedError>,
     },
-    #[error("invalid profile {path}: {source}")]
-    Toml {
-        path: PathBuf,
-        #[source]
-        source: toml::de::Error,
-    },
     #[error("cannot encode recipe: {0}")]
     Encode(#[from] ron::Error),
     #[error("invalid configuration: {0}")]
@@ -64,6 +54,10 @@ fn read(path: &Path) -> Result<String, Error> {
         source,
     })
 }
+
+/// The firmware a partition or import comes from.
+pub const ROM: &str = "rom";
+pub const STOCK: &str = "stock";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
