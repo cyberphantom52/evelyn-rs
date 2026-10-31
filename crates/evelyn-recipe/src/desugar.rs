@@ -1,8 +1,8 @@
 //! Surface recipes (steps of operations, `let:` and `when:`) into the primitive tree.
 
 use crate::{
-    Error, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch, XmlName, XmlPath,
-    XmlPredicate, escape_attribute,
+    Error, Feature, Metadata, Operation, PropertyTarget, Recipe, Step, XmlEdit, XmlMatch, XmlName,
+    XmlPath, XmlPredicate, escape_attribute,
     tree::{Assigned, Expr, MethodEdit, Pattern, Scope, Stmt, Transform, Tree},
     value::Value,
 };
@@ -133,25 +133,28 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         },
         // Where the key is defined, everywhere in the target's scope; or added
         // where a new one goes.
-        Operation::SetProperty { key, value, target } => Stmt::Edit {
-            selection: or_else(
-                property_files(key, target),
-                Expr::NewPropertyFile(target.clone()),
-            ),
-            transform: Transform::Property {
-                key: key.clone(),
-                value: Some(value.clone()),
-            },
-        },
+        Operation::SetProperty { key, value, target } => {
+            let files = or_else(defining(key, target), new_property_file(target));
+            return vec![
+                expect(files.clone(), format!("no property file to hold {key}")),
+                Stmt::Edit {
+                    selection: files,
+                    transform: Transform::Property {
+                        key: key.clone(),
+                        value: Some(value.clone()),
+                    },
+                },
+            ];
+        }
         // Every definition, or a lower one would show; there must be one.
         Operation::RemoveProperty { key, target } => {
             return vec![
                 expect(
-                    property_files(key, target),
+                    defining(key, target),
                     format!("property {key} is not defined there"),
                 ),
                 Stmt::Edit {
-                    selection: property_files(key, target),
+                    selection: defining(key, target),
                     transform: Transform::Property {
                         key: key.clone(),
                         value: None,
@@ -333,11 +336,70 @@ fn feature_file(feature: &Feature) -> &str {
     }
 }
 
-/// The property files defining `key` in a target's scope.
-fn property_files(key: &str, target: &Option<crate::PropertyTarget>) -> Expr {
-    Expr::PropertyFiles {
-        key: key.to_owned(),
-        target: target.clone(),
+/// The property files a target names: those init loads, or those of them in a
+/// partition, or one file.
+fn property_files(target: &Option<PropertyTarget>) -> Expr {
+    match target {
+        None => Expr::PropertyFiles { partition: None },
+        Some(PropertyTarget::Partition(partition)) => Expr::PropertyFiles {
+            partition: Some(partition.clone()),
+        },
+        Some(PropertyTarget::File(path)) => select(path.as_ref(), Scope::default()),
+    }
+}
+
+/// The property files in a target's scope that define `key`.
+fn defining(key: &str, target: &Option<PropertyTarget>) -> Expr {
+    let file = name("file");
+    Expr::Filter {
+        over: Box::new(property_files(target)),
+        name: file.clone(),
+        keep: Box::new(Expr::Exists(Box::new(Expr::Property {
+            key: key.to_owned(),
+            files: Some(Box::new(Expr::Var(file))),
+        }))),
+    }
+}
+
+/// The file a new key goes to: a target's file; a partition's own; without a
+/// target the one init loads last, so the key takes effect.
+fn new_property_file(target: &Option<PropertyTarget>) -> Expr {
+    let first = |files: Vec<Expr>| {
+        files
+            .into_iter()
+            .rev()
+            .reduce(|otherwise, first| or_else(first, otherwise))
+            .expect("files to choose from")
+    };
+    match target {
+        Some(PropertyTarget::File(path)) => select(path.as_ref(), Scope::default()),
+        Some(PropertyTarget::Partition(partition)) => first(
+            android_firmware::PARTITION_PROPERTY_FILES
+                .iter()
+                .map(|path| {
+                    select(
+                        path,
+                        Scope {
+                            partition: Some(partition.to_string()),
+                            ..Scope::default()
+                        },
+                    )
+                })
+                .collect(),
+        ),
+        // Last loaded first: within a group the canonical file, else the legacy
+        // ones from the last loaded.
+        None => first(
+            android_firmware::PROPERTY_FILES
+                .iter()
+                .rev()
+                .flat_map(|group| {
+                    let (canonical, legacy) = group.split_first().expect("a file");
+                    std::iter::once(canonical).chain(legacy.iter().rev())
+                })
+                .map(|path| select(path, Scope::default()))
+                .collect(),
+        ),
     }
 }
 
