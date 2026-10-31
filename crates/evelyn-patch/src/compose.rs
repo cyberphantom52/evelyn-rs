@@ -273,15 +273,15 @@ impl Composition {
             } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
-                // Append's string and the policy files a policy patch resolves with are
-                // expressions, evaluated before the edit.
+                // What Write writes and the policy files a policy patch resolves with
+                // are expressions, evaluated before the edit.
                 let transform = &match transform {
-                    Transform::Append(text) => {
+                    Transform::Write(text) => {
                         let text = self.eval(text, context, step)?;
                         let text = text
                             .as_str()?
-                            .ok_or(Error::Unsupported("Append needs a string that is set"))?;
-                        Transform::Append(Expr::Literal(Value::Str(text.to_owned())))
+                            .ok_or(Error::Unsupported("Write needs a string that is set"))?;
+                        Transform::Write(Expr::Literal(Value::Str(text.to_owned())))
                     }
                     Transform::AddPolicy {
                         policies,

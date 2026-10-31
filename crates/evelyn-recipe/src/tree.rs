@@ -79,8 +79,8 @@ pub enum Transform {
         key: String,
         value: Option<String>,
     },
-    /// Add a string at the end, on a line of its own.
-    Append(Expr),
+    /// Replace the content with a string.
+    Write(Expr),
     /// Change one method of the class a smali file defines.
     Smali {
         class: String,
