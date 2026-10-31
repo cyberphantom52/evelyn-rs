@@ -168,8 +168,6 @@ pub enum Expr {
     Union(Vec<Expr>),
     /// Two strings, or two booleans, are equal; an unset value equals no string.
     Eq(Box<Expr>, Box<Expr>),
-    /// A string is in a list; an unset value is in none.
-    In(Box<Expr>, Box<Expr>),
     /// The strings, one after another.
     Concat(Vec<Expr>),
     /// The string without the whitespace at its ends; an unset value stays unset.

@@ -35,8 +35,8 @@ pub enum Expr {
     /// What any of the selections selects, in the order they select it.
     Union(Vec<Expr>),
     Eq(Box<Expr>, Box<Expr>),
-    /// A string is in a list.
-    In(Box<Expr>, Box<Expr>),
+    /// A string is one of these: `In(Property(key: "ro.x"), ["a", "b"])`.
+    In(Box<Expr>, Vec<String>),
     If {
         condition: Box<Expr>,
         then: Box<Expr>,
@@ -65,8 +65,6 @@ pub enum Expr {
     Text(String),
     #[serde(untagged)]
     Bool(bool),
-    #[serde(untagged)]
-    List(Vec<String>),
 }
 
 impl Expr {
@@ -99,10 +97,11 @@ impl Expr {
             Self::All(exprs) | Self::Any(exprs) | Self::Union(exprs) => {
                 exprs.iter().try_for_each(check)
             }
-            Self::Eq(left, right) | Self::In(left, right) => {
+            Self::Eq(left, right) => {
                 check(left)?;
                 check(right)
             }
+            Self::In(inner, _) => check(inner),
             Self::If {
                 condition,
                 then,
@@ -116,7 +115,7 @@ impl Expr {
                 check(over)?;
                 check(keep)
             }
-            Self::Text(_) | Self::Bool(_) | Self::List(_) => Ok(()),
+            Self::Text(_) | Self::Bool(_) => Ok(()),
         }
     }
 }

@@ -104,18 +104,6 @@ impl Value {
         }
     }
 
-    /// A string in a list; an unset value is in no list.
-    pub fn is_in(&self, list: &Self) -> Result<Self, ValueError> {
-        match (self, list) {
-            (Self::Str(value), Self::List(values)) => Ok(Self::Bool(values.contains(value))),
-            (Self::Unset, Self::List(_)) => Ok(Self::Bool(false)),
-            (a, b) => Err(Self::undefined(
-                "In",
-                format!("{} and {}", a.kind(), b.kind()),
-            )),
-        }
-    }
-
     /// A string's lines; an unset value has none.
     pub fn lines(&self) -> Result<Self, ValueError> {
         match self {
