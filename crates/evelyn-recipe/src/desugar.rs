@@ -445,7 +445,7 @@ fn property_files(target: &Option<PropertyTarget>) -> Expr {
         Some(PropertyTarget::Partition(partition)) => Expr::PropertyFiles {
             partition: Some(partition.clone()),
         },
-        Some(PropertyTarget::File(path)) => select(path.as_ref(), Scope::default()),
+        Some(PropertyTarget::Build(path)) => select(path.as_ref(), Scope::default()),
     }
 }
 
@@ -473,7 +473,7 @@ fn new_property_file(target: &Option<PropertyTarget>) -> Expr {
             .expect("files to choose from")
     };
     match target {
-        Some(PropertyTarget::File(path)) => select(path.as_ref(), Scope::default()),
+        Some(PropertyTarget::Build(path)) => select(path.as_ref(), Scope::default()),
         Some(PropertyTarget::Partition(partition)) => first(
             android_firmware::PARTITION_PROPERTY_FILES
                 .iter()

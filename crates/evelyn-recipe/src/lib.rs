@@ -280,42 +280,12 @@ impl Overrides {
     }
 }
 
-/// Where a property edit or lookup applies: a partition's `.prop` files, or one file.
+/// Where a property edit or lookup applies: `Partition("vendor")`, the files init
+/// loads from a partition, or `Build("/…")`, one file in the build.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
 pub enum PropertyTarget {
     Partition(Name),
-    File(DevicePath),
-}
-
-impl PropertyTarget {
-    pub fn partition(&self) -> Option<&Name> {
-        match self {
-            Self::Partition(name) => Some(name),
-            Self::File(_) => None,
-        }
-    }
-}
-
-impl TryFrom<String> for PropertyTarget {
-    type Error = android_firmware::Error;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.starts_with('/') {
-            Ok(Self::File(value.try_into()?))
-        } else {
-            Ok(Self::Partition(value.try_into()?))
-        }
-    }
-}
-
-impl From<PropertyTarget> for String {
-    fn from(value: PropertyTarget) -> Self {
-        match value {
-            PropertyTarget::Partition(name) => name.into(),
-            PropertyTarget::File(path) => path.into(),
-        }
-    }
+    Build(DevicePath),
 }
 
 /// What a stubbed method returns: nothing (`V`), zero/false/null, or one/true.
