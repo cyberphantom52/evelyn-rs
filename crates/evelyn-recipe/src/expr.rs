@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum Expr {
     /// A property's value, if set. Without a target, the value the device ends up
     /// with; with a partition, from any `.prop` file in it; with a file, from it.
-    GetProperty {
+    Property {
         key: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target: Option<PropertyTarget>,
@@ -24,7 +24,7 @@ pub enum Expr {
     /// An entry, or one matching a glob, exists in the build.
     Exists(DevicePath),
     /// The build has this partition.
-    Partition(Name),
+    HasPartition(Name),
     Not(Box<Expr>),
     All(Vec<Expr>),
     Any(Vec<Expr>),

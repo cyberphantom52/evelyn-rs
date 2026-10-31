@@ -76,11 +76,11 @@ pub(crate) fn expr(surface: &Surface) -> Expr {
         right: Box::new(right),
     };
     match surface {
-        Surface::GetProperty { key, target } => Expr::Prop {
+        Surface::Property { key, target } => Expr::Property {
             key: key.clone(),
             target: target.clone(),
         },
-        Surface::Defined(inner) => unary(UnaryOp::Defined, inner),
+        Surface::Defined(inner) => unary(UnaryOp::Exists, inner),
         Surface::Eq(inner, value) => binary(
             BinaryOp::Eq,
             expr(inner),
@@ -92,10 +92,10 @@ pub(crate) fn expr(surface: &Surface) -> Expr {
             Expr::Literal(Value::List(values.clone())),
         ),
         Surface::Exists(path) => Expr::Unary {
-            op: UnaryOp::Defined,
+            op: UnaryOp::Exists,
             expr: Box::new(select(path.as_ref(), Scope::default())),
         },
-        Surface::Partition(name) => Expr::Partition(name.clone()),
+        Surface::HasPartition(name) => Expr::HasPartition(name.clone()),
         Surface::Not(inner) => unary(UnaryOp::Not, inner),
         Surface::All(all_of) => all(all_of.iter().map(expr).collect()),
         Surface::Any(any_of) => any(any_of.iter().map(expr).collect()),
@@ -184,7 +184,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             );
             Stmt::When {
                 condition: defined(selection.clone()),
-                body: vec![Stmt::Delete { selection }],
+                body: vec![Stmt::Remove { selection }],
                 skip: format!("nothing to remove: {pattern}"),
             }
         }
@@ -199,7 +199,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                     selection: from.clone(),
                     to: Some(to.clone()),
                 },
-                Stmt::Delete { selection: from },
+                Stmt::Remove { selection: from },
             ];
         }
         Operation::Install { asset, to } => Stmt::Copy {
@@ -218,7 +218,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 property_files(key, target),
                 Expr::NewPropertyFile(target.clone()),
             ),
-            transform: Transform::Prop {
+            transform: Transform::Property {
                 key: key.clone(),
                 value: Some(value.clone()),
             },
@@ -232,32 +232,32 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 ),
                 Stmt::Edit {
                     selection: property_files(key, target),
-                    transform: Transform::Prop {
+                    transform: Transform::Property {
                         key: key.clone(),
                         value: None,
                     },
                 },
             ];
         }
-        Operation::TextPatch { target, patch } => Stmt::Edit {
+        Operation::Diff { target, patch } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
-            transform: Transform::TextPatch {
+            transform: Transform::Diff {
                 patch: patch.clone(),
                 before: None,
             },
         },
-        Operation::BinaryPatch {
+        Operation::WriteBytes {
             target,
             before,
             edits,
         } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
-            transform: Transform::Bytes {
+            transform: Transform::WriteBytes {
                 before: before.clone(),
                 edits: edits.clone(),
             },
         },
-        Operation::Xml {
+        Operation::EditXml {
             target,
             before,
             edits,
@@ -272,7 +272,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             target,
             before,
             edits,
-        } => Stmt::Within {
+        } => Stmt::Package {
             package: target.clone(),
             before: before.clone(),
             body: edits.iter().flat_map(self::operation).collect(),
@@ -339,7 +339,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 }),
                 name: file.clone(),
                 keep: Box::new(Expr::Matches {
-                    text: Box::new(Expr::Content(Box::new(Expr::Var(file)))),
+                    text: Box::new(Expr::Read(Box::new(Expr::Var(file)))),
                     pattern: Pattern::literal(name),
                 }),
             };
@@ -355,9 +355,9 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 skip: format!("feature {name} is not declared"),
             }
         }
-        Operation::SepolicyPatch { target, policies } => Stmt::Edit {
+        Operation::AddPolicy { target, policies } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
-            transform: Transform::Sepolicy {
+            transform: Transform::AddPolicy {
                 policies: policies.clone(),
                 resolve_with: Expr::PolicyFiles,
             },
@@ -367,7 +367,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             transform: Transform::Append(match content {
                 Data::Text(text) => Expr::Literal(Value::Str(text.clone())),
                 Data::File { from, path } => {
-                    Expr::Content(Box::new(firmware_file(path.as_ref(), *from)))
+                    Expr::Read(Box::new(firmware_file(path.as_ref(), *from)))
                 }
                 // The lines that contain any of `containing` and none of `except`.
                 Data::Lines {
@@ -397,10 +397,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                     }
                     let lines = Expr::Unary {
                         op: UnaryOp::Lines,
-                        expr: Box::new(Expr::Content(Box::new(firmware_file(
-                            path.as_ref(),
-                            *from,
-                        )))),
+                        expr: Box::new(Expr::Read(Box::new(firmware_file(path.as_ref(), *from)))),
                     };
                     Expr::Unary {
                         op: UnaryOp::Join,
@@ -434,11 +431,11 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         Operation::SetMetadata {
             pattern: target, ..
         }
-        | Operation::TextPatch { target, .. }
-        | Operation::BinaryPatch { target, .. }
-        | Operation::Xml { target, .. }
+        | Operation::Diff { target, .. }
+        | Operation::WriteBytes { target, .. }
+        | Operation::EditXml { target, .. }
         | Operation::Append { target, .. }
-        | Operation::SepolicyPatch { target, .. } => named(target.to_string()),
+        | Operation::AddPolicy { target, .. } => named(target.to_string()),
         Operation::EnableFeature(feature) => named(feature_file(feature).to_owned()),
         Operation::StubMethod { class, .. }
         | Operation::ReplaceMethod { class, .. }
@@ -519,7 +516,7 @@ fn overrides(operation: &Operation) -> crate::Overrides {
 /// The selection is not empty.
 fn defined(selection: Expr) -> Expr {
     Expr::Unary {
-        op: UnaryOp::Defined,
+        op: UnaryOp::Exists,
         expr: Box::new(selection),
     }
 }

@@ -330,14 +330,14 @@ impl Partitions<'_> {
 impl Visitor for Partitions<'_> {
     fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), recipe::Error> {
         let target = match expr {
-            Expr::Partition(name) => return self.known(name.as_ref()),
+            Expr::HasPartition(name) => return self.known(name.as_ref()),
             Expr::Select { scope, .. } => {
                 return match &scope.partition {
                     Some(partition) if !partition.contains(['*', '?']) => self.known(partition),
                     _ => Ok(()),
                 };
             }
-            Expr::Prop { target, .. }
+            Expr::Property { target, .. }
             | Expr::PropertyFiles { target, .. }
             | Expr::NewPropertyFile(target) => target,
             _ => return Ok(()),

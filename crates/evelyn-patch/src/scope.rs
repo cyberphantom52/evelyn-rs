@@ -36,7 +36,7 @@ pub(crate) struct Scope<'a> {
     pub context: &'a Context<'a>,
     /// The step being applied, for errors.
     pub step: &'a Name,
-    /// The package a `Within` has open, where `/` is the package's root.
+    /// The package a `Package` has open, where `/` is the package's root.
     pub package: Option<&'a Opened>,
 }
 
@@ -446,7 +446,7 @@ impl Scope<'_> {
         Ok(match expr {
             Expr::Literal(value) => value.clone(),
             Expr::Select { pattern, scope } => Value::Selection(self.select(pattern, scope)?),
-            Expr::Prop { key, target } => self
+            Expr::Property { key, target } => self
                 .get(target.as_ref(), key)?
                 .map_or(Value::Unset, Value::Str),
             Expr::PropertyFiles { key, target } => {
@@ -557,7 +557,7 @@ impl Scope<'_> {
                 found.dedup();
                 Value::Selection(found)
             }
-            Expr::Content(inner) => {
+            Expr::Read(inner) => {
                 let selection = self.eval_in(inner, bound)?;
                 let [entry] = selection.as_selection()? else {
                     return Err(Error::Unsupported("Content needs exactly one file"));
@@ -571,12 +571,12 @@ impl Scope<'_> {
                 let text = self.eval_in(text, bound)?;
                 Value::Bool(text.as_str()?.is_some_and(|text| pattern.is_match(text)))
             }
-            Expr::Partition(name) => Value::Bool(self.targets.contains_key(name)),
+            Expr::HasPartition(name) => Value::Bool(self.targets.contains_key(name)),
             Expr::Unary { op, expr } => {
                 let value = self.eval_in(expr, bound)?;
                 match op {
                     UnaryOp::Not => (!value)?,
-                    UnaryOp::Defined => value.defined()?,
+                    UnaryOp::Exists => value.defined()?,
                     UnaryOp::Lines => value.lines()?,
                     UnaryOp::Join => value.join()?,
                 }

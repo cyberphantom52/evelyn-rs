@@ -255,8 +255,8 @@ pub(crate) fn transformed(
     };
     let asset = |path: &RelativePath| text(&std::fs::read(path.resolve(context.assets))?);
     let before = match transform {
-        Transform::Bytes { before, .. } => Some(before),
-        Transform::Xml { before, .. } | Transform::TextPatch { before, .. } => before.as_ref(),
+        Transform::WriteBytes { before, .. } => Some(before),
+        Transform::Xml { before, .. } | Transform::Diff { before, .. } => before.as_ref(),
         _ => None,
     };
     if let Some(before) = before
@@ -265,16 +265,16 @@ pub(crate) fn transformed(
         return Err(Error::Before(before.clone()));
     }
     Ok(match transform {
-        Transform::Bytes { edits, .. } => crate::binary::apply(bytes, edits)?,
+        Transform::WriteBytes { edits, .. } => crate::binary::apply(bytes, edits)?,
         Transform::Xml { edits, .. } => crate::xml::apply(bytes, edits)?,
-        Transform::TextPatch { patch, .. } => {
+        Transform::Diff { patch, .. } => {
             crate::text::apply(&text(bytes)?, &asset(patch)?)?.into_bytes()
         }
-        Transform::Prop {
+        Transform::Property {
             key,
             value: Some(value),
         } => android_property::set(&text(bytes)?, key, value, None)?.into_bytes(),
-        Transform::Prop { key, value: None } => {
+        Transform::Property { key, value: None } => {
             android_property::remove(&text(bytes)?, key, None)?.into_bytes()
         }
         // The string is evaluated before the edit, where expressions are. Appending
@@ -318,13 +318,13 @@ pub(crate) fn transformed(
             }
             .into_bytes()
         }
-        Transform::Sepolicy {
+        Transform::AddPolicy {
             policies,
             resolve_with: Expr::Literal(Value::List(resolve_with)),
         } => crate::sepolicy::apply(bytes, policies, resolve_with, context)?,
-        Transform::Sepolicy { .. } => {
+        Transform::AddPolicy { .. } => {
             return Err(Error::Unsupported(
-                "SepolicyPatch's policy files are evaluated before the edit",
+                "AddPolicy's policy files are evaluated before the edit",
             ));
         }
     })

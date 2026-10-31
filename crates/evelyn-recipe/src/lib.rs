@@ -153,18 +153,18 @@ pub enum Operation {
         target: Option<PropertyTarget>,
     },
     /// Apply a unified diff (an asset) to a file and its hardlinks.
-    TextPatch {
+    Diff {
         target: DevicePath,
         patch: RelativePath,
     },
     /// Overwrite bytes at offsets of a file whose content must be `before`.
-    BinaryPatch {
+    WriteBytes {
         target: DevicePath,
         before: Sha256Digest,
         /// Offsets and the bytes written there, as hex: `{487572: "a9008052"}`.
         edits: BTreeMap<u64, Hex>,
     },
-    Xml {
+    EditXml {
         target: DevicePath,
         /// Optional guard on the file's exact content before the edit.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -217,7 +217,7 @@ pub enum Operation {
     /// Patch one of the device's CIL policy files with TE `policies` (assets), written
     /// with Android's policy macros. The result must resolve with the device's other
     /// policy files, as init loads them.
-    SepolicyPatch {
+    AddPolicy {
         target: DevicePath,
         policies: Vec<RelativePath>,
     },
@@ -392,9 +392,9 @@ impl Operation {
             Self::SetMetadata { .. } => "SetMetadata",
             Self::SetProperty { .. } => "SetProperty",
             Self::RemoveProperty { .. } => "RemoveProperty",
-            Self::TextPatch { .. } => "TextPatch",
-            Self::BinaryPatch { .. } => "BinaryPatch",
-            Self::Xml { .. } => "Xml",
+            Self::Diff { .. } => "Diff",
+            Self::WriteBytes { .. } => "WriteBytes",
+            Self::EditXml { .. } => "EditXml",
             Self::Package { .. } => "Package",
             Self::ReplaceMethod { .. } => "ReplaceMethod",
             Self::InsertMethod { .. } => "InsertMethod",
@@ -403,7 +403,7 @@ impl Operation {
             Self::EnableFeature(..) => "EnableFeature",
             Self::DisableFeature(..) => "DisableFeature",
             Self::Append { .. } => "Append",
-            Self::SepolicyPatch { .. } => "SepolicyPatch",
+            Self::AddPolicy { .. } => "AddPolicy",
         }
     }
 
@@ -454,9 +454,9 @@ impl Operation {
                 partition: None,
                 pattern,
             } => pattern.starts_with('/'),
-            Self::TextPatch { .. }
-            | Self::BinaryPatch { .. }
-            | Self::Xml { .. }
+            Self::Diff { .. }
+            | Self::WriteBytes { .. }
+            | Self::EditXml { .. }
             | Self::Install { .. }
             | Self::Append { .. }
             | Self::AssertHash { .. } => true,
@@ -476,9 +476,9 @@ impl Operation {
             Self::RemoveProperty { key, .. } if !property_key(key) => {
                 Err(Error::Invalid(format!("invalid property key {key:?}")))
             }
-            Self::SepolicyPatch { policies, .. } if policies.is_empty() => Err(Error::Invalid(
-                "SepolicyPatch needs at least one policy".into(),
-            )),
+            Self::AddPolicy { policies, .. } if policies.is_empty() => {
+                Err(Error::Invalid("AddPolicy needs at least one policy".into()))
+            }
             Self::Append {
                 content: Data::Lines { containing, .. },
                 ..
@@ -512,7 +512,7 @@ impl Operation {
                     "class {class:?} is not written as Lcom/example/Name;"
                 )))
             }
-            Self::BinaryPatch { edits, .. } => {
+            Self::WriteBytes { edits, .. } => {
                 let mut end = 0;
                 for (offset, bytes) in edits {
                     if *offset < end {
@@ -524,7 +524,7 @@ impl Operation {
                 }
                 Ok(())
             }
-            Self::Xml { edits, .. } => xml::validate(edits),
+            Self::EditXml { edits, .. } => xml::validate(edits),
             Self::Package { edits, .. } => edits.iter().try_for_each(|edit| {
                 if !edit.in_package() {
                     return Err(Error::Invalid(format!(
