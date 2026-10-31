@@ -6,7 +6,7 @@
 //! have, well-formed operation parameters); planning adds asset presence and hashes
 //! and the partitions the firmware supplies. Applying a recipe checks only what
 //! depends on firmware content: conditions, hashes, match counts and the
-//! entries an operation expects.
+//! entries an operation names.
 
 mod desugar;
 mod expr;
@@ -528,7 +528,6 @@ impl Operation {
                 }
                 Ok(())
             }
-            Self::EditXml { edits, .. } => xml::validate(edits),
             Self::Package { edits, .. } => edits.iter().try_for_each(|edit| {
                 if !edit.in_package() {
                     return Err(Error::Invalid(format!(

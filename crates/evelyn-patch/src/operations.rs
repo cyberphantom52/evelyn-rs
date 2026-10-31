@@ -263,9 +263,9 @@ pub(crate) fn transformed(
         Transform::Property {
             key,
             value: Some(value),
-        } => android_property::set(&text(bytes)?, key, value, None)?.into_bytes(),
+        } => android_property::set(&text(bytes)?, key, value).into_bytes(),
         Transform::Property { key, value: None } => {
-            android_property::remove(&text(bytes)?, key, None)?.into_bytes()
+            android_property::remove(&text(bytes)?, key).into_bytes()
         }
         // The string is evaluated before the edit, where expressions are. Appending
         // nothing changes nothing.
