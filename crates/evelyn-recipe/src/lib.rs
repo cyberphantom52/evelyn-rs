@@ -9,10 +9,12 @@
 //! entries an operation expects.
 
 mod desugar;
+mod expr;
 pub mod tree;
 pub mod value;
 pub mod visit;
 mod xml;
+pub use expr::Expr;
 pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate, XmlStep, escape_attribute};
 
 use android_firmware::{DevicePath, Firmware, Name, RelativePath, Sha256Digest};
@@ -70,10 +72,10 @@ pub struct Step {
     /// for the step's condition and operations to use as `Var("name")`. One that has
     /// no value skips the step.
     #[serde(rename = "let", default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub bindings: BTreeMap<Name, tree::Expr>,
+    pub bindings: BTreeMap<Name, Expr>,
     /// A boolean expression; the step applies only when it holds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub when: Option<tree::Expr>,
+    pub when: Option<Expr>,
     pub operations: Vec<Operation>,
 }
 
@@ -83,19 +85,18 @@ pub struct Step {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum Operation {
-    /// Copy what `path` matches into the build, at the same path or at `to`,
-    /// overwriting what is there: in a firmware a device path, globs allowed; in the
-    /// recipe's assets a path relative to its directory, a file or a directory's
-    /// files, which needs `to`. An overwritten entry keeps the build's metadata; a
-    /// new one has the firmware's, assets having none Android's defaults, or with
-    /// `metadata: Default` Android's defaults. What `path` names must be there.
+    /// Copy what `from` names into the build, at the same path or at `to`,
+    /// overwriting what is there: `Rom("/…")` or `Stock("/…")`, a device path in a
+    /// firmware, globs allowed; `Build("/…")`; or `Asset("…")`, a file or a
+    /// directory's files, which needs `to`. An overwritten entry keeps the build's
+    /// metadata; a new one has the firmware's, assets having none Android's
+    /// defaults, or with `metadata: Default` Android's defaults. What `from` names
+    /// must be there.
     Copy {
-        from: tree::Source,
-        /// A string expression, like `to`.
-        path: tree::Expr,
-        /// Where it goes, if not to the same path. A glob keeps its path.
+        from: Expr,
+        /// Where it goes, a device path, if not to the same path. A glob keeps its path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        to: Option<tree::Expr>,
+        to: Option<Expr>,
         #[serde(default, skip_serializing_if = "Metadata::is_copy")]
         metadata: Metadata,
     },
@@ -196,7 +197,7 @@ pub enum Operation {
     Append {
         target: DevicePath,
         /// A string expression.
-        content: tree::Expr,
+        content: Expr,
     },
     /// Patch one of the device's CIL policy files with TE `policies` (assets), written
     /// with Android's policy macros. The result must resolve with the device's other
@@ -421,7 +422,7 @@ impl Operation {
             | Self::WriteBytes { .. }
             | Self::EditXml { .. }
             | Self::Copy {
-                from: tree::Source::Assets,
+                from: Expr::Asset(_),
                 ..
             }
             | Self::Append { .. }
@@ -445,21 +446,33 @@ impl Operation {
             Self::AddPolicy { policies, .. } if policies.is_empty() => {
                 Err(Error::Invalid("AddPolicy needs at least one policy".into()))
             }
-            // Paths written out are checked now, computed ones when they are used.
-            Self::Copy { from, path, to, .. } => {
-                if *from == tree::Source::Assets && to.is_none() {
-                    return Err(Error::Invalid("copying an asset needs a to:".into()));
-                }
-                if let Some(path) = path.literal_str() {
-                    match from {
-                        tree::Source::Assets => {
-                            RelativePath::try_from(path.to_owned()).map(drop)?
+            // Paths written out are checked now, ones naming a value when they are used.
+            Self::Copy { from, to, .. } => {
+                let written = |path: &&str| !path.contains('{');
+                match from.file() {
+                    Some((Some(tree::Source::Assets), _)) if to.is_none() => {
+                        return Err(Error::Invalid("copying an asset needs a to:".into()));
+                    }
+                    Some((Some(tree::Source::Assets), path)) => {
+                        if let Some(path) = Some(path).filter(written) {
+                            RelativePath::try_from(path.to_owned())?;
                         }
-                        _ => DevicePath::try_from(path.to_owned()).map(drop)?,
+                    }
+                    Some((_, path)) => {
+                        if let Some(path) = Some(path).filter(written) {
+                            DevicePath::try_from(path.to_owned())?;
+                        }
+                    }
+                    None => {
+                        return Err(Error::Invalid(
+                            "Copy copies from Build, Rom, Stock or Asset".into(),
+                        ));
                     }
                 }
-                if let Some(to) = to.as_ref().and_then(tree::Expr::literal_str) {
-                    DevicePath::try_from(to.to_owned())?;
+                if let Some(Expr::Text(to)) = to
+                    && written(&to.as_str())
+                {
+                    DevicePath::try_from(to.clone())?;
                 }
                 Ok(())
             }

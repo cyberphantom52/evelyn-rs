@@ -1,8 +1,8 @@
 //! Surface recipes (steps of operations, `let:` and `when:`) into the primitive tree.
 
 use crate::{
-    Error, Feature, Metadata, Operation, PropertyTarget, Recipe, Step, XmlEdit, XmlMatch, XmlName,
-    XmlPath, XmlPredicate, escape_attribute,
+    Error, Expr as Written, Feature, Metadata, Operation, PropertyTarget, Recipe, Step, XmlEdit,
+    XmlMatch, XmlName, XmlPath, XmlPredicate, escape_attribute,
     tree::{Assigned, Expr, MethodEdit, Pattern, Scope, Stmt, Transform, Tree},
     value::Value,
 };
@@ -24,7 +24,7 @@ fn step(step: &Step) -> Stmt {
     let mut body: Vec<Stmt> = step.operations.iter().flat_map(operation).collect();
     if let Some(condition) = &step.when {
         body = vec![Stmt::When {
-            condition: condition.clone(),
+            condition: expr(condition),
             body,
             skip: format!("condition does not hold: {}", shown(condition)),
         }];
@@ -32,7 +32,7 @@ fn step(step: &Step) -> Stmt {
     for (name, value) in step.bindings.iter().rev() {
         body = vec![Stmt::Let {
             name: name.clone(),
-            value: value.clone(),
+            value: expr(value),
             body: vec![Stmt::When {
                 condition: defined(Expr::Var(name.clone())),
                 body,
@@ -47,10 +47,106 @@ fn step(step: &Step) -> Stmt {
 }
 
 /// An expression as reports name it: a string as it is, anything else in RON.
-fn shown(expr: &Expr) -> String {
-    match expr.literal_str() {
-        Some(text) => text.to_owned(),
-        None => ron::to_string(expr).unwrap_or_default(),
+fn shown(written: &Written) -> String {
+    match written {
+        Written::Text(text) => text.clone(),
+        other => ron::to_string(other).unwrap_or_default(),
+    }
+}
+
+/// A written expression as primitives.
+fn expr(written: &Written) -> Expr {
+    let boxed = |inner: &Written| Box::new(expr(inner));
+    let all = |exprs: &[Written]| exprs.iter().map(expr).collect();
+    match written {
+        Written::Build(_) | Written::Rom(_) | Written::Stock(_) | Written::Asset(_) => {
+            let (inside, pattern) = written.file().expect("a file reference");
+            select_expr(
+                text(pattern),
+                Scope {
+                    inside,
+                    ..Scope::default()
+                },
+            )
+        }
+        Written::Read(inner) => Expr::Read(boxed(inner)),
+        Written::Hash(inner) => Expr::Hash(boxed(inner)),
+        Written::Below(inner) => Expr::Below(boxed(inner)),
+        Written::Property { key, target } => Expr::Property {
+            key: key.clone(),
+            files: target.as_ref().map(|_| Box::new(property_files(target))),
+        },
+        Written::HasPartition(name) => Expr::HasPartition(name.clone()),
+        Written::Exists(inner) => Expr::Exists(boxed(inner)),
+        Written::Not(inner) => Expr::Not(boxed(inner)),
+        Written::All(exprs) => Expr::All(all(exprs)),
+        Written::Any(exprs) => Expr::Any(all(exprs)),
+        Written::Union(exprs) => Expr::Union(all(exprs)),
+        Written::Eq(left, right) => Expr::Eq(boxed(left), boxed(right)),
+        Written::In(left, right) => Expr::In(boxed(left), boxed(right)),
+        Written::If {
+            condition,
+            then,
+            otherwise,
+        } => Expr::If {
+            condition: boxed(condition),
+            then: boxed(then),
+            otherwise: boxed(otherwise),
+        },
+        Written::Filter { over, name, keep } => Expr::Filter {
+            over: boxed(over),
+            name: name.clone(),
+            keep: boxed(keep),
+        },
+        Written::Lines(inner) => Expr::Lines(boxed(inner)),
+        Written::Join(inner) => Expr::Join(boxed(inner)),
+        Written::Trim(inner) => Expr::Trim(boxed(inner)),
+        Written::Matches(text, pattern) => Expr::Matches {
+            text: boxed(text),
+            pattern: pattern.clone(),
+        },
+        Written::Text(written) => text(written),
+        Written::Bool(value) => Expr::Literal(Value::Bool(*value)),
+        Written::List(values) => Expr::Literal(Value::List(values.clone())),
+    }
+}
+
+/// A written string: each `{name}` in it, a name of `[A-Za-z0-9_-]`, is the value
+/// bound to `name`; any other `{` stands for itself.
+fn text(written: &str) -> Expr {
+    let mut parts = Vec::new();
+    let mut literal = String::new();
+    let mut rest = written;
+    while let Some(start) = rest.find('{') {
+        let after = &rest[start + 1..];
+        let end = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+            .unwrap_or(after.len());
+        let bound = (end > 0 && after[end..].starts_with('}'))
+            .then(|| Name::try_from(after[..end].to_owned()).ok())
+            .flatten();
+        match bound {
+            Some(bound) => {
+                literal.push_str(&rest[..start]);
+                if !literal.is_empty() {
+                    parts.push(Expr::Literal(Value::Str(std::mem::take(&mut literal))));
+                }
+                parts.push(Expr::Var(bound));
+                rest = &after[end + 1..];
+            }
+            None => {
+                literal.push_str(&rest[..=start]);
+                rest = after;
+            }
+        }
+    }
+    literal.push_str(rest);
+    if !literal.is_empty() || parts.is_empty() {
+        parts.push(Expr::Literal(Value::Str(literal)));
+    }
+    match parts.len() {
+        1 => parts.remove(0),
+        _ => Expr::Concat(parts),
     }
 }
 
@@ -67,29 +163,31 @@ fn select_expr(pattern: Expr, scope: Scope) -> Expr {
 
 fn operation(operation: &Operation) -> Vec<Stmt> {
     let stmt = match operation {
-        Operation::Copy {
-            from,
-            path,
-            to,
-            metadata,
-        } => {
-            let source = select_expr(
-                path.clone(),
-                Scope {
-                    inside: Some(*from),
-                    ..Scope::default()
+        Operation::Copy { from, to, metadata } => {
+            let (inside, path) = from.file().expect("Copy copies from a file reference");
+            let found = expect(
+                expr(from),
+                match inside {
+                    Some(source) => format!("{path} is not in {source}"),
+                    None => format!("{path} is not in the build"),
                 },
             );
-            let found = expect(source.clone(), format!("{} is not in {from}", shown(path)));
             let copy = Stmt::Copy {
-                selection: source,
-                to: to.clone(),
+                selection: expr(from),
+                to: to.as_ref().map(expr),
             };
             // What the copy put in the build, by where it went.
-            let placed = to.as_ref().unwrap_or(path);
+            let placed = match to {
+                Some(to) => shown(to),
+                None => path.to_owned(),
+            };
+            let in_build = || match to {
+                Some(to) => select_expr(expr(to), Scope::default()),
+                None => select_expr(text(path), Scope::default()),
+            };
             let defaults = || Stmt::SetMetadata {
-                selection: Expr::Below(Box::new(select_expr(placed.clone(), Scope::default()))),
-                pattern: shown(placed),
+                selection: Expr::Below(Box::new(in_build())),
+                pattern: placed.clone(),
                 metadata: Assigned::Defaults,
             };
             return match metadata {
@@ -100,8 +198,8 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                     copy,
                     defaults(),
                     Stmt::SetMetadata {
-                        selection: select_expr(placed.clone(), Scope::default()),
-                        pattern: shown(placed),
+                        selection: in_build(),
+                        pattern: placed.clone(),
                         metadata: Assigned::Fields(overrides(operation)),
                     },
                 ],
@@ -286,7 +384,10 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         Operation::Append { target, content } => {
             let file = select(target.as_ref(), Scope::default());
             Stmt::Edit {
-                transform: Transform::Write(appended(Expr::Read(Box::new(file.clone())), content)),
+                transform: Transform::Write(appended(
+                    Expr::Read(Box::new(file.clone())),
+                    &expr(content),
+                )),
                 selection: file,
             }
         }
