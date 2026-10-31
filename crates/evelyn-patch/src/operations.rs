@@ -42,7 +42,7 @@ impl Target {
             if to_path != path {
                 return Err(Error::Unsupported("wildcard imports must keep their path"));
             }
-            let matches = layout::expand(source, path);
+            let matches = layout::matches(source, path);
             if matches.is_empty() {
                 return Err(layout::Error::MissingPath(path.clone()).into());
             }

@@ -182,32 +182,18 @@ impl Scope<'_> {
             let path = pattern.strip_prefix('/').ok_or(Error::Unsupported(
                 "paths inside a package start at its root, /",
             ))?;
-            // Segment by segment, reading only the directories a glob needs.
-            let mut found = vec![String::new()];
-            for segment in path.split('/') {
-                let mut next = Vec::new();
-                for dir in found {
-                    let join = |name: &str| match dir.is_empty() {
-                        true => name.to_owned(),
-                        false => format!("{dir}/{name}"),
-                    };
-                    if segment.contains(['*', '?']) {
-                        let Ok(entries) = std::fs::read_dir(package.decoded.join(&dir)) else {
-                            continue;
-                        };
-                        for entry in entries.flatten() {
-                            let name = entry.file_name().to_string_lossy().into_owned();
-                            if android_firmware::glob(segment, &name) {
-                                next.push(join(&name));
-                            }
-                        }
-                    } else if package.decoded.join(join(segment)).exists() {
-                        next.push(join(segment));
-                    }
-                }
-                found = next;
-            }
-            found.sort();
+            let found = layout::walk(
+                path,
+                |dir| {
+                    std::fs::read_dir(package.decoded.join(dir))
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                        .collect()
+                },
+                |path| package.decoded.join(path).exists(),
+            );
             return found
                 .into_iter()
                 .map(|path| {
