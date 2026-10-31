@@ -1,6 +1,7 @@
 //! Walking the primitive tree. Every pass over a recipe (the load-time check, the
 //! partitions, sources and assets it needs) is a [`Visitor`], so the tree's shape
-//! is matched in one place: [`Tree::walk`].
+//! is matched in one place: [`Tree::walk`]. A visitor's `Invalid` errors are
+//! reported with the step they are in.
 
 use crate::{
     Error,
@@ -41,7 +42,14 @@ fn walk_stmt<'a>(
 ) -> Result<(), Error> {
     visitor.stmt(stmt, bound)?;
     match stmt {
-        Stmt::Step { body, .. } | Stmt::Within { body, .. } => body
+        Stmt::Step { id, body } => body
+            .iter()
+            .try_for_each(|stmt| walk_stmt(stmt, visitor, bound))
+            .map_err(|error| match error {
+                Error::Invalid(message) => Error::Invalid(format!("step {id}: {message}")),
+                error => error,
+            }),
+        Stmt::Within { body, .. } => body
             .iter()
             .try_for_each(|stmt| walk_stmt(stmt, visitor, bound)),
         Stmt::Let { name, value, body } => {
@@ -149,10 +157,7 @@ impl Expr {
 /// The load-time check: every expression gets operands of the kinds its operator
 /// is defined for, `let:` binds strings, conditions are booleans, and every
 /// `{name}` a statement uses is bound by an enclosing `let:`.
-#[derive(Default)]
-pub(crate) struct Check {
-    step: Option<Name>,
-}
+pub(crate) struct Check;
 
 fn expect(found: Kind, allowed: &[Kind], what: &str) -> Result<(), Error> {
     if allowed.contains(&found) {
@@ -166,34 +171,9 @@ fn expect(found: Kind, allowed: &[Kind], what: &str) -> Result<(), Error> {
 
 impl Visitor for Check {
     fn stmt(&mut self, stmt: &Stmt, bound: &[&Name]) -> Result<(), Error> {
-        let step = |error: Error, step: &Option<Name>| match (error, step) {
-            (Error::Invalid(message), Some(step)) => {
-                Error::Invalid(format!("step {step}: {message}"))
-            }
-            (error, _) => error,
-        };
-        self.check(stmt, bound)
-            .map_err(|error| step(error, &self.step))
-    }
-
-    fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), Error> {
-        let checked = check_expr(expr);
-        checked.map_err(|error| match (error, &self.step) {
-            (Error::Invalid(message), Some(step)) => {
-                Error::Invalid(format!("step {step}: {message}"))
-            }
-            (error, _) => error,
-        })
-    }
-}
-
-impl Check {
-    fn check(&mut self, stmt: &Stmt, bound: &[&Name]) -> Result<(), Error> {
         match stmt {
-            Stmt::Step { id, .. } => {
-                self.step = Some(id.clone());
-                return Ok(());
-            }
+            // Its body is checked as it is walked.
+            Stmt::Step { .. } => return Ok(()),
             Stmt::Let { value, .. } => expect(value.kind(), &[Kind::Str], "let:")?,
             Stmt::When { condition, .. } | Stmt::Assert { condition, .. } => {
                 expect(condition.kind(), &[Kind::Bool], "a condition")?
@@ -236,10 +216,8 @@ impl Check {
             None => Ok(()),
         }
     }
-}
 
-fn check_expr(expr: &Expr) -> Result<(), Error> {
-    {
+    fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), Error> {
         match expr {
             Expr::Hash(inner) => expect(inner.kind(), &[Kind::Selection], "Hash"),
             Expr::Content(inner) => expect(inner.kind(), &[Kind::Selection], "Content"),

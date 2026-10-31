@@ -15,7 +15,7 @@ pub mod value;
 pub mod visit;
 mod xml;
 pub use expr::Expr;
-pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate, XmlStep};
+pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate, XmlStep, escape_attribute};
 
 use android_firmware::{DevicePath, Firmware, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
@@ -78,15 +78,6 @@ pub struct Step {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<Expr>,
     pub operations: Vec<Operation>,
-}
-
-impl PropertyTarget {
-    pub fn partition(&self) -> Option<&Name> {
-        match self {
-            Self::Partition(name) => Some(name),
-            Self::File(_) => None,
-        }
-    }
 }
 
 /// Every operation but `Import` changes the build: the partitions being produced.
@@ -292,12 +283,41 @@ pub struct Overrides {
     pub selinux: Option<String>,
 }
 
+impl Overrides {
+    fn validate(&self) -> Result<(), Error> {
+        if *self == Self::default() {
+            return Err(Error::Invalid("metadata that sets nothing".into()));
+        }
+        if self.mode.is_some_and(|mode| mode > 0o7777) {
+            return Err(Error::Invalid(format!("invalid mode {:?}", self.mode)));
+        }
+        match &self.selinux {
+            Some(label)
+                if label.splitn(4, ':').filter(|part| !part.is_empty()).count() != 4
+                    || label.contains(|c: char| c == '\0' || c.is_whitespace()) =>
+            {
+                Err(Error::Invalid(format!("invalid SELinux label {label:?}")))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Where a property edit or lookup applies: a partition's `.prop` files, or one file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum PropertyTarget {
     Partition(Name),
     File(DevicePath),
+}
+
+impl PropertyTarget {
+    pub fn partition(&self) -> Option<&Name> {
+        match self {
+            Self::Partition(name) => Some(name),
+            Self::File(_) => None,
+        }
+    }
 }
 
 impl TryFrom<String> for PropertyTarget {
@@ -321,8 +341,6 @@ impl From<PropertyTarget> for String {
     }
 }
 
-/// Metadata for new files whose path (relative to the partition) matches `path`,
-/// where `*` and `?` match within one component.
 /// What a stubbed method returns: nothing (`V`), zero/false/null, or one/true.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Returns {
@@ -378,6 +396,36 @@ impl Operation {
         }
     }
 
+    /// The metadata a `SetMetadata`, or an import's `Metadata::Explicit`, sets.
+    fn overrides(&self) -> Option<Overrides> {
+        let (Self::SetMetadata {
+            uid,
+            gid,
+            mode,
+            selinux,
+            ..
+        }
+        | Self::Import {
+            metadata:
+                Metadata::Explicit {
+                    uid,
+                    gid,
+                    mode,
+                    selinux,
+                },
+            ..
+        }) = self
+        else {
+            return None;
+        };
+        Some(Overrides {
+            uid: *uid,
+            gid: *gid,
+            mode: *mode,
+            selinux: selinux.clone(),
+        })
+    }
+
     /// The smali edits, which need a package's classes.
     fn package_only(&self) -> bool {
         matches!(
@@ -407,6 +455,9 @@ impl Operation {
 
     /// Checks that can fail before any image is touched; the patch crate checks the rest on apply.
     fn validate(&self) -> Result<(), Error> {
+        if let Some(overrides) = self.overrides() {
+            return overrides.validate();
+        }
         match self {
             Self::SetProperty { key, value, .. } if !property_key(key) || value.contains('\n') => {
                 Err(Error::Invalid(format!("invalid property {key:?}")))
@@ -434,39 +485,6 @@ impl Operation {
                     RelativePath::try_from(pattern.clone())?;
                 }
                 Ok(())
-            }
-            Self::SetMetadata {
-                uid,
-                gid,
-                mode,
-                selinux,
-                ..
-            }
-            | Self::Import {
-                metadata:
-                    Metadata::Explicit {
-                        uid,
-                        gid,
-                        mode,
-                        selinux,
-                    },
-                ..
-            } => {
-                if uid.is_none() && gid.is_none() && mode.is_none() && selinux.is_none() {
-                    return Err(Error::Invalid("metadata that sets nothing".into()));
-                }
-                if mode.is_some_and(|mode| mode > 0o7777) {
-                    return Err(Error::Invalid(format!("invalid mode {mode:?}")));
-                }
-                match selinux {
-                    Some(label)
-                        if label.splitn(4, ':').filter(|part| !part.is_empty()).count() != 4
-                            || label.contains(|c: char| c == '\0' || c.is_whitespace()) =>
-                    {
-                        Err(Error::Invalid(format!("invalid SELinux label {label:?}")))
-                    }
-                    _ => Ok(()),
-                }
             }
             Self::StubMethod { class, .. }
             | Self::ReplaceMethod { class, .. }
@@ -553,7 +571,7 @@ impl Recipe {
                 operation.validate()?;
             }
         }
-        self.tree()?.walk(&mut visit::Check::default())?;
+        self.tree()?.walk(&mut visit::Check)?;
         Ok(())
     }
 
@@ -595,11 +613,7 @@ pub fn substitute<T: Serialize + serde::de::DeserializeOwned>(
 ) -> Result<T, Error> {
     let mut text = ron_options().to_string(value)?;
     for (name, bound) in bindings {
-        if bound.is_empty()
-            || !bound
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-        {
+        if !android_firmware::is_token(bound) {
             return Err(Error::Invalid(format!(
                 "bound value {bound:?} for {name} is not [A-Za-z0-9._-]"
             )));

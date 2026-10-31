@@ -2,11 +2,11 @@
 
 use crate::{
     Data, Error, Expr as Surface, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch,
-    XmlName, XmlPath, XmlPredicate,
+    XmlName, XmlPath, XmlPredicate, escape_attribute,
     tree::{Assigned, BinaryOp, Expr, MethodEdit, Scope, Source, Stmt, Transform, Tree, UnaryOp},
     value::Value,
 };
-use android_firmware::RelativePath;
+use android_firmware::{Firmware, RelativePath};
 
 impl Recipe {
     /// The recipe as primitives, its steps in dependency order.
@@ -130,13 +130,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             metadata,
         } => {
             let copy = Stmt::Copy {
-                selection: select(
-                    pattern.as_ref(),
-                    Scope {
-                        inside: Some(Source::Firmware(*from)),
-                        ..Scope::default()
-                    },
-                ),
+                selection: firmware_file(pattern.as_ref(), *from),
                 to: to.clone(),
             };
             // What the copy put in the build, by where it went.
@@ -147,36 +141,20 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 metadata: Assigned::Defaults,
             };
             let found = expect(
-                select(
-                    pattern.as_ref(),
-                    Scope {
-                        inside: Some(Source::Firmware(*from)),
-                        ..Scope::default()
-                    },
-                ),
+                firmware_file(pattern.as_ref(), *from),
                 format!("{pattern} is not in the {from} firmware"),
             );
             return match metadata {
                 Metadata::Copy => vec![found, copy],
                 Metadata::Default => vec![found, copy, defaults()],
-                Metadata::Explicit {
-                    uid,
-                    gid,
-                    mode,
-                    selinux,
-                } => vec![
+                Metadata::Explicit { .. } => vec![
                     found,
                     copy,
                     defaults(),
                     Stmt::SetMetadata {
                         selection: select(&placed, Scope::default()),
                         pattern: placed.clone(),
-                        metadata: Assigned::Fields(crate::Overrides {
-                            uid: *uid,
-                            gid: *gid,
-                            mode: *mode,
-                            selinux: selinux.clone(),
-                        }),
+                        metadata: Assigned::Fields(overrides(operation)),
                     },
                 ],
             };
@@ -203,9 +181,10 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         // Copying within the build carries content and metadata; what was copied
         // is then removed where it was.
         Operation::Relocate { from, to } => {
+            let message = format!("{from} is not there");
             let from = select(from.as_ref(), Scope::default());
             return vec![
-                expect(from.clone(), format!("{} is not there", ron_of(&from))),
+                expect(from.clone(), message),
                 Stmt::Copy {
                     selection: from.clone(),
                     to: Some(to.clone()),
@@ -217,21 +196,10 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             selection: asset_file(asset),
             to: Some(to.clone()),
         },
-        Operation::SetMetadata {
-            pattern,
-            uid,
-            gid,
-            mode,
-            selinux,
-        } => Stmt::SetMetadata {
+        Operation::SetMetadata { pattern, .. } => Stmt::SetMetadata {
             selection: select(pattern.as_ref(), Scope::default()),
             pattern: pattern.to_string(),
-            metadata: Assigned::Fields(crate::Overrides {
-                uid: *uid,
-                gid: *gid,
-                mode: *mode,
-                selinux: selinux.clone(),
-            }),
+            metadata: Assigned::Fields(overrides(operation)),
         },
         // Where the key is defined, everywhere in the target's scope; or added
         // where a new one goes.
@@ -323,7 +291,9 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                     ("extend_features", "app_feature", name, args.as_deref())
                 }
             };
-            let args = args.map_or(String::new(), |args| format!(" args=\"{}\"", escape(args)));
+            let args = args.map_or(String::new(), |args| {
+                format!(" args=\"{}\"", escape_attribute(args))
+            });
             Stmt::Edit {
                 selection: select(file, Scope::default()),
                 transform: Transform::Xml {
@@ -332,7 +302,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                         parent: XmlPath::try_from(root.to_owned()).expect("a literal XML path"),
                         key: feature_match(element, name),
                         expect: None,
-                        element: format!("<{element} name=\"{}\"{args}/>", escape(name)),
+                        element: format!("<{element} name=\"{}\"{args}/>", escape_attribute(name)),
                     }],
                 },
             }
@@ -381,13 +351,9 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             selection: select(target.as_ref(), Scope::default()),
             transform: Transform::Append(match content {
                 Data::Text(text) => Expr::Literal(Value::Str(text.clone())),
-                Data::File { from, path } => Expr::Content(Box::new(select(
-                    path.as_ref(),
-                    Scope {
-                        inside: Some(Source::Firmware(*from)),
-                        ..Scope::default()
-                    },
-                ))),
+                Data::File { from, path } => {
+                    Expr::Content(Box::new(firmware_file(path.as_ref(), *from)))
+                }
             }),
         },
         Operation::AssertHash { target, sha256 } => Stmt::Assert {
@@ -475,12 +441,22 @@ fn asset_file(asset: &RelativePath) -> Expr {
     )
 }
 
-/// The pattern a selection was written with, for messages.
-fn ron_of(selection: &Expr) -> String {
-    match selection {
-        Expr::Select { pattern, .. } => pattern.clone(),
-        other => ron::to_string(other).unwrap_or_default(),
-    }
+/// What `pattern` (a device path) matches in a firmware, as a selection.
+fn firmware_file(pattern: &str, from: Firmware) -> Expr {
+    select(
+        pattern,
+        Scope {
+            inside: Some(Source::Firmware(from)),
+            ..Scope::default()
+        },
+    )
+}
+
+/// The metadata an operation that sets some sets.
+fn overrides(operation: &Operation) -> crate::Overrides {
+    operation
+        .overrides()
+        .expect("SetMetadata and explicit imports set metadata")
 }
 
 /// The selection is not empty.
@@ -512,11 +488,4 @@ fn feature_match(element: &str, name: &str) -> XmlMatch {
             value: name.to_owned(),
         }),
     }
-}
-
-/// Text as an XML attribute value.
-fn escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('"', "&quot;")
 }
