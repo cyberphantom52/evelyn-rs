@@ -3,7 +3,7 @@
 //! body leaves the directory partially changed; the next decode replaces it.
 
 use crate::{Target, compose::Context};
-use android_firmware::{Name, RelativePath, Sha256Digest, TargetPath};
+use android_firmware::{Name, RelativePath, TargetPath};
 use recipe::{
     tree::{Expr, Stmt},
     visit::{self, Visitor},
@@ -28,17 +28,15 @@ pub(crate) struct Opened {
     rebuilt: PathBuf,
 }
 
-/// Decode the package at `at`, whose content must be `before`. Resources are
-/// decoded only when `body` touches them.
+/// Decode the package at `at`. Resources are decoded only when `body` touches them.
 pub(crate) fn open(
     target: &mut Target,
     at: &TargetPath,
-    before: Option<&Sha256Digest>,
     body: &[Stmt],
     context: &Context<'_>,
     step: &Name,
 ) -> Result<Opened, crate::Error> {
-    let source = target.content_path(&at.path, before, context.images)?;
+    let source = target.content_path(&at.path, context.images)?;
     let workspace = context.packages.join(step.as_ref());
     fs::create_dir_all(&workspace)?;
     let decoded = workspace.join("decoded");

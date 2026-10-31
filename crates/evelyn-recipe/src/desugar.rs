@@ -161,40 +161,18 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         }
         Operation::Diff { target, patch } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
-            transform: Transform::Diff {
-                patch: patch.clone(),
-                before: None,
-            },
+            transform: Transform::Diff(patch.clone()),
         },
-        Operation::WriteBytes {
-            target,
-            before,
-            edits,
-        } => Stmt::Edit {
+        Operation::WriteBytes { target, edits } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
-            transform: Transform::WriteBytes {
-                before: before.clone(),
-                edits: edits.clone(),
-            },
+            transform: Transform::WriteBytes(edits.clone()),
         },
-        Operation::EditXml {
-            target,
-            before,
-            edits,
-        } => Stmt::Edit {
+        Operation::EditXml { target, edits } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
-            transform: Transform::Xml {
-                before: before.clone(),
-                edits: edits.clone(),
-            },
+            transform: Transform::Xml(edits.clone()),
         },
-        Operation::Package {
-            target,
-            before,
-            edits,
-        } => Stmt::Package {
+        Operation::Package { target, edits } => Stmt::Package {
             package: target.clone(),
-            before: before.clone(),
             body: edits.iter().flat_map(self::operation).collect(),
         },
         Operation::StubMethod {
@@ -226,15 +204,12 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             });
             Stmt::Edit {
                 selection: select(file, Scope::default()),
-                transform: Transform::Xml {
-                    before: None,
-                    edits: vec![XmlEdit::PutChild {
-                        parent: XmlPath::try_from(root.to_owned()).expect("a literal XML path"),
-                        key: feature_match(element, name),
-                        expect: None,
-                        element: format!("<{element} name=\"{}\"{args}/>", escape_attribute(name)),
-                    }],
-                },
+                transform: Transform::Xml(vec![XmlEdit::PutChild {
+                    parent: XmlPath::try_from(root.to_owned()).expect("a literal XML path"),
+                    key: feature_match(element, name),
+                    expect: None,
+                    element: format!("<{element} name=\"{}\"{args}/>", escape_attribute(name)),
+                }]),
             }
         }
         Operation::DisableFeature(name) => {
@@ -266,10 +241,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 condition: defined(files.clone()),
                 body: vec![Stmt::Edit {
                     selection: files,
-                    transform: Transform::Xml {
-                        before: None,
-                        edits,
-                    },
+                    transform: Transform::Xml(edits),
                 }],
                 skip: format!("feature {name} is not declared"),
             }

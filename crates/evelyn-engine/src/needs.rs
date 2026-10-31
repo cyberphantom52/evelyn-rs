@@ -27,7 +27,7 @@ impl Visitor for Assets {
     fn stmt(&mut self, stmt: &Stmt, _bound: &[&Name]) -> Result<(), Error> {
         if let Stmt::Edit { transform, .. } = stmt {
             match transform {
-                Transform::Diff { patch, .. } => self.0.push(patch.clone()),
+                Transform::Diff(patch) => self.0.push(patch.clone()),
                 Transform::AddPolicy { policies, .. } => self.0.extend(policies.iter().cloned()),
                 Transform::Smali {
                     edit: MethodEdit::Replace(body) | MethodEdit::Insert(body),

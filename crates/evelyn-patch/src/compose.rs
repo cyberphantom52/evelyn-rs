@@ -340,20 +340,10 @@ impl Composition {
                     });
                 }
             }
-            Stmt::Package {
-                package,
-                before,
-                body,
-            } => {
+            Stmt::Package { package, body } => {
                 let at = self.resolve_one(package, context, step)?;
-                let opened = crate::package::open(
-                    self.target(&at.partition)?,
-                    &at,
-                    before.as_ref(),
-                    body,
-                    context,
-                    step,
-                )?;
+                let opened =
+                    crate::package::open(self.target(&at.partition)?, &at, body, context, step)?;
                 self.package = Some(opened);
                 let ran = body
                     .iter()
