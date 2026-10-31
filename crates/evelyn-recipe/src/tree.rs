@@ -3,7 +3,7 @@
 //! these few statements and expressions, so each primitive has one implementation
 //! however many surface forms use it.
 
-use crate::{Firmware, Hex, Overrides, PropertyTarget, Returns, XmlEdit, value::Value};
+use crate::{Firmware, Hex, Overrides, Returns, XmlEdit, value::Value};
 use android_firmware::{DevicePath, Name, RelativePath};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -107,22 +107,22 @@ pub enum Expr {
         #[serde(default)]
         scope: Scope,
     },
-    /// A property's value, or unset.
+    /// A property's value, or unset. Without `files`, the value the device ends up
+    /// with: init's last assignment of it from the files `PropertyFiles` lists, or
+    /// for an `ro.product.*` property init derives, the one it derives. With
+    /// `files`, a selection, the last assignment in them, in the selection's order.
     Property {
         key: String,
         #[serde(default)]
-        target: Option<PropertyTarget>,
+        files: Option<Box<Expr>>,
     },
-    /// The property files that define `key`: with a file, it if it does; with a
-    /// partition, the files in it that do; without, those in every partition.
+    /// The property files init loads, in the order it loads them, the files their
+    /// `import` lines name included; with a partition, those in it. An import whose
+    /// path holds a `${property}` is not followed: only the device can expand it.
     PropertyFiles {
-        key: String,
         #[serde(default)]
-        target: Option<PropertyTarget>,
+        partition: Option<Name>,
     },
-    /// The file a new property goes to: the file, the partition's `build.prop`,
-    /// or without a target product's.
-    NewPropertyFile(Option<PropertyTarget>),
     /// The value an enclosing `Let` or `Filter` binds to the name.
     Var(Name),
     /// `body`, with `name` bound to `value`.

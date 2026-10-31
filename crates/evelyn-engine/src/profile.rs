@@ -324,22 +324,16 @@ impl Partitions<'_> {
 
 impl Visitor for Partitions<'_> {
     fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), recipe::Error> {
-        let target = match expr {
-            Expr::HasPartition(name) => return self.known(name.as_ref()),
-            Expr::Select { scope, .. } => {
-                return match &scope.partition {
-                    Some(partition) if !partition.contains(['*', '?']) => self.known(partition),
-                    _ => Ok(()),
-                };
-            }
-            Expr::Property { target, .. }
-            | Expr::PropertyFiles { target, .. }
-            | Expr::NewPropertyFile(target) => target,
-            _ => return Ok(()),
-        };
-        match target.as_ref().and_then(recipe::PropertyTarget::partition) {
-            Some(partition) => self.known(partition.as_ref()),
-            None => Ok(()),
+        match expr {
+            Expr::HasPartition(name)
+            | Expr::PropertyFiles {
+                partition: Some(name),
+            } => self.known(name.as_ref()),
+            Expr::Select { scope, .. } => match &scope.partition {
+                Some(partition) if !partition.contains(['*', '?']) => self.known(partition),
+                _ => Ok(()),
+            },
+            _ => Ok(()),
         }
     }
 }

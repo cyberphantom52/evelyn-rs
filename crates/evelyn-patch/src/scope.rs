@@ -1,33 +1,14 @@
 //! What a recipe reads from the composed build and the firmware: selections,
 //! property values and files, and the value of every expression.
-//!
-//! A property's device-wide value is the one from the highest-precedence partition
-//! that defines it. Precedence is the old Evelyn shell's order: partitions outside
-//! the standard five first (`my_*`, `*_dlkm`), by name, then `product`, `odm`,
-//! `vendor`, `system_ext`, `system`, reordered by `ro.product.property_source_order`
-//! when the firmware sets it.
 
 use crate::{Composition, Error, Target, compose::Context, layout, package::Opened};
 use android_firmware::{DevicePath, Firmware, Name, RelativePath, SourceRef};
 use android_fs::EntryKind;
 use recipe::{
-    PropertyTarget,
     tree::{Expr, Scope as Range, Source},
     value::{Located, Place, Value},
 };
 use std::collections::BTreeMap;
-
-const STANDARD: [&str; 5] = ["product", "odm", "vendor", "system_ext", "system"];
-
-/// Where a partition's own properties go when it defines none of a key.
-const MAIN_FILES: [&str; 3] = ["system/build.prop", "etc/build.prop", "build.prop"];
-
-/// The files in one partition that define a key, and the value they agree on.
-pub(crate) struct Found {
-    pub partition: Name,
-    pub value: String,
-    pub files: Vec<RelativePath>,
-}
 
 pub(crate) struct Scope<'a> {
     pub targets: &'a BTreeMap<Name, Target>,
@@ -43,150 +24,121 @@ pub(crate) struct Scope<'a> {
 }
 
 impl Scope<'_> {
-    /// The value of `key`: device-wide without a partition, from every `.prop` file
-    /// in the partition without a path, else from that file.
-    pub fn property(
+    /// What init loads at boot: the property files, in order, and the assignments
+    /// it takes from them, in the order it takes them.
+    fn loaded(&self) -> Result<Loaded, Error> {
+        let mut loaded = Loaded::default();
+        for group in android_firmware::PROPERTY_FILES {
+            let mut files = Vec::new();
+            for path in group {
+                files.push(self.property_file(path)?);
+            }
+            let files: Vec<Located> = match files.remove(0) {
+                Some(canonical) => vec![canonical],
+                None => files.into_iter().flatten().collect(),
+            };
+            for file in &files {
+                self.load(file, None, 0, &mut loaded)?;
+            }
+        }
+        Ok(loaded)
+    }
+
+    /// Load `file` as init does, following its imports; with `filter`, an import's,
+    /// only the keys it lets in, and not the file's own imports.
+    fn load(
         &self,
-        partition: Option<&Name>,
-        path: Option<&RelativePath>,
-        key: &str,
-    ) -> Result<Option<Found>, Error> {
-        match partition {
-            Some(partition) => self.in_partition(partition, path, key),
-            None => {
-                for partition in self.precedence()? {
-                    if let Some(found) = self.in_partition(&partition, None, key)? {
-                        return Ok(Some(found));
+        file: &Located,
+        filter: Option<&str>,
+        depth: usize,
+        loaded: &mut Loaded,
+    ) -> Result<(), Error> {
+        if depth > 8 {
+            return Err(Error::Unsupported("property imports nest more than 8 deep"));
+        }
+        if !loaded.files.contains(file) {
+            loaded.files.push(file.clone());
+        }
+        let bytes = self.content(file)?;
+        for line in android_property::lines(&String::from_utf8_lossy(&bytes)) {
+            match line {
+                android_property::Line::Import { path, filter: only } if filter.is_none() => {
+                    if path.contains("${") {
+                        continue;
+                    }
+                    if let Some(imported) = self.property_file(path)? {
+                        self.load(&imported, only, depth + 1, loaded)?;
                     }
                 }
-                Ok(None)
-            }
-        }
-    }
-
-    fn in_partition(
-        &self,
-        partition: &Name,
-        path: Option<&RelativePath>,
-        key: &str,
-    ) -> Result<Option<Found>, Error> {
-        let Some(target) = self.targets.get(partition) else {
-            return Ok(None);
-        };
-        let files = match path {
-            Some(path) if target.tree.entries.contains_key(path) => vec![path.clone()],
-            Some(_) => Vec::new(),
-            None => property_files(target),
-        };
-        let mut found: Option<Found> = None;
-        for file in files {
-            let bytes = target.read(&file, self.context.images)?;
-            let Some(value) = std::str::from_utf8(&bytes)
-                .ok()
-                .and_then(|text| android_property::get(text, key))
-            else {
-                continue;
-            };
-            match &mut found {
-                Some(found) if found.value != value => {
-                    return Err(Error::PropertyConflict {
-                        partition: partition.clone(),
-                        key: key.into(),
-                    });
-                }
-                Some(found) => found.files.push(file),
-                None => {
-                    found = Some(Found {
-                        partition: partition.clone(),
-                        value: value.into(),
-                        files: vec![file],
-                    })
+                android_property::Line::Import { .. } => {}
+                android_property::Line::Assignment(entry) => {
+                    if android_firmware::loadable_property(entry.key)
+                        && filter.is_none_or(|filter| android_property::filtered(filter, entry.key))
+                    {
+                        loaded
+                            .assignments
+                            .push((entry.key.to_owned(), entry.value.to_owned()));
+                    }
                 }
             }
         }
-        Ok(found)
+        Ok(())
     }
 
-    /// Partitions from the highest precedence (loaded last) to the lowest.
-    pub fn precedence(&self) -> Result<Vec<Name>, Error> {
-        let present = |name: &str| self.targets.keys().find(|key| key.as_ref() == name);
-        let extras: Vec<&Name> = self
-            .targets
-            .keys()
-            .filter(|name| !STANDARD.contains(&name.as_ref()))
-            .collect();
-        let mut standard: Vec<&Name> = STANDARD.iter().filter_map(|name| present(name)).collect();
-        let mut first_extras = Vec::new();
-        let bootstrap = extras.iter().chain(&standard).copied().collect::<Vec<_>>();
-        let mut order = None;
-        for partition in bootstrap {
-            if let Some(found) =
-                self.in_partition(partition, None, "ro.product.property_source_order")?
-            {
-                order = Some(found.value);
-                break;
-            }
-        }
-        if let Some(order) = order {
-            let tokens: Vec<&str> = order
-                .split(',')
-                .map(str::trim)
-                .filter(|token| !token.is_empty())
-                .collect();
-            let valid = tokens.iter().all(|token| {
-                STANDARD.contains(token) || extras.iter().any(|e| e.as_ref() == *token)
-            });
-            if valid {
-                let listed_standard: Vec<&Name> = tokens
-                    .iter()
-                    .filter(|token| STANDARD.contains(*token))
-                    .filter_map(|token| present(token))
-                    .collect();
-                first_extras = tokens
-                    .iter()
-                    .filter_map(|token| extras.iter().copied().find(|e| e.as_ref() == *token))
-                    .collect();
-                standard.retain(|name| !listed_standard.contains(name));
-                standard = listed_standard.into_iter().chain(standard).collect();
-            }
-        }
-        let mut ordered: Vec<Name> = first_extras.iter().map(|name| (*name).clone()).collect();
-        ordered.extend(
-            extras
-                .into_iter()
-                .filter(|name| !first_extras.contains(name))
-                .cloned(),
-        );
-        ordered.extend(standard.into_iter().cloned());
-        Ok(ordered)
+    /// The regular file (or hardlink to one) at a device path in the build.
+    fn property_file(&self, path: &str) -> Result<Option<Located>, Error> {
+        let path = DevicePath::try_from(path.to_owned())?;
+        let found = Composition::resolve(self.targets, self.context.mounts, &path);
+        Ok(found.into_iter().find_map(|at| {
+            let entry = self
+                .targets
+                .get(&at.partition)?
+                .tree
+                .entries
+                .get(&at.path)?;
+            matches!(
+                entry.kind,
+                EntryKind::File { .. } | EntryKind::Hardlink { .. }
+            )
+            .then(|| Located {
+                place: Place::Build,
+                partition: at.partition,
+                path: at.path,
+            })
+        }))
     }
 
-    /// The file that gets `partition`'s new properties.
-    pub fn main_file(&self, partition: &Name) -> Option<RelativePath> {
-        let target = self.targets.get(partition)?;
-        MAIN_FILES
+    /// The value the device ends up with for `key`.
+    fn device_property(&self, key: &str) -> Result<Option<String>, Error> {
+        let loaded = self.loaded()?;
+        let value = |key: &str| {
+            loaded
+                .assignments
+                .iter()
+                .rev()
+                .find(|(assigned, _)| assigned == key)
+                .map(|(_, value)| value.clone())
+        };
+        let derived = key
+            .strip_prefix("ro.product.")
+            .filter(|name| android_firmware::DERIVED_PRODUCT_PROPERTIES.contains(name));
+        let (Some(name), None | Some("")) = (derived, value(key).as_deref()) else {
+            return Ok(value(key));
+        };
+        let sources = android_firmware::PRODUCT_PROPERTY_SOURCES;
+        let order = value("ro.product.property_source_order").filter(|order| !order.is_empty());
+        let order: Vec<String> = match order {
+            Some(order) if order.split(',').all(|source| sources.contains(&source)) => {
+                order.split(',').map(str::to_owned).collect()
+            }
+            _ => sources.iter().map(|source| source.to_string()).collect(),
+        };
+        Ok(order
             .iter()
-            .map(|path| RelativePath::try_from(path.to_string()).expect("valid path"))
-            .find(|path| target.tree.entries.contains_key(path))
-    }
-
-    /// The value of `key` in a property target's scope; a file that is in no
-    /// partition of this build defines nothing.
-    pub fn get(&self, target: Option<&PropertyTarget>, key: &str) -> Result<Option<String>, Error> {
-        let found = match target {
-            None => self.property(None, None, key)?,
-            Some(PropertyTarget::Partition(partition)) => {
-                self.property(Some(partition), None, key)?
-            }
-            Some(PropertyTarget::File(path)) => {
-                let resolved = Composition::resolve(self.targets, self.context.mounts, path);
-                match resolved.as_slice() {
-                    [file] => self.property(Some(&file.partition), Some(&file.path), key)?,
-                    _ => None,
-                }
-            }
-        };
-        Ok(found.map(|found| found.value))
+            .find_map(|source| {
+                value(&format!("ro.product.{source}.{name}")).filter(|value| !value.is_empty())
+            })
+            .or(value(key)))
     }
 
     /// What `pattern` selects. Inside a firmware, the pattern is a device path in
@@ -325,102 +277,6 @@ impl Scope<'_> {
         Ok(found)
     }
 
-    /// The property files that define `key`: with a file, it if it does; with a
-    /// partition, every file in it that does; without, every file in every
-    /// partition that does.
-    pub fn property_files(
-        &self,
-        key: &str,
-        target: Option<&PropertyTarget>,
-    ) -> Result<Vec<Located>, Error> {
-        let found = match target {
-            Some(PropertyTarget::File(_)) => {
-                let file = self.new_property_file(target)?;
-                self.property(Some(&file.partition), Some(&file.path), key)?
-                    .into_iter()
-                    .collect()
-            }
-            Some(PropertyTarget::Partition(partition)) => {
-                self.partition(partition)?;
-                self.property(Some(partition), None, key)?
-                    .into_iter()
-                    .collect()
-            }
-            None => {
-                let mut found = Vec::new();
-                for partition in self.precedence()? {
-                    found.extend(self.property(Some(&partition), None, key)?);
-                }
-                found
-            }
-        };
-        Ok(found
-            .into_iter()
-            .flat_map(|found| {
-                let partition = found.partition;
-                found.files.into_iter().map(move |path| Located {
-                    place: Place::Build,
-                    partition: partition.clone(),
-                    path,
-                })
-            })
-            .collect())
-    }
-
-    /// The file a new key goes to: the file; the partition's own `build.prop`;
-    /// without a target, product's, whose properties load last of the standard
-    /// partitions, so a new key there takes effect.
-    pub fn new_property_file(&self, target: Option<&PropertyTarget>) -> Result<Located, Error> {
-        let partition = match target {
-            Some(PropertyTarget::File(path)) => {
-                let mut found = Composition::resolve(self.targets, self.context.mounts, path);
-                if found.len() != 1 {
-                    return Err(Error::AbsentPath {
-                        step: self.step.clone(),
-                        path: path.clone(),
-                    });
-                }
-                let found = found.remove(0);
-                return Ok(Located {
-                    place: Place::Build,
-                    partition: found.partition,
-                    path: found.path,
-                });
-            }
-            Some(PropertyTarget::Partition(partition)) => {
-                self.partition(partition)?;
-                partition.clone()
-            }
-            None => match self.targets.keys().find(|name| name.as_ref() == "product") {
-                Some(product) => product.clone(),
-                None => self
-                    .precedence()?
-                    .into_iter()
-                    .next()
-                    .ok_or(Error::Unsupported("no partition to hold a new property"))?,
-            },
-        };
-        let path = self
-            .main_file(&partition)
-            .ok_or_else(|| Error::NoPropertyFile(partition.clone()))?;
-        Ok(Located {
-            place: Place::Build,
-            partition,
-            path,
-        })
-    }
-
-    /// A partition the build must have.
-    fn partition(&self, partition: &Name) -> Result<(), Error> {
-        if self.targets.contains_key(partition) {
-            return Ok(());
-        }
-        Err(Error::AbsentPartition {
-            step: self.step.clone(),
-            partition: partition.clone(),
-        })
-    }
-
     /// The one rule for each kind of expression.
     pub fn eval(&self, expr: &Expr) -> Result<Value, Error> {
         self.eval_in(expr, None)
@@ -436,15 +292,33 @@ impl Scope<'_> {
                     .ok_or(Error::Unsupported("Select needs a pattern that is set"))?;
                 Value::Selection(self.select(pattern, scope)?)
             }
-            Expr::Property { key, target } => self
-                .get(target.as_ref(), key)?
-                .map_or(Value::Unset, Value::Str),
-            Expr::PropertyFiles { key, target } => {
-                Value::Selection(self.property_files(key, target.as_ref())?)
+            Expr::Property { key, files: None } => {
+                self.device_property(key)?.map_or(Value::Unset, Value::Str)
             }
-            Expr::NewPropertyFile(target) => {
-                Value::Selection(vec![self.new_property_file(target.as_ref())?])
+            Expr::Property {
+                key,
+                files: Some(files),
+            } => {
+                let mut value = Value::Unset;
+                for file in self.eval_in(files, bound)?.as_selection()? {
+                    let text = String::from_utf8_lossy(&self.content(file)?).into_owned();
+                    if let Some(assigned) = android_property::get(&text, key) {
+                        value = Value::Str(assigned.to_owned());
+                    }
+                }
+                value
             }
+            Expr::PropertyFiles { partition } => Value::Selection(
+                self.loaded()?
+                    .files
+                    .into_iter()
+                    .filter(|file| {
+                        partition
+                            .as_ref()
+                            .is_none_or(|name| file.partition == *name)
+                    })
+                    .collect(),
+            ),
             Expr::Var(name) => std::iter::successors(bound, |bound| bound.outer)
                 .map(|bound| (bound.name, &bound.value))
                 .chain(self.bound.iter().rev().map(|(name, value)| (name, value)))
@@ -656,21 +530,13 @@ pub(crate) fn source_of(from: Firmware, partition: &Name) -> SourceRef {
     }
 }
 
-/// A target's regular `.prop` files (or hardlinks to them), in path order.
-fn property_files(target: &Target) -> Vec<RelativePath> {
-    target
-        .tree
-        .entries
-        .iter()
-        .filter(|(path, entry)| {
-            android_property::is_property_file(path.as_ref())
-                && matches!(
-                    entry.kind,
-                    EntryKind::File { .. } | EntryKind::Hardlink { .. }
-                )
-        })
-        .map(|(path, _)| path.clone())
-        .collect()
+/// What init loads at boot.
+#[derive(Default)]
+struct Loaded {
+    /// The property files, in the order they are loaded.
+    files: Vec<Located>,
+    /// The assignments taken from them, in order: a later one of a key wins.
+    assignments: Vec<(String, String)>,
 }
 
 /// A value a `Let` or `Filter` binds, and those bound around it.

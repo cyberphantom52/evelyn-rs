@@ -130,12 +130,12 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
             walk_expr(then, visitor, bound)?;
             walk_expr(otherwise, visitor, bound)
         }
-        Expr::Literal(_)
-        | Expr::Var(_)
-        | Expr::Property { .. }
-        | Expr::PropertyFiles { .. }
-        | Expr::NewPropertyFile(_)
-        | Expr::HasPartition(_) => Ok(()),
+        Expr::Property { files, .. } => files
+            .iter()
+            .try_for_each(|files| walk_expr(files, visitor, bound)),
+        Expr::Literal(_) | Expr::Var(_) | Expr::PropertyFiles { .. } | Expr::HasPartition(_) => {
+            Ok(())
+        }
     }
 }
 
@@ -173,7 +173,13 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
         expect(found, allowed, what).map(|()| found)
     };
     Ok(match expr {
-        Expr::Literal(Value::Str(_) | Value::Unset) | Expr::Property { .. } => Kind::Str,
+        Expr::Literal(Value::Str(_) | Value::Unset) => Kind::Str,
+        Expr::Property { files, .. } => {
+            if let Some(files) = files {
+                of(files, &[Kind::Selection], "Property")?;
+            }
+            Kind::Str
+        }
         Expr::Literal(Value::Bool(_)) | Expr::HasPartition(_) => Kind::Bool,
         Expr::Literal(Value::List(_)) => Kind::List,
         Expr::Select { pattern, .. } => {
@@ -185,9 +191,7 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
             }
             Kind::Str
         }
-        Expr::Literal(Value::Selection(_))
-        | Expr::PropertyFiles { .. }
-        | Expr::NewPropertyFile(_) => Kind::Selection,
+        Expr::Literal(Value::Selection(_)) | Expr::PropertyFiles { .. } => Kind::Selection,
         Expr::Var(name) => match bound.iter().rev().find(|(bound, _)| *bound == name) {
             Some((_, kind)) => *kind,
             None => {

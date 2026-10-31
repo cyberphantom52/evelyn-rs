@@ -55,12 +55,6 @@ pub enum Error {
         step: Name,
         path: android_firmware::DevicePath,
     },
-    #[error("step {step} touches partition {partition}, which this firmware does not have")]
-    AbsentPartition { step: Name, partition: Name },
-    #[error("partition {partition} defines {key} with different values in different files")]
-    PropertyConflict { partition: Name, key: String },
-    #[error("partition {0} has no build.prop for a new property")]
-    NoPropertyFile(Name),
     #[error("source {0} was not extracted")]
     UnknownSource(android_firmware::SourceRef),
     #[error(transparent)]
