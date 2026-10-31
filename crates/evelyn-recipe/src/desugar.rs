@@ -6,7 +6,7 @@ use crate::{
     tree::{Assigned, BinaryOp, Expr, MethodEdit, Scope, Source, Stmt, Transform, Tree, UnaryOp},
     value::Value,
 };
-use android_firmware::{Firmware, RelativePath};
+use android_firmware::{Firmware, Name, RelativePath};
 
 impl Recipe {
     /// The recipe as primitives, its steps in dependency order.
@@ -204,9 +204,9 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         // Where the key is defined, everywhere in the target's scope; or added
         // where a new one goes.
         Operation::SetProperty { key, value, target } => Stmt::Edit {
-            selection: Expr::Else(
-                Box::new(property_files(key, target)),
-                Box::new(Expr::NewPropertyFile(target.clone())),
+            selection: or_else(
+                property_files(key, target),
+                Expr::NewPropertyFile(target.clone()),
             ),
             transform: Transform::Prop {
                 key: key.clone(),
@@ -475,6 +475,25 @@ fn defined(selection: Expr) -> Expr {
         op: UnaryOp::Defined,
         expr: Box::new(selection),
     }
+}
+
+/// `first` if it selects anything, else `otherwise`.
+fn or_else(first: Expr, otherwise: Expr) -> Expr {
+    let selected = name("selected");
+    Expr::Let {
+        name: selected.clone(),
+        value: Box::new(first),
+        body: Box::new(Expr::If {
+            condition: Box::new(defined(Expr::Var(selected.clone()))),
+            then: Box::new(Expr::Var(selected)),
+            otherwise: Box::new(otherwise),
+        }),
+    }
+}
+
+/// A name the desugaring binds.
+fn name(name: &str) -> Name {
+    Name::try_from(name.to_owned()).expect("a literal name")
 }
 
 /// Fail with `message` unless the selection is not empty.

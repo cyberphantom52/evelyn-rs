@@ -124,8 +124,27 @@ pub enum Expr {
     /// The file a new property goes to: the file, the partition's `build.prop`,
     /// or without a target product's.
     NewPropertyFile(Option<PropertyTarget>),
-    /// The first selection if it selects anything, else the second.
-    Else(Box<Expr>, Box<Expr>),
+    /// The value an enclosing `Let` or `Filter` binds to the name.
+    Var(Name),
+    /// `body`, with `name` bound to `value`.
+    Let {
+        name: Name,
+        value: Box<Expr>,
+        body: Box<Expr>,
+    },
+    /// The strings of a list, or the entries of a selection, for which `keep`
+    /// holds when `name` is bound to each: a string, or a selection of the one entry.
+    Filter {
+        over: Box<Expr>,
+        name: Name,
+        keep: Box<Expr>,
+    },
+    /// `then` if the condition holds, else `otherwise`.
+    If {
+        condition: Box<Expr>,
+        then: Box<Expr>,
+        otherwise: Box<Expr>,
+    },
     /// The entries selected and everything below them.
     Below(Box<Expr>),
     /// The text of the one file selected, in the build or a firmware.
