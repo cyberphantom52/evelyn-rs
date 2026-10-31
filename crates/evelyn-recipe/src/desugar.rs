@@ -76,7 +76,21 @@ fn expr(written: &Written) -> Expr {
         Written::Any(exprs) => Expr::Any(all(exprs)),
         Written::Union(exprs) => Expr::Union(all(exprs)),
         Written::Eq(left, right) => Expr::Eq(boxed(left), boxed(right)),
-        Written::In(left, right) => Expr::In(boxed(left), boxed(right)),
+        // Bound once, compared with each.
+        Written::In(inner, values) => {
+            let value = name("value");
+            let str = |text: &String| Box::new(Expr::Literal(Value::Str(text.clone())));
+            Expr::Let {
+                name: value.clone(),
+                value: boxed(inner),
+                body: Box::new(Expr::Any(
+                    values
+                        .iter()
+                        .map(|text| Expr::Eq(Box::new(Expr::Var(value.clone())), str(text)))
+                        .collect(),
+                )),
+            }
+        }
         Written::If {
             condition,
             then,
@@ -100,7 +114,6 @@ fn expr(written: &Written) -> Expr {
         },
         Written::Text(written) => text(written),
         Written::Bool(value) => Expr::Literal(Value::Bool(*value)),
-        Written::List(values) => Expr::Literal(Value::List(values.clone())),
     }
 }
 

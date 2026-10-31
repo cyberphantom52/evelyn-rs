@@ -116,8 +116,7 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
             keep: second,
             ..
         }
-        | Expr::Eq(first, second)
-        | Expr::In(first, second) => {
+        | Expr::Eq(first, second) => {
             walk_expr(first, visitor, bound)?;
             walk_expr(second, visitor, bound)
         }
@@ -245,10 +244,6 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
         Expr::Eq(left, right) => {
             let left = of(left, &[Kind::Str, Kind::Bool], "Eq")?;
             of(right, &[left], "Eq").map(|_| Kind::Bool)?
-        }
-        Expr::In(left, right) => {
-            of(left, &[Kind::Str], "In")?;
-            of(right, &[Kind::List], "In").map(|_| Kind::Bool)?
         }
     })
 }

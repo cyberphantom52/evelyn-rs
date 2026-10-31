@@ -462,7 +462,6 @@ impl Scope<'_> {
                 Value::Selection(union)
             }
             Expr::Eq(left, right) => self.eval(left, bound)?.equals(&self.eval(right, bound)?)?,
-            Expr::In(left, right) => self.eval(left, bound)?.is_in(&self.eval(right, bound)?)?,
         })
     }
 }
