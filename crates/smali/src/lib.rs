@@ -39,7 +39,14 @@ pub enum Stub {
     One,
 }
 
-fn find<'a>(class: &'a Class<'a>, name: &str, signature: &str) -> Result<&'a Method<'a>, Error> {
+/// The methods `signature` names in `class`, a file that must declare `name`: as
+/// many as `expected`.
+fn methods<'a>(
+    class: &'a Class<'a>,
+    name: &str,
+    signature: &str,
+    expected: usize,
+) -> Result<Vec<&'a Method<'a>>, Error> {
     if class.name != name {
         return Err(Error::Class {
             expected: name.into(),
@@ -51,14 +58,19 @@ fn find<'a>(class: &'a Class<'a>, name: &str, signature: &str) -> Result<&'a Met
         .iter()
         .filter(|m| m.signature() == signature)
         .collect();
-    match matches.as_slice() {
-        [method] => Ok(method),
-        _ => Err(Error::Count {
+    if matches.len() != expected {
+        return Err(Error::Count {
             method: signature.into(),
-            expected: 1,
+            expected,
             found: matches.len(),
-        }),
+        });
     }
+    Ok(matches)
+}
+
+/// The one method `signature` names in `class`.
+fn find<'a>(class: &'a Class<'a>, name: &str, signature: &str) -> Result<&'a Method<'a>, Error> {
+    Ok(methods(class, name, signature, 1)?[0])
 }
 
 /// Replace method `signature` of `class` with `replacement`, one complete method.
@@ -84,24 +96,7 @@ pub fn insert_method(
 ) -> Result<String, Error> {
     let parsed = parse(source)?;
     let signature = check_replacement(method, signature)?;
-    if parsed.name != class {
-        return Err(Error::Class {
-            expected: class.into(),
-            found: parsed.name.into(),
-        });
-    }
-    let found = parsed
-        .methods
-        .iter()
-        .filter(|m| m.signature() == signature)
-        .count();
-    if found != 0 {
-        return Err(Error::Count {
-            method: signature,
-            expected: 0,
-            found,
-        });
-    }
+    methods(&parsed, class, &signature, 0)?;
     let mut output = source.to_owned();
     if !output.is_empty() && !output.ends_with('\n') {
         output.push('\n');
