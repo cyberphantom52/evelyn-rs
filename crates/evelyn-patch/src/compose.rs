@@ -62,6 +62,8 @@ pub struct Composition {
     set: Vec<(Unchanged, bool)>,
     /// The package a `Package` has open.
     package: Option<Opened>,
+    /// What the `Let`s around the statement being run bind, innermost last.
+    bound: Vec<(Name, Value)>,
 }
 
 /// What a composition reports besides the trees.
@@ -80,6 +82,7 @@ impl Composition {
             skipped: Vec::new(),
             set: Vec::new(),
             package: None,
+            bound: Vec::new(),
         }
     }
 
@@ -99,6 +102,7 @@ impl Composition {
             context,
             step,
             package: self.package.as_ref(),
+            bound: &self.bound,
         }
         .eval(expr)
     }
@@ -132,16 +136,21 @@ impl Composition {
                 }
             }
             Stmt::Let { name, value, body } => {
-                let bound = self.eval(value, context, step)?;
-                match bound.as_str()? {
-                    None => self.skip(recipe, step, format!("{name} is not set: {}", ron(value))),
-                    Some(bound) => {
-                        let bindings = BTreeMap::from([(name.clone(), bound.to_owned())]);
-                        for stmt in &recipe::substitute(body, &bindings)? {
-                            self.exec(stmt, recipe, step, context)?;
-                        }
-                    }
+                let value = self.eval(value, context, step)?;
+                if let Some(text) = value.as_str()?
+                    && !android_firmware::is_token(text)
+                {
+                    return Err(recipe::Error::Invalid(format!(
+                        "{name} is bound to {text:?}, which is not [A-Za-z0-9._-]"
+                    ))
+                    .into());
                 }
+                self.bound.push((name.clone(), value));
+                let ran = body
+                    .iter()
+                    .try_for_each(|stmt| self.exec(stmt, recipe, step, context));
+                self.bound.pop();
+                ran?;
             }
             Stmt::When {
                 condition,
@@ -179,6 +188,16 @@ impl Composition {
             Stmt::Copy { selection, to } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
+                let to = match to {
+                    Some(to) => {
+                        let to = self.eval(to, context, step)?;
+                        let to = to
+                            .as_str()?
+                            .ok_or(Error::Unsupported("a copy's to is a string that is set"))?;
+                        Some(DevicePath::try_from(to.to_owned())?)
+                    }
+                    None => None,
+                };
                 if to.is_some() && selected.len() > 1 {
                     return Err(Error::Unsupported(
                         "a copy of several entries keeps their paths",
@@ -571,8 +590,4 @@ impl Composition {
             },
         ))
     }
-}
-
-fn ron(value: &impl Serialize) -> String {
-    ron::to_string(value).unwrap_or_default()
 }

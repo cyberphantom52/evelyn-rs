@@ -14,10 +14,12 @@ pub(crate) struct Assets(pub Vec<RelativePath>);
 
 impl Visitor for Assets {
     fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), Error> {
+        // A computed path is looked up when its step runs.
         if let Expr::Select { pattern, scope } = expr
             && scope.inside == Some(Source::Assets)
+            && let Some(pattern) = pattern.literal_str()
         {
-            self.0.push(RelativePath::try_from(pattern.clone())?);
+            self.0.push(RelativePath::try_from(pattern.to_owned())?);
         }
         Ok(())
     }
@@ -49,9 +51,10 @@ impl Visitor for Sources {
     fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), Error> {
         if let Expr::Select { pattern, scope } = expr
             && let Some(firmware) = scope.inside.and_then(Source::firmware)
+            && let Some(pattern) = pattern.literal_str()
         {
             self.reads
-                .push((firmware, DevicePath::try_from(pattern.clone())?));
+                .push((firmware, DevicePath::try_from(pattern.to_owned())?));
         }
         Ok(())
     }

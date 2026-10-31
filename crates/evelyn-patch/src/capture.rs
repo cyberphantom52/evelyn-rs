@@ -89,8 +89,10 @@ pub fn capture(
         CaptureKind::Replace => (
             vec![Operation::Copy {
                 from: recipe::tree::Source::Assets,
-                path: asset.to_string(),
-                to: Some(target),
+                path: recipe::tree::Expr::Literal(recipe::value::Value::Str(asset.to_string())),
+                to: Some(recipe::tree::Expr::Literal(recipe::value::Value::Str(
+                    target.to_string(),
+                ))),
                 metadata: recipe::Metadata::Copy,
             }],
             Some(after.to_vec()),

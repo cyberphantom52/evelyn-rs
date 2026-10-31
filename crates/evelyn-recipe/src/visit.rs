@@ -79,8 +79,11 @@ fn walk_stmt<'a>(
             walk_expr(selection, visitor, bound)?;
             walk_expr(text, visitor, bound)
         }
+        Stmt::Copy { selection, to } => {
+            walk_expr(selection, visitor, bound)?;
+            to.iter().try_for_each(|to| walk_expr(to, visitor, bound))
+        }
         Stmt::Remove { selection, .. }
-        | Stmt::Copy { selection, .. }
         | Stmt::SetMetadata { selection, .. }
         | Stmt::Edit { selection, .. } => walk_expr(selection, visitor, bound),
         Stmt::Assert { condition, .. } => walk_expr(condition, visitor, bound),
@@ -97,8 +100,9 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         | Expr::Exists(inner)
         | Expr::Lines(inner)
         | Expr::Join(inner)
-        | Expr::Matches { text: inner, .. } => walk_expr(inner, visitor, bound),
-        Expr::All(exprs) | Expr::Any(exprs) | Expr::Union(exprs) => exprs
+        | Expr::Matches { text: inner, .. }
+        | Expr::Select { pattern: inner, .. } => walk_expr(inner, visitor, bound),
+        Expr::All(exprs) | Expr::Any(exprs) | Expr::Union(exprs) | Expr::Concat(exprs) => exprs
             .iter()
             .try_for_each(|expr| walk_expr(expr, visitor, bound)),
         Expr::Let {
@@ -127,7 +131,6 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         }
         Expr::Literal(_)
         | Expr::Var(_)
-        | Expr::Select { .. }
         | Expr::Property { .. }
         | Expr::PropertyFiles { .. }
         | Expr::PolicyFiles
@@ -173,8 +176,16 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
         Expr::Literal(Value::Str(_) | Value::Unset) | Expr::Property { .. } => Kind::Str,
         Expr::Literal(Value::Bool(_)) | Expr::HasPartition(_) => Kind::Bool,
         Expr::Literal(Value::List(_)) => Kind::List,
+        Expr::Select { pattern, .. } => {
+            of(pattern, &[Kind::Str], "Select").map(|_| Kind::Selection)?
+        }
+        Expr::Concat(parts) => {
+            for part in parts {
+                of(part, &[Kind::Str], "Concat")?;
+            }
+            Kind::Str
+        }
         Expr::Literal(Value::Selection(_))
-        | Expr::Select { .. }
         | Expr::PropertyFiles { .. }
         | Expr::PolicyFiles
         | Expr::NewPropertyFile(_) => Kind::Selection,
@@ -247,9 +258,10 @@ fn binding<'a>(bound: &Bound<'a>, name: &'a Name, kind: Kind) -> Bound<'a> {
 
 impl Visitor for Check {
     fn stmt(&mut self, stmt: &Stmt, bound: &[&Name]) -> Result<(), Error> {
-        let of = |expr: &Expr, allowed: &[Kind], what: &str| {
-            expect(kind(expr, &Vec::new())?, allowed, what)
-        };
+        // A step's `let:` binds strings.
+        let bound: Bound = bound.iter().map(|name| (*name, Kind::Str)).collect();
+        let of =
+            |expr: &Expr, allowed: &[Kind], what: &str| expect(kind(expr, &bound)?, allowed, what);
         match stmt {
             // Its body is checked as it is walked.
             Stmt::Step { .. } => return Ok(()),
@@ -274,50 +286,17 @@ impl Visitor for Check {
                     _ => of(text, &[Kind::Selection], "AddPolicy")?,
                 }
             }
+            Stmt::Copy { selection, to } => {
+                of(selection, &[Kind::Selection], "a selection")?;
+                if let Some(to) = to {
+                    of(to, &[Kind::Str], "a copy's to")?;
+                }
+            }
             Stmt::Remove { selection, .. }
-            | Stmt::Copy { selection, .. }
             | Stmt::SetMetadata { selection, .. }
             | Stmt::Edit { selection, .. } => of(selection, &[Kind::Selection], "a selection")?,
             Stmt::Package { .. } => {}
         }
-        // Only the statement's own fields: bodies are checked as they are walked.
-        let own = match stmt {
-            Stmt::Let { value, .. } => ron(value)?,
-            Stmt::When { condition, .. } => ron(condition)?,
-            Stmt::Package {
-                package, before, ..
-            } => ron(&(package, before))?,
-            other => ron(other)?,
-        };
-        match placeholders(&own)
-            .into_iter()
-            .find(|name| !bound.iter().any(|bound| bound.as_ref() == *name))
-        {
-            Some(unbound) => Err(Error::Invalid(format!(
-                "{{{unbound}}} is not bound by an enclosing let:"
-            ))),
-            None => Ok(()),
-        }
+        Ok(())
     }
-}
-
-fn ron(value: &impl serde::Serialize) -> Result<String, Error> {
-    Ok(crate::ron_options().to_string(value)?)
-}
-
-/// The `{name}` placeholders in `text`. Names are `[A-Za-z0-9_-]`, so a
-/// `{namespace-uri}` in an XML path, which has `:` and `/`, is not one.
-fn placeholders(text: &str) -> Vec<&str> {
-    let mut found = Vec::new();
-    let mut rest = text;
-    while let Some(start) = rest.find('{') {
-        rest = &rest[start + 1..];
-        let end = rest
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
-            .unwrap_or(rest.len());
-        if end > 0 && rest[end..].starts_with('}') {
-            found.push(&rest[..end]);
-        }
-    }
-    found
 }
