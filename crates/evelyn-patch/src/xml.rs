@@ -72,7 +72,10 @@ fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Res
             value,
         } => {
             let nodes = select(xot, document, &path.selectors);
-            count(index, *expect, nodes.len())?;
+            if let Some(expect) = expect {
+                count(index, *expect, nodes.len())?;
+            }
+            let changed = !nodes.is_empty();
             for node in nodes {
                 if xot.children(node).any(|child| xot.is_element(child)) {
                     return Err(Error::MixedContent);
@@ -84,7 +87,7 @@ fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Res
                 }
                 xot.append_text(node, value).map_err(invalid)?;
             }
-            Ok(*expect > 0)
+            Ok(changed)
         }
         XmlEdit::SetAttribute {
             path,
@@ -208,9 +211,11 @@ fn same(xot: &Xot, id: xot::NameId, name: &XmlName) -> bool {
     local == name.local && Some(uri).filter(|uri| !uri.is_empty()) == name.namespace.as_deref()
 }
 
+/// An element named `name`, or with `*`, any element.
 fn named(xot: &Xot, node: Node, name: &XmlName) -> bool {
-    xot.element(node)
-        .is_some_and(|element| same(xot, element.name(), name))
+    xot.element(node).is_some_and(|element| {
+        (name.local == "*" && name.namespace.is_none()) || same(xot, element.name(), name)
+    })
 }
 
 /// Text-only element whose text is `value`.
@@ -231,6 +236,9 @@ fn matches(xot: &Xot, node: Node, selector: &XmlMatch) -> bool {
     }
     match &selector.predicate {
         None => true,
+        Some(XmlPredicate::HasAttribute { name }) => {
+            xot.attributes(node).keys().any(|id| same(xot, id, name))
+        }
         Some(XmlPredicate::Attribute { name, value }) => xot
             .attributes(node)
             .iter()
