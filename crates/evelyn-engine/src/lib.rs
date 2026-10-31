@@ -61,7 +61,7 @@ pub enum Error {
     FstabFilesystem {
         fstab: String,
         partition: String,
-        filesystem: String,
+        filesystem: Filesystem,
         accepted: Vec<String>,
     },
     #[error("ZIP output flashes the stock firmware's images from {0}, which does not exist")]
@@ -107,6 +107,9 @@ pub struct PlannedSource {
 pub struct PlannedRecipe {
     pub path: PathBuf,
     pub recipe: Recipe,
+    /// The recipe as primitives, which is what is checked and applied.
+    #[serde(skip)]
+    pub tree: recipe::tree::Tree,
 }
 
 /// A partition this build composes and builds into an image.
@@ -158,7 +161,8 @@ impl Plan {
         let mut step_ids = BTreeSet::new();
         for recipe_path in profile.recipes()?.into_iter().chain(extra.iter().cloned()) {
             let recipe = Recipe::load(&recipe_path)?;
-            profile.validate_recipe(&recipe)?;
+            let tree = recipe.tree()?;
+            profile.validate_recipe(&tree)?;
             for step in &recipe.steps {
                 if !step_ids.insert(step.id.clone()) {
                     return Err(Error::DuplicateStep(step.id.clone()));
@@ -166,7 +170,7 @@ impl Plan {
             }
             let assets = recipe_path.parent().unwrap_or(Path::new("."));
             let mut needed = needs::Assets::default();
-            recipe.tree()?.walk(&mut needed)?;
+            tree.walk(&mut needed)?;
             for asset in &needed.0 {
                 // A templated asset is looked up when its step runs.
                 if asset.as_ref().contains('{') {
@@ -180,6 +184,7 @@ impl Plan {
             recipes.push(PlannedRecipe {
                 path: recipe_path,
                 recipe,
+                tree,
             });
         }
 
@@ -363,7 +368,7 @@ fn required_sources(
         .collect();
     let mut reads = needs::Sources::default();
     for recipe in recipes {
-        recipe.recipe.tree()?.walk(&mut reads)?;
+        recipe.tree.walk(&mut reads)?;
     }
     for (firmware, path) in reads.reads {
         for found in mounts.resolve(&path) {

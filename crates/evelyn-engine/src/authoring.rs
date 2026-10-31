@@ -5,7 +5,7 @@ pub use patch::capture::CaptureKind;
 use crate::Error;
 use crate::Plan;
 use android_firmware::{DevicePath, Mounts, Name, RelativePath, Sha256Digest};
-use android_fs::{Content, EntryKind};
+use android_fs::Content;
 use recipe::{Recipe, Step};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -63,23 +63,11 @@ pub fn prepare_file(request: PrepareRequest<'_>) -> Result<PreparedFile, Error> 
     let root = targets.join(target.partition.as_ref());
     let tree = android_fs::read_tree(&root)
         .map_err(|_| Error::Authoring("no composed target; run `evelyn build` first"))?;
-    let mut entry = tree
-        .entries
-        .get(&target.path)
-        .ok_or(Error::Authoring("target file is absent"))?;
-    if let EntryKind::Hardlink { target } = &entry.kind {
-        entry = &tree.entries[target];
-    }
-    let EntryKind::File {
-        content,
-        sha256,
-        size,
-    } = &entry.kind
-    else {
-        return Err(Error::Authoring("only regular files can be prepared"));
-    };
+    let file = tree
+        .file(&target.path)
+        .map_err(|_| Error::Authoring("only regular files can be prepared"))?;
     let mut images = patch::Images::new();
-    if let Content::Image { source, .. } = content {
+    if let Content::Image { source, .. } = file.content {
         let artifact = &request
             .plan
             .sources
@@ -99,18 +87,14 @@ pub fn prepare_file(request: PrepareRequest<'_>) -> Result<PreparedFile, Error> 
         fs::remove_dir_all(&workspace)?;
     }
     fs::create_dir_all(&workspace)?;
-    let store = android_fs::Store {
-        images: &images,
-        root: &root,
-    };
     std::io::copy(
-        &mut store.open(content, *size)?,
+        &mut android_fs::Store::new(&images, &root).open(file.content, file.size)?,
         &mut fs::File::create(workspace.join("original"))?,
     )?;
     fs::copy(workspace.join("original"), workspace.join("edited"))?;
     let record = Preparation {
         path: request.path,
-        before: sha256.clone(),
+        before: file.sha256.clone(),
     };
     fs::write(
         workspace.join("prepare.json"),

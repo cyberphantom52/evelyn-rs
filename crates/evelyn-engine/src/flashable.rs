@@ -24,7 +24,7 @@ pub(crate) fn write(package: &Package<'_>, output: &Path) -> Result<(), Error> {
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Stored)
         .unix_permissions(0o644);
-    for (name, path) in files(package.template)? {
+    for (name, path) in toolchain::files(package.template)? {
         let mut bytes = fs::read(&path)?;
         if name == UPDATE_BINARY {
             let text = String::from_utf8_lossy(&bytes).replace("INSERT_DEVICE_ID", package.device);
@@ -63,23 +63,4 @@ fn compress(zip: &mut ZipWriter<fs::File>, image: &Path, name: &str) -> Result<(
     io::copy(&mut fs::File::open(image)?, &mut encoder)?;
     encoder.finish()?;
     Ok(())
-}
-
-/// Files under `root` as (ZIP name, path), sorted.
-fn files(root: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
-    let mut found = Vec::new();
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(directory) = pending.pop() {
-        for entry in fs::read_dir(&directory)? {
-            let path = entry?.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else {
-                let name = path.strip_prefix(root).unwrap_or(&path);
-                found.push((name.to_string_lossy().into_owned(), path));
-            }
-        }
-    }
-    found.sort();
-    Ok(found)
 }
