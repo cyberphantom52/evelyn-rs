@@ -5,7 +5,7 @@
 
 use crate::{
     Error,
-    tree::{BinaryOp, Expr, Stmt, Transform, Tree, UnaryOp},
+    tree::{Expr, Stmt, Transform, Tree},
     value::Value,
 };
 use android_firmware::Name;
@@ -93,8 +93,14 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         Expr::Hash(inner)
         | Expr::Read(inner)
         | Expr::Below(inner)
-        | Expr::Unary { expr: inner, .. }
+        | Expr::Not(inner)
+        | Expr::Exists(inner)
+        | Expr::Lines(inner)
+        | Expr::Join(inner)
         | Expr::Matches { text: inner, .. } => walk_expr(inner, visitor, bound),
+        Expr::All(exprs) | Expr::Any(exprs) | Expr::Union(exprs) => exprs
+            .iter()
+            .try_for_each(|expr| walk_expr(expr, visitor, bound)),
         Expr::Let {
             value: first,
             body: second,
@@ -105,11 +111,8 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
             keep: second,
             ..
         }
-        | Expr::Binary {
-            left: first,
-            right: second,
-            ..
-        } => {
+        | Expr::Eq(first, second)
+        | Expr::In(first, second) => {
             walk_expr(first, visitor, bound)?;
             walk_expr(second, visitor, bound)
         }
@@ -207,33 +210,31 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
             let then = kind(then, bound)?;
             of(otherwise, &[then], "If")?
         }
-        Expr::Unary { op, expr } => match op {
-            UnaryOp::Not => of(expr, &[Kind::Bool], "Not")?,
-            UnaryOp::Exists => {
-                of(expr, &[Kind::Str, Kind::Selection], "Exists").map(|_| Kind::Bool)?
+        Expr::Not(inner) => of(inner, &[Kind::Bool], "Not")?,
+        Expr::Exists(inner) => {
+            of(inner, &[Kind::Str, Kind::Selection], "Exists").map(|_| Kind::Bool)?
+        }
+        Expr::Lines(inner) => of(inner, &[Kind::Str], "Lines").map(|_| Kind::List)?,
+        Expr::Join(inner) => of(inner, &[Kind::List], "Join").map(|_| Kind::Str)?,
+        Expr::All(exprs) | Expr::Any(exprs) | Expr::Union(exprs) => {
+            let (each, what) = match expr {
+                Expr::All(_) => (Kind::Bool, "All"),
+                Expr::Any(_) => (Kind::Bool, "Any"),
+                _ => (Kind::Selection, "Union"),
+            };
+            for expr in exprs {
+                of(expr, &[each], what)?;
             }
-            UnaryOp::Lines => of(expr, &[Kind::Str], "Lines").map(|_| Kind::List)?,
-            UnaryOp::Join => of(expr, &[Kind::List], "Join").map(|_| Kind::Str)?,
-        },
-        Expr::Binary { op, left, right } => match op {
-            BinaryOp::And => {
-                of(left, &[Kind::Bool], "All")?;
-                of(right, &[Kind::Bool], "All")?
-            }
-            // Of booleans, either holds; of selections, what either selects.
-            BinaryOp::Or => {
-                let left = of(left, &[Kind::Bool, Kind::Selection], "Any")?;
-                of(right, &[left], "Any")?
-            }
-            BinaryOp::Eq => {
-                let left = of(left, &[Kind::Str, Kind::Bool], "Eq")?;
-                of(right, &[left], "Eq").map(|_| Kind::Bool)?
-            }
-            BinaryOp::In => {
-                of(left, &[Kind::Str], "In")?;
-                of(right, &[Kind::List], "In").map(|_| Kind::Bool)?
-            }
-        },
+            each
+        }
+        Expr::Eq(left, right) => {
+            let left = of(left, &[Kind::Str, Kind::Bool], "Eq")?;
+            of(right, &[left], "Eq").map(|_| Kind::Bool)?
+        }
+        Expr::In(left, right) => {
+            of(left, &[Kind::Str], "In")?;
+            of(right, &[Kind::List], "In").map(|_| Kind::Bool)?
+        }
     })
 }
 

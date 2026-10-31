@@ -158,15 +158,23 @@ pub enum Expr {
     Hash(Box<Expr>),
     /// The build has this partition.
     HasPartition(Name),
-    Unary {
-        op: UnaryOp,
-        expr: Box<Expr>,
-    },
-    Binary {
-        op: BinaryOp,
-        left: Box<Expr>,
-        right: Box<Expr>,
-    },
+    Not(Box<Expr>),
+    /// A string is set, or a selection is not empty.
+    Exists(Box<Expr>),
+    /// Every condition holds, checked in order until one does not.
+    All(Vec<Expr>),
+    /// Some condition holds, checked in order until one does.
+    Any(Vec<Expr>),
+    /// What any of the selections selects.
+    Union(Vec<Expr>),
+    /// Two strings, or two booleans, are equal; an unset value equals no string.
+    Eq(Box<Expr>, Box<Expr>),
+    /// A string is in a list; an unset value is in none.
+    In(Box<Expr>, Box<Expr>),
+    /// The lines of a string, as a list; an unset value has none.
+    Lines(Box<Expr>),
+    /// A list's strings, each ending in a newline.
+    Join(Box<Expr>),
 }
 
 /// How `Smali` changes a method.
@@ -208,25 +216,6 @@ pub struct Scope {
     pub origin: Option<Firmware>,
     /// Only partitions matching this name or glob.
     pub partition: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum UnaryOp {
-    Not,
-    /// A string is set, or a selection is not empty.
-    Exists,
-    /// The lines of a string, as a list; an unset value has none.
-    Lines,
-    /// A list's strings, each ending in a newline.
-    Join,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum BinaryOp {
-    And,
-    Or,
-    Eq,
-    In,
 }
 
 /// A regular expression, compiled when the recipe is loaded.
