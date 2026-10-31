@@ -38,24 +38,16 @@ impl Tools {
 
     /// A Java tool from `scripts/`, run with the host `java`.
     pub fn jar(&self, name: &str) -> Result<Command, Error> {
-        let path = self.installed(Path::new("scripts").join(name))?;
+        let path = self.file(&format!("scripts/{name}"))?;
         let mut command = Command::new("java");
         command.arg("-jar").arg(path);
         Ok(command)
     }
 
-    /// Any other file or directory under the tools root, such as `keys`.
+    /// A file or directory under the tools root, such as `keys`.
     pub fn file(&self, relative: &str) -> Result<PathBuf, Error> {
         let path = self.root.join(relative);
         if !path.exists() {
-            return Err(Error::Missing(path));
-        }
-        Ok(path)
-    }
-
-    fn installed(&self, relative: PathBuf) -> Result<PathBuf, Error> {
-        let path = self.root.join(relative);
-        if !path.is_file() {
             return Err(Error::Missing(path));
         }
         Ok(path)
@@ -94,4 +86,38 @@ fn command_name(command: &Command) -> String {
         .unwrap_or(program)
         .to_string_lossy()
         .into_owned()
+}
+
+/// The regular files under `root`, as (path relative to `root`, full path), sorted.
+/// Anything other than files and directories is an error.
+pub fn files(root: &Path) -> io::Result<Vec<(String, PathBuf)>> {
+    let mut found = Vec::new();
+    let mut pending = vec![(String::new(), root.to_path_buf())];
+    while let Some((prefix, dir)) = pending.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let relative = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                pending.push((relative, entry.path()));
+            } else if kind.is_file() {
+                found.push((relative, entry.path()));
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "{} is neither a file nor a directory",
+                        entry.path().display()
+                    ),
+                ));
+            }
+        }
+    }
+    found.sort();
+    Ok(found)
 }

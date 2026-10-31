@@ -18,8 +18,8 @@ patch = { package = "evelyn-patch", path = "crates/evelyn-patch" }
 recipe = { package = "evelyn-recipe", path = "crates/evelyn-recipe" }
 toolchain = { path = "crates/toolchain" }
 thiserror = "2.0.21"
-pest = "2.9.4"
-pest_derive = "2.9.4"
+pest = "2.9.5"
+pest_derive = "2.9.5"
 smali = { path = "crates/smali" }
 clap = { version = "4.6.7", features = ["derive"] }
 directories = "6.0.0"

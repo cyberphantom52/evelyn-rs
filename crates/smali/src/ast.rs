@@ -38,10 +38,6 @@ impl Method<'_> {
         format!("{}{}", self.name, self.descriptor)
     }
 
-    pub fn is_static(&self) -> bool {
-        self.access.contains(&"static")
-    }
-
     /// The return type descriptor, such as `V`, `Z` or `Ljava/lang/Object;`.
     pub fn return_type(&self) -> &str {
         let close = self.descriptor.rfind(')').unwrap_or(0);
