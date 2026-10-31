@@ -1,7 +1,7 @@
 //! Mutable partition trees. Untouched files keep referring to their source image;
 //! every edit writes a new blob, and blobs are never changed in place.
 
-use android_firmware::{Filesystem, Name, RelativePath, Sha256Digest, Sha256Writer, SourceRef};
+use android_firmware::{Filesystem, Name, RelativePath, Sha256Writer, SourceRef};
 use android_fs::{Content, Entry, EntryKind, File, PartitionTree, Provenance};
 use android_fs::{Image, Store};
 use std::{
@@ -69,8 +69,6 @@ pub enum Error {
     NoLabel(String),
     #[error("missing target entry {0}")]
     Missing(RelativePath),
-    #[error("the content is not {0}, the SHA-256 the edit expects")]
-    Before(Sha256Digest),
     #[error("unsupported target transformation: {0}")]
     Unsupported(&'static str),
     #[error("{path}: {source}")]
@@ -118,23 +116,14 @@ impl Target {
         Store::new(images, &self.root)
     }
 
-    /// An on-disk copy of a regular file (or hardlink to one) whose content is `before`,
+    /// An on-disk copy of a regular file (or hardlink to one),
     /// for tools that need a path. Image contents are written out as a blob first.
     pub(crate) fn content_path(
         &mut self,
         path: &RelativePath,
-        before: Option<&Sha256Digest>,
         images: &Images,
     ) -> Result<PathBuf, Error> {
         let file = self.file(path)?;
-        if let Some(before) = before
-            && file.sha256 != before
-        {
-            return Err(Error::At {
-                path: path.to_string(),
-                source: Box::new(Error::Before(before.clone())),
-            });
-        }
         let content = match file.content {
             Content::Blob(blob) => return Ok(self.blob_path(blob)),
             content => content.clone(),

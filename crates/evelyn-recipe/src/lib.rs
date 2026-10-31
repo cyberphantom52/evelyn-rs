@@ -5,7 +5,7 @@
 //! without firmware (schema, references between steps, which partitions a port can
 //! have, well-formed operation parameters); planning adds asset presence and hashes
 //! and the partitions the firmware supplies. Applying a recipe checks only what
-//! depends on firmware content: conditions, `before` hashes, match counts and the
+//! depends on firmware content: conditions, hashes, match counts and the
 //! entries an operation expects.
 
 mod desugar;
@@ -147,18 +147,15 @@ pub enum Operation {
         target: DevicePath,
         patch: RelativePath,
     },
-    /// Overwrite bytes at offsets of a file whose content must be `before`.
+    /// Overwrite bytes at offsets of a file. What is there decides what the bytes
+    /// mean, so an `AssertHash` of the file should come first.
     WriteBytes {
         target: DevicePath,
-        before: Sha256Digest,
         /// Offsets and the bytes written there, as hex: `{487572: "a9008052"}`.
         edits: BTreeMap<u64, Hex>,
     },
     EditXml {
         target: DevicePath,
-        /// Optional guard on the file's exact content before the edit.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        before: Option<Sha256Digest>,
         edits: Vec<XmlEdit>,
     },
     /// Decode an APK or JAR, apply `edits` inside it and rebuild it. The edits are
@@ -166,9 +163,6 @@ pub enum Operation {
     /// (`/res/values/strings.xml`), plus the smali edits only a package has.
     Package {
         target: DevicePath,
-        /// Optional guard on the file's exact content before the edit.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        before: Option<Sha256Digest>,
         edits: Vec<Operation>,
     },
     /// Inside a `Package`: replace a smali method with the asset `body`.

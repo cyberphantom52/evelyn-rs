@@ -254,22 +254,10 @@ pub(crate) fn transformed(
             .map_err(|_| Error::Unsupported("text edits require UTF-8"))
     };
     let asset = |path: &RelativePath| text(&std::fs::read(path.resolve(context.assets))?);
-    let before = match transform {
-        Transform::WriteBytes { before, .. } => Some(before),
-        Transform::Xml { before, .. } | Transform::Diff { before, .. } => before.as_ref(),
-        _ => None,
-    };
-    if let Some(before) = before
-        && Sha256Digest::bytes(bytes) != *before
-    {
-        return Err(Error::Before(before.clone()));
-    }
     Ok(match transform {
-        Transform::WriteBytes { edits, .. } => crate::binary::apply(bytes, edits)?,
-        Transform::Xml { edits, .. } => crate::xml::apply(bytes, edits)?,
-        Transform::Diff { patch, .. } => {
-            crate::text::apply(&text(bytes)?, &asset(patch)?)?.into_bytes()
-        }
+        Transform::WriteBytes(edits) => crate::binary::apply(bytes, edits)?,
+        Transform::Xml(edits) => crate::xml::apply(bytes, edits)?,
+        Transform::Diff(patch) => crate::text::apply(&text(bytes)?, &asset(patch)?)?.into_bytes(),
         Transform::Property {
             key,
             value: Some(value),

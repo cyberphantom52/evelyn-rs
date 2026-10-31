@@ -4,7 +4,7 @@
 //! however many surface forms use it.
 
 use crate::{Firmware, Hex, Overrides, PropertyTarget, Returns, XmlEdit, value::Value};
-use android_firmware::{DevicePath, Name, RelativePath, Sha256Digest};
+use android_firmware::{DevicePath, Name, RelativePath};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -63,27 +63,22 @@ pub enum Stmt {
     /// the body, `/` is the package's root: `/res/values/strings.xml`.
     Package {
         package: DevicePath,
-        before: Option<Sha256Digest>,
         body: Vec<Stmt>,
     },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Transform {
-    Diff {
-        patch: RelativePath,
-        before: Option<Sha256Digest>,
-    },
-    WriteBytes {
-        before: Sha256Digest,
-        edits: BTreeMap<u64, Hex>,
-    },
-    Xml {
-        before: Option<Sha256Digest>,
-        edits: Vec<XmlEdit>,
-    },
+    /// Apply the unified diff the asset holds.
+    Diff(RelativePath),
+    /// Write bytes at offsets.
+    WriteBytes(BTreeMap<u64, Hex>),
+    Xml(Vec<XmlEdit>),
     /// Set a property to `value`, or remove it without one.
-    Property { key: String, value: Option<String> },
+    Property {
+        key: String,
+        value: Option<String>,
+    },
     /// Add a string at the end, on a line of its own.
     Append(Expr),
     /// Change one method of the class a smali file defines.

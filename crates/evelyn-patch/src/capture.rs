@@ -33,9 +33,10 @@ pub enum Error {
     BinaryLength,
 }
 
-/// Operations turning `before` into `after`. They check the content they change
-/// (the patch's context, the replaced bytes), not the whole file's hash, so they
-/// keep applying when other parts of the file change between firmware builds.
+/// Operations turning `before` into `after`. A diff checks the content it changes,
+/// its context, so it keeps applying when other parts of the file change between
+/// firmware builds; bytes mean something only in the file they were taken from, so
+/// a byte edit asserts that file's hash first.
 pub fn capture(
     before: &[u8],
     after: &[u8],
@@ -78,11 +79,13 @@ pub fn capture(
                 edits.insert(start as u64, Hex(after[start..cursor].to_vec()));
             }
             (
-                vec![Operation::WriteBytes {
-                    target,
-                    before: Sha256Digest::bytes(before),
-                    edits,
-                }],
+                vec![
+                    Operation::AssertHash {
+                        target: target.clone(),
+                        sha256: Sha256Digest::bytes(before),
+                    },
+                    Operation::WriteBytes { target, edits },
+                ],
                 None,
             )
         }
