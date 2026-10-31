@@ -145,7 +145,7 @@ pub enum Operation {
     /// Apply a unified diff (an asset) to a file and its hardlinks.
     ApplyDiff {
         target: Build<DevicePath>,
-        patch: RelativePath,
+        patch: Asset<RelativePath>,
     },
     /// Overwrite bytes at offsets of a file. What is there decides what the bytes
     /// mean, so an `AssertHash` of the file should come first.
@@ -169,13 +169,13 @@ pub enum Operation {
     ReplaceMethod {
         class: String,
         method: String,
-        body: RelativePath,
+        body: Asset<RelativePath>,
     },
     /// Inside a `Package`: add the asset `body` as a new smali method.
     InsertMethod {
         class: String,
         method: String,
-        body: RelativePath,
+        body: Asset<RelativePath>,
     },
     /// Inside a `Package`: replace a method's body so it only returns `returns`.
     StubMethod {
@@ -204,7 +204,7 @@ pub enum Operation {
     /// policy files, as init loads them.
     AddPolicy {
         target: Build<DevicePath>,
-        policies: Vec<RelativePath>,
+        policies: Vec<Asset<RelativePath>>,
     },
 }
 
@@ -298,6 +298,27 @@ impl<P> std::ops::Deref for Build<P> {
 
     fn deref(&self) -> &P {
         let Self::Build(path) = self;
+        path
+    }
+}
+
+/// A path in the recipe's directory, written `Asset("…")`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Asset<P> {
+    Asset(P),
+}
+
+impl<P: std::fmt::Display> std::fmt::Display for Asset<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (**self).fmt(f)
+    }
+}
+
+impl<P> std::ops::Deref for Asset<P> {
+    type Target = P;
+
+    fn deref(&self) -> &P {
+        let Self::Asset(path) = self;
         path
     }
 }

@@ -262,7 +262,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         }
         Operation::ApplyDiff { target, patch } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
-            transform: Transform::ApplyDiff(patch.clone()),
+            transform: Transform::ApplyDiff((**patch).clone()),
         },
         Operation::WriteBytes { target, edits } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
@@ -285,12 +285,12 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             class,
             method,
             body,
-        } => smali(class, method, MethodEdit::Replace(body.clone())),
+        } => smali(class, method, MethodEdit::Replace((**body).clone())),
         Operation::InsertMethod {
             class,
             method,
             body,
-        } => smali(class, method, MethodEdit::Insert(body.clone())),
+        } => smali(class, method, MethodEdit::Insert((**body).clone())),
         Operation::EnableFeature(feature) => {
             let file = feature_file(feature);
             let (root, element, name, args) = match feature {
@@ -374,7 +374,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                     body: vec![Stmt::Edit {
                         selection: select(target.as_ref(), Scope::default()),
                         transform: Transform::AddPolicy {
-                            policies: policies.clone(),
+                            policies: policies.iter().map(|policy| (**policy).clone()).collect(),
                             resolve_with: Expr::Union(files),
                         },
                     }],
