@@ -93,6 +93,7 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         Expr::Hash(inner)
         | Expr::Content(inner)
         | Expr::Below(inner)
+        | Expr::Lines { text: inner, .. }
         | Expr::Unary { expr: inner, .. } => walk_expr(inner, visitor, bound),
         Expr::Containing { selection, text } => {
             walk_expr(selection, visitor, bound)?;
@@ -131,7 +132,8 @@ impl Expr {
             Self::Literal(Value::Str(_) | Value::Unset)
             | Self::Prop { .. }
             | Self::Hash(_)
-            | Self::Content(_) => Kind::Str,
+            | Self::Content(_)
+            | Self::Lines { .. } => Kind::Str,
             Self::Literal(Value::List(_)) => Kind::List,
             Self::Literal(Value::Selection(_))
             | Self::Select { .. }
@@ -221,6 +223,7 @@ impl Visitor for Check {
         match expr {
             Expr::Hash(inner) => expect(inner.kind(), &[Kind::Selection], "Hash"),
             Expr::Content(inner) => expect(inner.kind(), &[Kind::Selection], "Content"),
+            Expr::Lines { text, .. } => expect(text.kind(), &[Kind::Str], "Lines"),
             Expr::Below(inner) => expect(inner.kind(), &[Kind::Selection], "Below"),
             Expr::Else(first, otherwise) => {
                 expect(first.kind(), &[Kind::Selection], "Else")?;

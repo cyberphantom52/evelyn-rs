@@ -266,12 +266,23 @@ pub enum Feature {
     },
 }
 
-/// What `Append` adds: text, or a firmware file's content.
+/// What `Append` adds: text, a firmware file's content, or the lines of one that
+/// contain any of `containing` and none of `except`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum Data {
     Text(String),
-    File { from: Firmware, path: DevicePath },
+    File {
+        from: Firmware,
+        path: DevicePath,
+    },
+    Lines {
+        from: Firmware,
+        path: DevicePath,
+        containing: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        except: Vec<String>,
+    },
 }
 
 /// The metadata `SetMetadata` sets; what it leaves unset stays.
@@ -467,6 +478,12 @@ impl Operation {
             }
             Self::SepolicyPatch { policies, .. } if policies.is_empty() => Err(Error::Invalid(
                 "SepolicyPatch needs at least one policy".into(),
+            )),
+            Self::Append {
+                content: Data::Lines { containing, .. },
+                ..
+            } if containing.is_empty() => Err(Error::Invalid(
+                "Lines needs at least one string a line contains".into(),
             )),
             Self::Remove {
                 partition, pattern, ..
