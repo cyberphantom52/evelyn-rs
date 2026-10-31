@@ -203,7 +203,7 @@ impl Scope<'_> {
                 false => Vec::new(),
             });
         }
-        if let Some(Source::Firmware(firmware)) = range.inside {
+        if let Some(firmware) = range.inside.and_then(Source::firmware) {
             let mut found = Vec::new();
             for at in self
                 .context

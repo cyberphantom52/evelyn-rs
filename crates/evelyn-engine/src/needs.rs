@@ -48,7 +48,7 @@ pub(crate) struct Sources {
 impl Visitor for Sources {
     fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), Error> {
         if let Expr::Select { pattern, scope } = expr
-            && let Some(Source::Firmware(firmware)) = scope.inside
+            && let Some(firmware) = scope.inside.and_then(Source::firmware)
         {
             self.reads
                 .push((firmware, DevicePath::try_from(pattern.clone())?));

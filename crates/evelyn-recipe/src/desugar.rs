@@ -6,7 +6,7 @@ use crate::{
     tree::{Assigned, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree},
     value::Value,
 };
-use android_firmware::{Firmware, Name, RelativePath};
+use android_firmware::{DevicePath, Firmware, Name};
 
 impl Recipe {
     /// The recipe as primitives, its steps in dependency order.
@@ -26,9 +26,17 @@ fn step(step: &Step) -> Stmt {
         .operations
         .iter()
         .filter_map(|operation| match operation {
-            Operation::Install { asset, .. } if asset.as_ref().contains('{') => {
-                Some(defined(asset_file(asset)))
-            }
+            Operation::Copy {
+                from: Source::Assets,
+                path,
+                ..
+            } if path.contains('{') => Some(defined(select(
+                path,
+                Scope {
+                    inside: Some(Source::Assets),
+                    ..Scope::default()
+                },
+            ))),
             _ => None,
         })
         .collect();
@@ -71,27 +79,31 @@ fn select(pattern: &str, scope: Scope) -> Expr {
 
 fn operation(operation: &Operation) -> Vec<Stmt> {
     let stmt = match operation {
-        Operation::Import {
+        Operation::Copy {
             from,
-            pattern,
+            path,
             to,
             metadata,
         } => {
+            let source = select(
+                path,
+                Scope {
+                    inside: Some(*from),
+                    ..Scope::default()
+                },
+            );
+            let found = expect(source.clone(), format!("{path} is not in {from}"));
             let copy = Stmt::Copy {
-                selection: firmware_file(pattern.as_ref(), *from),
+                selection: source,
                 to: to.clone(),
             };
             // What the copy put in the build, by where it went.
-            let placed = to.as_ref().unwrap_or(pattern).to_string();
+            let placed = to.as_ref().map_or(path.clone(), DevicePath::to_string);
             let defaults = || Stmt::SetMetadata {
                 selection: Expr::Below(Box::new(select(&placed, Scope::default()))),
                 pattern: placed.clone(),
                 metadata: Assigned::Defaults,
             };
-            let found = expect(
-                firmware_file(pattern.as_ref(), *from),
-                format!("{pattern} is not in the {from} firmware"),
-            );
             return match metadata {
                 Metadata::Copy => vec![found, copy],
                 Metadata::Default => vec![found, copy, defaults()],
@@ -126,24 +138,6 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 skip: format!("nothing to remove: {pattern}"),
             }
         }
-        // Copying within the build carries content and metadata; what was copied
-        // is then removed where it was.
-        Operation::Relocate { from, to } => {
-            let message = format!("{from} is not there");
-            let from = select(from.as_ref(), Scope::default());
-            return vec![
-                expect(from.clone(), message),
-                Stmt::Copy {
-                    selection: from.clone(),
-                    to: Some(to.clone()),
-                },
-                Stmt::Remove { selection: from },
-            ];
-        }
-        Operation::Install { asset, to } => Stmt::Copy {
-            selection: asset_file(asset),
-            to: Some(to.clone()),
-        },
         Operation::SetMetadata { pattern, .. } => Stmt::SetMetadata {
             selection: select(pattern.as_ref(), Scope::default()),
             pattern: pattern.to_string(),
@@ -414,23 +408,12 @@ fn smali_file(class: &str) -> Expr {
     select(&format!("/smali*/{name}.smali"), Scope::default())
 }
 
-/// A recipe asset, as a selection.
-fn asset_file(asset: &RelativePath) -> Expr {
-    select(
-        asset.as_ref(),
-        Scope {
-            inside: Some(Source::Assets),
-            ..Scope::default()
-        },
-    )
-}
-
 /// What `pattern` (a device path) matches in a firmware, as a selection.
 fn firmware_file(pattern: &str, from: Firmware) -> Expr {
     select(
         pattern,
         Scope {
-            inside: Some(Source::Firmware(from)),
+            inside: Some(from.into()),
             ..Scope::default()
         },
     )

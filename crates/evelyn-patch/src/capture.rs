@@ -87,7 +87,12 @@ pub fn capture(
             )
         }
         CaptureKind::Replace => (
-            vec![Operation::Install { asset, to: target }],
+            vec![Operation::Copy {
+                from: recipe::tree::Source::Assets,
+                path: asset.to_string(),
+                to: Some(target),
+                metadata: recipe::Metadata::Copy,
+            }],
             Some(after.to_vec()),
         ),
     };
