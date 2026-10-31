@@ -12,9 +12,9 @@ pub struct XmlName {
     pub local: String,
 }
 
-/// An element selector, written as a string: `name`, `name[@attr='value']`,
-/// `name[text()='value']` or `name[child='value']`, where an element name may
-/// carry a namespace as `{uri}name`.
+/// An element selector, written as a string: `name`, `name[@attr]`,
+/// `name[@attr='value']`, `name[text()='value']` or `name[child='value']`, where an
+/// element name may carry a namespace as `{uri}name` and `*` is any element.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct XmlMatch {
@@ -34,10 +34,16 @@ impl TryFrom<String> for XmlMatch {
             });
         };
         let invalid = || format!("invalid XML selector {text:?}");
-        let (key, value) = rest
-            .strip_suffix(']')
-            .and_then(|inner| inner.split_once('='))
-            .ok_or_else(invalid)?;
+        let inner = rest.strip_suffix(']').ok_or_else(invalid)?;
+        let Some((key, value)) = inner.split_once('=') else {
+            let attribute = inner.strip_prefix('@').ok_or_else(invalid)?;
+            return Ok(Self {
+                name: local(name),
+                predicate: Some(XmlPredicate::HasAttribute {
+                    name: local(attribute),
+                }),
+            });
+        };
         let value = value
             .strip_prefix('\'')
             .and_then(|v| v.strip_suffix('\''))
@@ -104,6 +110,7 @@ impl From<XmlMatch> for String {
         };
         match matches.predicate {
             None => name.to_string(),
+            Some(XmlPredicate::HasAttribute { name: key }) => format!("{name}[@{key}]"),
             Some(XmlPredicate::Attribute { name: key, value }) => {
                 format!("{name}[@{key}={}]", quoted(&value))
             }
@@ -117,6 +124,7 @@ impl From<XmlMatch> for String {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum XmlPredicate {
+    HasAttribute { name: XmlName },
     Attribute { name: XmlName, value: String },
     ChildText { name: XmlName, value: String },
     Text { value: String },
@@ -201,14 +209,6 @@ impl From<XmlPath> for String {
     }
 }
 
-fn one() -> usize {
-    1
-}
-
-fn is_one(expect: &usize) -> bool {
-    *expect == 1
-}
-
 fn some_one() -> Option<usize> {
     Some(1)
 }
@@ -220,11 +220,12 @@ fn is_some_one(expect: &Option<usize>) -> bool {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum XmlEdit {
-    /// Replace the text of every match; `expect` (default 1) pins how many.
+    /// Replace the text of every match; `expect` (default 1) pins how many, and
+    /// `None` lets there be any number.
     SetText {
         path: XmlPath,
-        #[serde(default = "one", skip_serializing_if = "is_one")]
-        expect: usize,
+        #[serde(default = "some_one", skip_serializing_if = "is_some_one")]
+        expect: Option<usize>,
         value: String,
     },
     /// Set the attribute `name` of every match to `value`, adding it where it is
