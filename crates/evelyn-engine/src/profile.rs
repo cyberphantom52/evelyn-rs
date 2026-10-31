@@ -44,7 +44,6 @@ pub enum Error {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Device {
-    pub schema: u32,
     pub device: Name,
     /// `ro.product.device` values the installer accepts.
     pub product_ids: Vec<String>,
@@ -67,7 +66,6 @@ pub struct Stock {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Port {
-    pub schema: u32,
     /// ROM partitions beyond the standard system side, and settings for any
     /// system-side partition. Keys are names or globs; the most specific wins.
     #[serde(default)]
@@ -142,9 +140,6 @@ impl Profile {
     }
 
     fn validate(&self) -> Result<(), Error> {
-        if self.device.schema != 1 || self.port.schema != 1 {
-            return Err(Error::Invalid("unsupported profile schema".into()));
-        }
         if let Some(standard) = self
             .device
             .partitions

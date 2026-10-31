@@ -2,7 +2,7 @@
 //! primitive tree whose types and partitions are checked before any firmware is read.
 //!
 //! Where checks belong: loading a profile or recipe checks everything knowable
-//! without firmware (schema, references between steps, which partitions a port can
+//! without firmware (references between steps, which partitions a port can
 //! have, well-formed operation parameters); planning adds asset presence and hashes
 //! and the partitions the firmware supplies. Applying a recipe checks only what
 //! depends on firmware content: conditions, hashes, match counts and the
@@ -56,7 +56,6 @@ fn read(path: &Path) -> Result<String, Error> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recipe {
-    pub schema: u32,
     pub name: Name,
     pub steps: Vec<Step>,
 }
@@ -546,12 +545,6 @@ impl Recipe {
     }
 
     fn validate(&self) -> Result<(), Error> {
-        if self.schema != 1 {
-            return Err(Error::Invalid(format!(
-                "unsupported recipe schema {}",
-                self.schema
-            )));
-        }
         let mut ids = BTreeSet::new();
         for step in &self.steps {
             if !ids.insert(&step.id) {

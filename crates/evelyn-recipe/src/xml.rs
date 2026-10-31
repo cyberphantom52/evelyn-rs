@@ -3,44 +3,26 @@
 use crate::Error;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct XmlName {
-    #[serde(default)]
     pub namespace: Option<String>,
     pub local: String,
 }
 
-/// An element selector. Recipes may write it in full or as a string:
-/// `name`, `name[@attr='value']`, `name[text()='value']` or `name[child='value']`,
-/// where an element name may carry a namespace as `{uri}name`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, try_from = "MatchForm")]
+/// An element selector, written as a string: `name`, `name[@attr='value']`,
+/// `name[text()='value']` or `name[child='value']`, where an element name may
+/// carry a namespace as `{uri}name`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct XmlMatch {
     pub name: XmlName,
-    #[serde(default)]
     pub predicate: Option<XmlPredicate>,
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum MatchForm {
-    Short(String),
-    Full {
-        name: XmlName,
-        #[serde(default)]
-        predicate: Option<XmlPredicate>,
-    },
-}
-
-impl TryFrom<MatchForm> for XmlMatch {
+impl TryFrom<String> for XmlMatch {
     type Error = String;
 
-    fn try_from(form: MatchForm) -> Result<Self, String> {
-        let text = match form {
-            MatchForm::Full { name, predicate } => return Ok(Self { name, predicate }),
-            MatchForm::Short(text) => text,
-        };
+    fn try_from(text: String) -> Result<Self, String> {
         let local = |name: &str| match name.strip_prefix('{').and_then(|n| n.split_once('}')) {
             Some((namespace, local)) => XmlName {
                 namespace: Some(namespace.to_owned()),
@@ -88,8 +70,37 @@ impl TryFrom<MatchForm> for XmlMatch {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+impl std::fmt::Display for XmlName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.namespace {
+            Some(namespace) => write!(f, "{{{namespace}}}{}", self.local),
+            None => f.write_str(&self.local),
+        }
+    }
+}
+
+impl From<XmlMatch> for String {
+    fn from(matches: XmlMatch) -> Self {
+        let name = matches.name;
+        // Quoted with whichever quote the value does not hold.
+        let quoted = |value: &str| match value.contains('\'') {
+            true => format!("\"{value}\""),
+            false => format!("'{value}'"),
+        };
+        match matches.predicate {
+            None => name.to_string(),
+            Some(XmlPredicate::Attribute { name: key, value }) => {
+                format!("{name}[@{key}={}]", quoted(&value))
+            }
+            Some(XmlPredicate::ChildText { name: key, value }) => {
+                format!("{name}[{key}={}]", quoted(&value))
+            }
+            Some(XmlPredicate::Text { value }) => format!("{name}[text()={}]", quoted(&value)),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum XmlPredicate {
     Attribute { name: XmlName, value: String },
     ChildText { name: XmlName, value: String },
@@ -161,7 +172,7 @@ impl TryFrom<String> for XmlPath {
             }
             selectors.push(XmlStep {
                 descendant,
-                matches: XmlMatch::try_from(MatchForm::Short(part.to_owned()))?,
+                matches: XmlMatch::try_from(part.to_owned())?,
             });
             descendant = false;
         }

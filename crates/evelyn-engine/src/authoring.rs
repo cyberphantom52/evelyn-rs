@@ -147,7 +147,6 @@ pub fn capture_file(request: CaptureRequest<'_>) -> Result<CapturedRecipe, Error
         request.kind,
     )?;
     let recipe = Recipe {
-        schema: 1,
         name: request.name.clone(),
         steps: vec![Step {
             id: request.name,
