@@ -12,8 +12,7 @@
 
 use android_firmware::{Filesystem, Name, STANDARD_SYSTEM, SuperLayout, VENDOR_SIDE, glob};
 use recipe::{
-    Recipe,
-    tree::{Expr, Stmt},
+    tree::{Expr, Tree},
     visit::Visitor,
 };
 use serde::{Deserialize, Serialize};
@@ -309,43 +308,26 @@ impl Profile {
 
     /// Every partition `recipe` names must be one this port can have. Device paths
     /// are checked when they are resolved, against the build's mount points.
-    pub fn validate_recipe(&self, recipe: &Recipe) -> Result<(), recipe::Error> {
-        recipe.tree()?.walk(&mut Partitions {
-            profile: self,
-            step: None,
-        })
+    pub fn validate_recipe(&self, tree: &Tree) -> Result<(), recipe::Error> {
+        tree.walk(&mut Partitions(self))
     }
 }
 
 /// The load-time partition check, over the primitive tree.
-struct Partitions<'a> {
-    profile: &'a Profile,
-    step: Option<Name>,
-}
+struct Partitions<'a>(&'a Profile);
 
 impl Partitions<'_> {
     fn known(&self, partition: &str) -> Result<(), recipe::Error> {
-        if self.profile.known(partition) {
+        if self.0.known(partition) {
             return Ok(());
         }
         Err(recipe::Error::Invalid(format!(
-            "step {} refers to partition {partition}, which this port neither defines nor takes by default",
-            self.step.as_ref().map_or("?", |step| step.as_ref())
+            "refers to partition {partition}, which this port neither defines nor takes by default"
         )))
     }
 }
 
 impl Visitor for Partitions<'_> {
-    fn stmt(&mut self, stmt: &Stmt, _bound: &[&Name]) -> Result<(), recipe::Error> {
-        match stmt {
-            Stmt::Step { id, .. } => {
-                self.step = Some(id.clone());
-                Ok(())
-            }
-            _ => Ok(()),
-        }
-    }
-
     fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), recipe::Error> {
         let target = match expr {
             Expr::Partition(name) => return self.known(name.as_ref()),

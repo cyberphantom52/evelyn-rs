@@ -6,12 +6,7 @@
 //! `vendor_boot` is patched outside Evelyn and normally matches it.
 
 use crate::{Error, build::Targets};
-use android_firmware::Filesystem;
-use android_fs::EntryKind;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io::Read,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
 struct Mount {
@@ -28,27 +23,18 @@ pub(crate) fn check(targets: &Targets, images: &patch::Images) -> Result<(), Err
         tracing::warn!("no vendor partition; its fstab cannot be checked");
         return Ok(());
     };
-    let store = android_fs::Store { images, root };
+    let store = android_fs::Store::new(images, root);
     let mut checked = false;
-    for (path, entry) in &tree.entries {
+    for path in tree.entries.keys() {
         let Some(name) = path.as_ref().strip_prefix("etc/fstab.") else {
             continue;
         };
-        let entry = match &entry.kind {
-            EntryKind::Hardlink { target } => &tree.entries[target],
-            _ => entry,
-        };
-        let EntryKind::File { content, size, .. } = &entry.kind else {
+        let Ok(file) = tree.file(path) else {
             continue;
         };
-        let mut text = String::new();
-        if store
-            .open(content, *size)?
-            .read_to_string(&mut text)
-            .is_err()
-        {
+        let Ok(text) = String::from_utf8(store.read(&file)?) else {
             continue;
-        }
+        };
         checked = true;
         check_one(&format!("fstab.{name}"), &text, targets)?;
     }
@@ -79,15 +65,11 @@ fn check_one(fstab: &str, text: &str, targets: &Targets) -> Result<(), Error> {
     for (partition, mount) in mounts {
         match targets.iter().find(|(name, _)| name.as_ref() == partition) {
             Some((_, (_, tree))) => {
-                let filesystem = match tree.filesystem {
-                    Filesystem::Erofs => "erofs",
-                    Filesystem::Ext4 => "ext4",
-                };
-                if !mount.filesystems.contains(filesystem) {
+                if !mount.filesystems.contains(&tree.filesystem.to_string()) {
                     return Err(Error::FstabFilesystem {
                         fstab: fstab.into(),
                         partition: partition.into(),
-                        filesystem: filesystem.into(),
+                        filesystem: tree.filesystem,
                         accepted: mount.filesystems.into_iter().collect(),
                     });
                 }
