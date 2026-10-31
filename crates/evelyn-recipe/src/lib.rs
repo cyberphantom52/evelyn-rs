@@ -78,19 +78,21 @@ pub struct Step {
     pub operations: Vec<Operation>,
 }
 
-/// Every operation but `Import` changes the build: the partitions being produced.
+/// Operations change the build: the partitions being produced.
 /// Paths are device paths (`/vendor/etc/fstab.qcom`), resolved to a partition by its
 /// mount point; `system` is mounted at `/` on system-as-root devices.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum Operation {
-    /// Copy what `pattern` (a device path, globs allowed) matches in a firmware into
-    /// the build, at the same path or at `to`, overwriting what is there. An
-    /// overwritten entry keeps the build's metadata; a new one has the firmware's,
-    /// or with `metadata: Default` Android's defaults.
-    Import {
-        from: Firmware,
-        pattern: DevicePath,
+    /// Copy what `path` matches into the build, at the same path or at `to`,
+    /// overwriting what is there: in a firmware a device path, globs allowed; in the
+    /// recipe's assets a path relative to its directory, a file or a directory's
+    /// files, which needs `to`. An overwritten entry keeps the build's metadata; a
+    /// new one has the firmware's, assets having none Android's defaults, or with
+    /// `metadata: Default` Android's defaults. What `path` names must be there.
+    Copy {
+        from: tree::Source,
+        path: String,
         /// Where it goes, if not to the same path. A glob keeps its path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<DevicePath>,
@@ -109,17 +111,6 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         partition: Option<String>,
         pattern: String,
-    },
-    Relocate {
-        from: DevicePath,
-        to: DevicePath,
-    },
-    /// Write a recipe asset (a file, or a directory's files) at `to`, overwriting
-    /// what is there. Overwritten files keep their metadata; new entries get
-    /// Android's defaults.
-    Install {
-        asset: RelativePath,
-        to: DevicePath,
     },
     /// Set metadata Android's defaults do not give, on every entry `pattern` (a
     /// device path, globs allowed) matches in the build.
@@ -208,10 +199,7 @@ pub enum Operation {
     /// permissions and extension XML in the build.
     DisableFeature(String),
     /// Add `content` at the end of a file, on a line of its own.
-    Append {
-        target: DevicePath,
-        content: Data,
-    },
+    Append { target: DevicePath, content: Data },
     /// Patch one of the device's CIL policy files with TE `policies` (assets), written
     /// with Android's policy macros. The result must resolve with the device's other
     /// policy files, as init loads them.
@@ -221,7 +209,7 @@ pub enum Operation {
     },
 }
 
-/// What new entries an import brings get: the firmware's metadata, Android's
+/// What new entries a copy brings get: the firmware's metadata, Android's
 /// defaults for where they are on the device, or those defaults with what
 /// `Explicit` names set instead.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -383,10 +371,8 @@ impl From<Hex> for String {
 impl Operation {
     fn name(&self) -> &'static str {
         match self {
-            Self::Import { .. } => "Import",
+            Self::Copy { .. } => "Copy",
             Self::Remove { .. } => "Remove",
-            Self::Relocate { .. } => "Relocate",
-            Self::Install { .. } => "Install",
             Self::SetMetadata { .. } => "SetMetadata",
             Self::SetProperty { .. } => "SetProperty",
             Self::RemoveProperty { .. } => "RemoveProperty",
@@ -405,7 +391,7 @@ impl Operation {
         }
     }
 
-    /// The metadata a `SetMetadata`, or an import's `Metadata::Explicit`, sets.
+    /// The metadata a `SetMetadata`, or a copy's `Metadata::Explicit`, sets.
     fn overrides(&self) -> Option<Overrides> {
         let (Self::SetMetadata {
             uid,
@@ -414,7 +400,7 @@ impl Operation {
             selinux,
             ..
         }
-        | Self::Import {
+        | Self::Copy {
             metadata:
                 Metadata::Explicit {
                     uid,
@@ -443,8 +429,8 @@ impl Operation {
         )
     }
 
-    /// What can run on a package's files: content edits, installs and removals by
-    /// path, and the smali edits.
+    /// What can run on a package's files: content edits, copies of assets and
+    /// removals by path, and the smali edits.
     fn in_package(&self) -> bool {
         match self {
             Self::Remove {
@@ -455,7 +441,10 @@ impl Operation {
             Self::Diff { .. }
             | Self::WriteBytes { .. }
             | Self::EditXml { .. }
-            | Self::Install { .. }
+            | Self::Copy {
+                from: tree::Source::Assets,
+                ..
+            }
             | Self::Append { .. }
             | Self::AssertHash { .. } => true,
             other => other.package_only(),
@@ -483,6 +472,13 @@ impl Operation {
             } if containing.is_empty() => Err(Error::Invalid(
                 "Lines needs at least one string a line contains".into(),
             )),
+            Self::Copy { from, path, to, .. } => match from {
+                tree::Source::Assets if to.is_none() => Err(Error::Invalid(format!(
+                    "copying the asset {path} needs a to:"
+                ))),
+                tree::Source::Assets => Ok(RelativePath::try_from(path.clone()).map(|_| ())?),
+                _ => Ok(DevicePath::try_from(path.clone()).map(|_| ())?),
+            },
             Self::Remove {
                 partition, pattern, ..
             } => {

@@ -27,7 +27,7 @@ impl Target {
         Ok(true)
     }
 
-    /// Import `path` from a firmware's `source` tree: overwritten entries keep this
+    /// Copy `path` from a firmware's `source` tree: overwritten entries keep this
     /// target's metadata, new ones have the source's.
     pub(crate) fn import(
         &mut self,

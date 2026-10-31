@@ -1,5 +1,5 @@
 //! The primitive tree recipes are applied as. Recipes are written with the surface
-//! operations (`Remove`, `Import`, `SetProperty`, ...); loading desugars them into
+//! operations (`Remove`, `Copy`, `SetProperty`, ...); loading desugars them into
 //! these few statements and expressions, so each primitive has one implementation
 //! however many surface forms use it.
 
@@ -206,12 +206,43 @@ pub enum Assigned {
     Fields(Overrides),
 }
 
-/// Where a selection can look besides the build.
+/// Where a selection can look besides the build: a firmware, or the recipe's
+/// directory, where a path is relative to it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Source {
-    Firmware(Firmware),
-    /// The recipe's directory: an asset path, relative to it.
+    Rom,
+    Stock,
     Assets,
+}
+
+impl Source {
+    /// The firmware it is, if it is one.
+    pub fn firmware(self) -> Option<Firmware> {
+        match self {
+            Self::Rom => Some(Firmware::Rom),
+            Self::Stock => Some(Firmware::Stock),
+            Self::Assets => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Rom => "the ROM",
+            Self::Stock => "the stock firmware",
+            Self::Assets => "the recipe's assets",
+        })
+    }
+}
+
+impl From<Firmware> for Source {
+    fn from(firmware: Firmware) -> Self {
+        match firmware {
+            Firmware::Rom => Self::Rom,
+            Firmware::Stock => Self::Stock,
+        }
+    }
 }
 
 /// Where a selection looks.
