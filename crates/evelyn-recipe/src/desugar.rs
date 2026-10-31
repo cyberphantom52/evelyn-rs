@@ -162,9 +162,9 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 },
             ];
         }
-        Operation::Diff { target, patch } => Stmt::Edit {
+        Operation::ApplyDiff { target, patch } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
-            transform: Transform::Diff(patch.clone()),
+            transform: Transform::ApplyDiff(patch.clone()),
         },
         Operation::WriteBytes { target, edits } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
@@ -310,7 +310,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         Operation::SetMetadata {
             pattern: target, ..
         }
-        | Operation::Diff { target, .. }
+        | Operation::ApplyDiff { target, .. }
         | Operation::WriteBytes { target, .. }
         | Operation::EditXml { target, .. }
         | Operation::Append { target, .. }

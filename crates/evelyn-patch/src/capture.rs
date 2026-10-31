@@ -54,7 +54,7 @@ pub fn capture(
             let after = std::str::from_utf8(after)?;
             let patch = diffy::create_patch(before, after).to_string().into_bytes();
             (
-                vec![Operation::Diff {
+                vec![Operation::ApplyDiff {
                     target,
                     patch: asset,
                 }],

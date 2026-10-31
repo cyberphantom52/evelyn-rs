@@ -257,7 +257,9 @@ pub(crate) fn transformed(
     Ok(match transform {
         Transform::WriteBytes(edits) => crate::binary::apply(bytes, edits)?,
         Transform::Xml(edits) => crate::xml::apply(bytes, edits)?,
-        Transform::Diff(patch) => crate::text::apply(&text(bytes)?, &asset(patch)?)?.into_bytes(),
+        Transform::ApplyDiff(patch) => {
+            crate::text::apply(&text(bytes)?, &asset(patch)?)?.into_bytes()
+        }
         Transform::Property {
             key,
             value: Some(value),
