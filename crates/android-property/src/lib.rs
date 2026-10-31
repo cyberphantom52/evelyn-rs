@@ -1,9 +1,11 @@
 //! Android property files (`build.prop`, `default.prop`, ...): reading and editing.
 //!
-//! Lines are full-line `#` comments or `key=value` / `key?=value` assignments; an
-//! inline `#` is part of the value. Edits keep every other byte as it was: a
-//! replacement preserves the text up to the value and the original line ending, and
-//! an append uses the file's own line ending (LF by default).
+//! Lines are read as init reads them: full-line `#` comments, `import <path>
+//! [<filter>]` lines, and `key=value` assignments, the key and value trimmed of
+//! whitespace; an inline `#` is part of the value. A later assignment of a key
+//! overrides an earlier one. Edits keep every other byte as it was: a replacement
+//! preserves the text up to the value and the original line ending, and an append
+//! uses the file's own line ending (LF by default).
 
 use thiserror::Error;
 
@@ -38,49 +40,76 @@ pub fn remove(input: &str, key: &str, expect: Option<usize>) -> Result<String, E
 pub struct Entry<'a> {
     pub key: &'a str,
     pub value: &'a str,
-    /// `?=`: applies only when the key is not already set.
-    pub optional: bool,
+}
+
+/// What a line is to init.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Line<'a> {
+    Assignment(Entry<'a>),
+    /// Load the file at `path`, a device path, here; with a filter, only its keys
+    /// equal to the filter or, for `prefix.*`, starting with `prefix.`.
+    Import {
+        path: &'a str,
+        filter: Option<&'a str>,
+    },
+}
+
+/// The assignments and imports in `text`, in order.
+pub fn lines(text: &str) -> impl Iterator<Item = Line<'_>> {
+    text.split_inclusive('\n').filter_map(|line| {
+        if let Some(import) = body(line).trim().strip_prefix("import ") {
+            let (path, filter) = match import.trim_start().split_once(' ') {
+                Some((path, filter)) => (path, Some(filter.trim_start())),
+                None => (import.trim_start(), None),
+            };
+            return Some(Line::Import { path, filter });
+        }
+        assignment(line).map(|(entry, _)| Line::Assignment(entry))
+    })
 }
 
 /// Every assignment in `text`, in order.
 pub fn entries(text: &str) -> impl Iterator<Item = Entry<'_>> {
-    text.split_inclusive('\n').filter_map(|line| {
-        let (entry, _) = assignment(line)?;
-        Some(entry)
+    lines(text).filter_map(|line| match line {
+        Line::Assignment(entry) => Some(entry),
+        Line::Import { .. } => None,
     })
+}
+
+/// Whether `filter`, an import's, lets `key` in.
+pub fn filtered(filter: &str, key: &str) -> bool {
+    match filter.strip_suffix('*') {
+        Some(prefix) => key.starts_with(prefix),
+        None => key == filter,
+    }
 }
 
 /// The assignment on `line`, if it is one, and the text before its value.
 fn assignment(line: &str) -> Option<(Entry<'_>, &str)> {
     let line = body(line);
-    if line.trim_start().starts_with('#') {
+    let start = line.trim_start();
+    if start.starts_with('#') || start.starts_with("import ") {
         return None;
     }
     let (left, right) = line.split_once('=')?;
-    let trimmed = left.trim();
-    let (key, optional) = match trimmed.strip_suffix('?') {
-        Some(key) => (key.trim_end(), true),
-        None => (trimmed, false),
-    };
-    let value = right.trim_start_matches([' ', '\t']);
+    let key = left.trim();
+    let right = right.trim_start();
+    let prefix = &line[..line.len() - right.len()];
     (!key.is_empty()).then_some((
         Entry {
             key,
-            value,
-            optional,
+            value: right.trim_end(),
         },
-        &line[..line.len() - value.len()],
+        prefix,
     ))
 }
 
-/// The value `key` ends up with after loading `text`, as init applies it.
+/// The value `key` ends up with after loading `text` alone: its last assignment.
 pub fn get<'a>(text: &'a str, key: &str) -> Option<&'a str> {
     entries(text)
         .filter(|entry| entry.key == key)
-        .fold(None, |value, entry| match (value, entry.optional) {
-            (Some(value), true) => Some(value),
-            _ => Some(entry.value),
-        })
+        .last()
+        .map(|entry| entry.value)
 }
 
 /// `line` without its LF or CRLF ending.
