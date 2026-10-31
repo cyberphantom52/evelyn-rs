@@ -98,24 +98,29 @@ pub enum Transform {
     },
 }
 
+/// Recipes write expressions as they are here, with a string, boolean or list of
+/// strings standing for itself: `Not(Exists(Select(pattern: "/vendor/lib")))`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum Expr {
-    Literal(Value),
     /// What a statement selects. A pattern starting with `/` is a device path; a
     /// relative one is tried in the directory of every partition the scope selects.
     Select {
         pattern: String,
+        #[serde(default)]
         scope: Scope,
     },
     /// A property's value, or unset.
     Property {
         key: String,
+        #[serde(default)]
         target: Option<PropertyTarget>,
     },
     /// The property files that define `key`: with a file, it if it does; with a
     /// partition, the files in it that do; without, those in every partition.
     PropertyFiles {
         key: String,
+        #[serde(default)]
         target: Option<PropertyTarget>,
     },
     /// The CIL files init compiles the device's SELinux policy from that the build
@@ -175,6 +180,8 @@ pub enum Expr {
     Lines(Box<Expr>),
     /// A list's strings, each ending in a newline.
     Join(Box<Expr>),
+    #[serde(untagged)]
+    Literal(Value),
 }
 
 /// How `Smali` changes a method.
@@ -209,6 +216,7 @@ pub enum Source {
 
 /// Where a selection looks.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Scope {
     /// Look inside a firmware, or the recipe's assets, instead of the build.
     pub inside: Option<Source>,

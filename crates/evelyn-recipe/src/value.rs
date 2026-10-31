@@ -7,7 +7,9 @@ use android_firmware::{Name, RelativePath};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Written untagged: `"text"`, `true`, `["a", "b"]`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum Value {
     Str(String),
     Bool(bool),
