@@ -95,7 +95,7 @@ pub fn scan(
         image,
         identity,
         tree: PartitionTree {
-            schema: 2,
+            schema: crate::SCHEMA,
             partition: identity.partition.clone(),
             filesystem: image.filesystem(),
             source_sha256,

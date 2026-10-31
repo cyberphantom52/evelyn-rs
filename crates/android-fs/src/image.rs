@@ -143,10 +143,10 @@ impl Image {
                 )
             }
         };
-        let kind = match mode & 0o170000 {
-            0o100000 => Kind::File,
-            0o040000 => Kind::Directory,
-            0o120000 => Kind::Symlink,
+        let kind = match mode & crate::mode::TYPE {
+            crate::mode::FILE => Kind::File,
+            crate::mode::DIRECTORY => Kind::Directory,
+            crate::mode::SYMLINK => Kind::Symlink,
             _ => {
                 return Err(Error::Unsupported(format!(
                     "special or unknown inode {id}, mode {mode:#o}"

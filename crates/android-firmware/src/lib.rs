@@ -71,6 +71,15 @@ string_type!(DevicePath, "device path", |s: &str| s.len() > 1
         .split('/')
         .all(|part| !part.is_empty() && part != "." && part != ".."));
 
+/// Whether `text` is a non-empty run of `[A-Za-z0-9._-]`: safe in a path component
+/// or a recipe, for a value read from firmware.
+pub fn is_token(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+}
+
 /// Bytes as lowercase hex, two digits each.
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -326,7 +335,25 @@ pub struct AndroidMetadata {
     pub xattrs: std::collections::BTreeMap<String, Vec<u8>>,
 }
 
+/// The xattr an entry's SELinux label is in.
+pub const SELINUX_XATTR: &str = "security.selinux";
+
 impl AndroidMetadata {
+    /// Label the entry `label`, and whether that changed it. A label is the same
+    /// with or without its terminating NUL, as for the kernel; one written gets it.
+    pub fn set_selinux(&mut self, label: &str) -> bool {
+        let current = self.xattrs.get(SELINUX_XATTR);
+        if current.is_some_and(|current| {
+            current.strip_suffix(&[0]).unwrap_or(current) == label.as_bytes()
+        }) {
+            return false;
+        }
+        let mut value = label.as_bytes().to_vec();
+        value.push(0);
+        self.xattrs.insert(SELINUX_XATTR.to_owned(), value);
+        true
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         if self.mode > 0o7777
             || self
@@ -348,6 +375,15 @@ impl AndroidMetadata {
 pub enum Filesystem {
     Erofs,
     Ext4,
+}
+
+impl fmt::Display for Filesystem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Erofs => "erofs",
+            Self::Ext4 => "ext4",
+        })
+    }
 }
 
 /// Treble's vendor side, in the order partitions are laid out in `super`. A device
@@ -419,11 +455,7 @@ pub const SEPOLICY_VERSION: &str = "/vendor/etc/selinux/plat_sepolicy_vers.txt";
 /// requires the platform policy and its mapping, `plat_pub_versioned.cil` and the
 /// vendor's policy, and uses each of the others only if the device has it.
 pub fn sepolicy_files(version: &str) -> Result<Vec<DevicePath>, Error> {
-    if version.is_empty()
-        || !version
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-    {
+    if !is_token(version) {
         return Err(Error::Invalid {
             kind: "SELinux policy version",
             value: version.to_owned(),
@@ -446,3 +478,23 @@ pub fn sepolicy_files(version: &str) -> Result<Vec<DevicePath>, Error> {
     .map(DevicePath::try_from)
     .collect()
 }
+
+/// The partitions whose `etc/fs_config_files` and `etc/fs_config_dirs` Android reads,
+/// in the order it reads them.
+pub const FS_CONFIG: [&str; 6] = [
+    "/system",
+    "/vendor",
+    "/oem",
+    "/odm",
+    "/product",
+    "/system_ext",
+];
+
+/// The `file_contexts` files, in the order Android loads them.
+pub const FILE_CONTEXTS: [&str; 5] = [
+    "/system/etc/selinux/plat_file_contexts",
+    "/system_ext/etc/selinux/system_ext_file_contexts",
+    "/product/etc/selinux/product_file_contexts",
+    "/vendor/etc/selinux/vendor_file_contexts",
+    "/odm/etc/selinux/odm_file_contexts",
+];

@@ -1,5 +1,5 @@
 use crate::{EntryKind, PartitionTree};
-use crate::{Error, Region, Store};
+use crate::{Error, Region, Store, mode};
 use android_firmware::AndroidMetadata;
 use fs_erofs::mkfs::{self, BuildOptions, Compression, Content, Node, NodeMeta, XattrSpec};
 use std::{
@@ -60,13 +60,13 @@ pub(super) fn write(
         let mode = entry.metadata.mode;
         let node = match &entry.kind {
             EntryKind::Directory => Node::Dir {
-                mode: 0o040000 | mode,
+                mode: mode::DIRECTORY | mode,
                 entries: BTreeMap::new(),
                 meta: meta(&entry.metadata),
                 xattrs: xattrs(&entry.metadata)?,
             },
             EntryKind::File { content, size, .. } => Node::StreamedFile {
-                mode: 0o100000 | mode,
+                mode: mode::FILE | mode,
                 content: Content::new(*size, move || {
                     store.open(content, *size).map_err(io::Error::other)
                 }),
@@ -74,7 +74,7 @@ pub(super) fn write(
                 xattrs: xattrs(&entry.metadata)?,
             },
             EntryKind::Symlink { target } => Node::Symlink {
-                mode: 0o120000 | mode,
+                mode: mode::SYMLINK | mode,
                 target: String::from_utf8(target.clone()).map_err(|_| {
                     Error::Unsupported(format!("non-UTF-8 symlink target at {path}"))
                 })?,
@@ -88,7 +88,7 @@ pub(super) fn write(
         insert(&mut root, path.as_ref(), node)?;
     }
     let root = Node::Dir {
-        mode: 0o040000 | tree.root.mode,
+        mode: mode::DIRECTORY | tree.root.mode,
         entries: root,
         meta: meta(&tree.root),
         xattrs: xattrs(&tree.root)?,
