@@ -10,14 +10,17 @@
 
 mod desugar;
 mod expr;
+mod location;
 pub mod tree;
 pub mod value;
 pub mod visit;
 mod xml;
 pub use expr::Expr;
+use location::Kind;
+pub use location::Location;
 pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate, XmlStep, escape_attribute};
 
-use android_firmware::{DevicePath, Firmware, Name, RelativePath, Sha256Digest};
+use android_firmware::{DevicePath, Firmware, Name, Sha256Digest};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -93,7 +96,7 @@ pub enum Operation {
     /// defaults, or with `metadata: Default` Android's defaults. What `from` names
     /// must be there.
     Copy {
-        from: Expr,
+        from: Location,
         /// Where it goes, a device path, if not to the same path. A glob keeps its path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<Expr>,
@@ -107,7 +110,7 @@ pub enum Operation {
     /// path, outside any scope. A pattern that matches nothing is reported, not an
     /// error; a scope that selects no partition is an error.
     Remove {
-        pattern: Build<String>,
+        pattern: Location,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<Firmware>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -116,7 +119,7 @@ pub enum Operation {
     /// Set metadata Android's defaults do not give, on every entry `pattern` (a
     /// device path, globs allowed) matches in the build.
     SetMetadata {
-        pattern: Build<DevicePath>,
+        pattern: Location,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         uid: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,48 +137,45 @@ pub enum Operation {
         key: String,
         value: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        target: Option<PropertyTarget>,
+        target: Option<Location>,
     },
     /// Remove every definition in the same scope as `SetProperty`; one must exist.
     RemoveProperty {
         key: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        target: Option<PropertyTarget>,
+        target: Option<Location>,
     },
     /// Apply a unified diff (an asset) to a file and its hardlinks.
-    ApplyDiff {
-        target: Build<DevicePath>,
-        patch: Asset<RelativePath>,
-    },
+    ApplyDiff { target: Location, patch: Location },
     /// Overwrite bytes at offsets of a file. What is there decides what the bytes
     /// mean, so an `AssertHash` of the file should come first.
     WriteBytes {
-        target: Build<DevicePath>,
+        target: Location,
         /// Offsets and the bytes written there, as hex: `{487572: "a9008052"}`.
         edits: BTreeMap<u64, Hex>,
     },
     EditXml {
-        target: Build<DevicePath>,
+        target: Location,
         edits: Vec<XmlEdit>,
     },
     /// Decode an APK or JAR, apply `edits` inside it and rebuild it. The edits are
     /// ordinary operations with paths from the package's root
     /// (`/res/values/strings.xml`), plus the smali edits only a package has.
     Package {
-        target: Build<DevicePath>,
+        target: Location,
         edits: Vec<Operation>,
     },
     /// Inside a `Package`: replace a smali method with the asset `body`.
     ReplaceMethod {
         class: String,
         method: String,
-        body: Asset<RelativePath>,
+        body: Location,
     },
     /// Inside a `Package`: add the asset `body` as a new smali method.
     InsertMethod {
         class: String,
         method: String,
-        body: Asset<RelativePath>,
+        body: Location,
     },
     /// Inside a `Package`: replace a method's body so it only returns `returns`.
     StubMethod {
@@ -185,7 +185,7 @@ pub enum Operation {
     },
     /// The file's content must have this SHA-256.
     AssertHash {
-        target: Build<DevicePath>,
+        target: Location,
         sha256: Sha256Digest,
     },
     /// Declare a feature, in its kind's file: added there, or replaced if it is.
@@ -195,7 +195,7 @@ pub enum Operation {
     DisableFeature(String),
     /// Add `content` at the end of a file, on a line of its own.
     Append {
-        target: Build<DevicePath>,
+        target: Location,
         /// A string expression.
         content: Expr,
     },
@@ -203,8 +203,8 @@ pub enum Operation {
     /// with Android's policy macros. The result must resolve with the device's other
     /// policy files, as init loads them.
     AddPolicy {
-        target: Build<DevicePath>,
-        policies: Vec<Asset<RelativePath>>,
+        target: Location,
+        policies: Vec<Location>,
     },
 }
 
@@ -247,7 +247,7 @@ pub enum Feature {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         args: Option<String>,
-        file: Build<DevicePath>,
+        file: Location,
     },
 }
 
@@ -278,57 +278,6 @@ impl Overrides {
             _ => Ok(()),
         }
     }
-}
-
-/// A path in the build, written `Build("/…")`, as a recipe names a build file
-/// wherever it names one.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Build<P> {
-    Build(P),
-}
-
-impl<P: std::fmt::Display> std::fmt::Display for Build<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        (**self).fmt(f)
-    }
-}
-
-impl<P> std::ops::Deref for Build<P> {
-    type Target = P;
-
-    fn deref(&self) -> &P {
-        let Self::Build(path) = self;
-        path
-    }
-}
-
-/// A path in the recipe's directory, written `Asset("…")`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Asset<P> {
-    Asset(P),
-}
-
-impl<P: std::fmt::Display> std::fmt::Display for Asset<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        (**self).fmt(f)
-    }
-}
-
-impl<P> std::ops::Deref for Asset<P> {
-    type Target = P;
-
-    fn deref(&self) -> &P {
-        let Self::Asset(path) = self;
-        path
-    }
-}
-
-/// Where a property edit or lookup applies: `Partition("vendor")`, the files init
-/// loads from a partition, or `Build("/…")`, one file in the build.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PropertyTarget {
-    Partition(Name),
-    Build(DevicePath),
 }
 
 /// What a stubbed method returns: nothing (`V`), zero/false/null, or one/true.
@@ -429,26 +378,30 @@ impl Operation {
             Self::Remove {
                 origin: None,
                 partition: None,
-                pattern,
-            } => pattern.starts_with('/'),
-            Self::ApplyDiff { .. }
-            | Self::WriteBytes { .. }
-            | Self::EditXml { .. }
-            | Self::Copy {
-                from: Expr::Asset(_),
                 ..
             }
+            | Self::ApplyDiff { .. }
+            | Self::WriteBytes { .. }
+            | Self::EditXml { .. }
+            | Self::Copy { .. }
             | Self::Append { .. }
             | Self::AssertHash { .. } => true,
             other => other.package_only(),
         }
     }
 
-    /// Checks that can fail before any image is touched; the patch crate checks the rest on apply.
-    fn validate(&self) -> Result<(), Error> {
+    /// Checks that can fail before any image is touched; the patch crate checks the
+    /// rest on apply. Inside a package, the files an operation names are the
+    /// package's, `Package("/…")`; elsewhere the build's, `Build("/…")`.
+    fn validate(&self, in_package: bool) -> Result<(), Error> {
         if let Some(overrides) = self.overrides() {
-            return overrides.validate();
+            overrides.validate()?;
         }
+        let file = match in_package {
+            true => Kind::Package,
+            false => Kind::Build,
+        };
+        let name = self.name();
         match self {
             Self::SetProperty { key, value, .. } if !property_key(key) || value.contains('\n') => {
                 Err(Error::Invalid(format!("invalid property {key:?}")))
@@ -456,36 +409,33 @@ impl Operation {
             Self::RemoveProperty { key, .. } if !property_key(key) => {
                 Err(Error::Invalid(format!("invalid property key {key:?}")))
             }
+            Self::SetProperty { target, .. } | Self::RemoveProperty { target, .. } => target
+                .iter()
+                .try_for_each(|target| target.check(&[Kind::Build, Kind::Partition], name)),
             Self::AddPolicy { policies, .. } if policies.is_empty() => {
                 Err(Error::Invalid("AddPolicy needs at least one policy".into()))
             }
-            // Paths written out are checked now, ones naming a value when they are used.
+            Self::AddPolicy { target, policies } => {
+                target.check(&[Kind::Build], name)?;
+                policies
+                    .iter()
+                    .try_for_each(|policy| policy.check(&[Kind::Asset], name))
+            }
             Self::Copy { from, to, .. } => {
-                let written = |path: &&str| !path.contains('{');
-                match from.file() {
-                    Some((Some(tree::Source::Assets), _)) if to.is_none() => {
-                        return Err(Error::Invalid("copying an asset needs a to:".into()));
-                    }
-                    Some((Some(tree::Source::Assets), path)) => {
-                        if let Some(path) = Some(path).filter(written) {
-                            RelativePath::try_from(path.to_owned())?;
-                        }
-                    }
-                    Some((_, path)) => {
-                        if let Some(path) = Some(path).filter(written) {
-                            DevicePath::try_from(path.to_owned())?;
-                        }
-                    }
-                    None => {
-                        return Err(Error::Invalid(
-                            "Copy copies from Build, Rom, Stock or Asset".into(),
-                        ));
-                    }
+                let sources: &[Kind] = match in_package {
+                    true => &[Kind::Asset],
+                    false => &[Kind::Build, Kind::Rom, Kind::Stock, Kind::Asset],
+                };
+                from.check(sources, name)?;
+                if from.kind() == Kind::Asset && to.is_none() {
+                    return Err(Error::Invalid("copying an asset needs a to:".into()));
                 }
-                if let Some(Expr::Text(to)) = to
-                    && written(&to.as_str())
-                {
-                    DevicePath::try_from(to.clone())?;
+                match to {
+                    Some(Expr::Text(to)) if !to.contains('{') => {
+                        DevicePath::try_from(to.clone()).map(drop)?
+                    }
+                    Some(to) => to.check(in_package)?,
+                    None => {}
                 }
                 Ok(())
             }
@@ -500,13 +450,9 @@ impl Operation {
                 {
                     return Err(Error::Invalid(format!("invalid partition {partition:?}")));
                 }
-                if pattern.starts_with('/') {
-                    DevicePath::try_from((**pattern).clone())?;
-                } else {
-                    RelativePath::try_from((**pattern).clone())?;
-                }
-                Ok(())
+                pattern.check(&[file], name)
             }
+            Self::SetMetadata { pattern, .. } => pattern.check(&[Kind::Build], name),
             Self::StubMethod { class, .. }
             | Self::ReplaceMethod { class, .. }
             | Self::InsertMethod { class, .. }
@@ -516,7 +462,11 @@ impl Operation {
                     "class {class:?} is not written as Lcom/example/Name;"
                 )))
             }
-            Self::WriteBytes { edits, .. } => {
+            Self::ReplaceMethod { body, .. } | Self::InsertMethod { body, .. } => {
+                body.check(&[Kind::Asset], name)
+            }
+            Self::WriteBytes { target, edits } => {
+                target.check(&[file], name)?;
                 let mut end = 0;
                 for (offset, bytes) in edits {
                     if *offset < end {
@@ -528,15 +478,35 @@ impl Operation {
                 }
                 Ok(())
             }
-            Self::Package { edits, .. } => edits.iter().try_for_each(|edit| {
-                if !edit.in_package() {
-                    return Err(Error::Invalid(format!(
-                        "{} does not work inside a Package",
-                        edit.name()
-                    )));
+            Self::ApplyDiff { target, patch } => {
+                target.check(&[file], name)?;
+                patch.check(&[Kind::Asset], name)
+            }
+            Self::EditXml { target, .. } | Self::AssertHash { target, .. } => {
+                target.check(&[file], name)
+            }
+            Self::Append { target, content } => {
+                target.check(&[file], name)?;
+                content.check(in_package)
+            }
+            Self::EnableFeature(Feature::App { file, .. }) => file.check(&[Kind::Build], name),
+            Self::Package { target, edits } => {
+                target.check(&[Kind::Build], name)?;
+                if target.path().contains('{') {
+                    return Err(Error::Invalid(
+                        "a Package's target is written out, without {name}".into(),
+                    ));
                 }
-                edit.validate()
-            }),
+                edits.iter().try_for_each(|edit| {
+                    if !edit.in_package() {
+                        return Err(Error::Invalid(format!(
+                            "{} does not work inside a Package",
+                            edit.name()
+                        )));
+                    }
+                    edit.validate(true)
+                })
+            }
             _ => Ok(()),
         }
     }
@@ -575,6 +545,9 @@ impl Recipe {
             if !ids.insert(&step.id) {
                 return Err(Error::Invalid(format!("duplicate step {}", step.id)));
             }
+            for value in step.bindings.values().chain(&step.when) {
+                value.check(false)?;
+            }
             for operation in &step.operations {
                 if operation.package_only() {
                     return Err(Error::Invalid(format!(
@@ -582,7 +555,7 @@ impl Recipe {
                         operation.name()
                     )));
                 }
-                operation.validate()?;
+                operation.validate(false)?;
             }
         }
         self.tree()?.walk(&mut visit::Check)?;
