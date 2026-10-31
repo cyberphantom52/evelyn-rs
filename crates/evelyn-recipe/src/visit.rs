@@ -100,6 +100,7 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         | Expr::Exists(inner)
         | Expr::Lines(inner)
         | Expr::Join(inner)
+        | Expr::Trim(inner)
         | Expr::Matches { text: inner, .. }
         | Expr::Select { pattern: inner, .. } => walk_expr(inner, visitor, bound),
         Expr::All(exprs) | Expr::Any(exprs) | Expr::Union(exprs) | Expr::Concat(exprs) => exprs
@@ -133,7 +134,6 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         | Expr::Var(_)
         | Expr::Property { .. }
         | Expr::PropertyFiles { .. }
-        | Expr::PolicyFiles
         | Expr::NewPropertyFile(_)
         | Expr::HasPartition(_) => Ok(()),
     }
@@ -187,7 +187,6 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
         }
         Expr::Literal(Value::Selection(_))
         | Expr::PropertyFiles { .. }
-        | Expr::PolicyFiles
         | Expr::NewPropertyFile(_) => Kind::Selection,
         Expr::Var(name) => match bound.iter().rev().find(|(bound, _)| *bound == name) {
             Some((_, kind)) => *kind,
@@ -227,6 +226,7 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
         }
         Expr::Lines(inner) => of(inner, &[Kind::Str], "Lines").map(|_| Kind::List)?,
         Expr::Join(inner) => of(inner, &[Kind::List], "Join").map(|_| Kind::Str)?,
+        Expr::Trim(inner) => of(inner, &[Kind::Str], "Trim")?,
         Expr::All(exprs) | Expr::Any(exprs) | Expr::Union(exprs) => {
             let (each, what) = match expr {
                 Expr::All(_) => (Kind::Bool, "All"),

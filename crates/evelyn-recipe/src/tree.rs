@@ -120,9 +120,6 @@ pub enum Expr {
         #[serde(default)]
         target: Option<PropertyTarget>,
     },
-    /// The CIL files init compiles the device's SELinux policy from that the build
-    /// has, for the platform policy version the vendor names.
-    PolicyFiles,
     /// The file a new property goes to: the file, the partition's `build.prop`,
     /// or without a target product's.
     NewPropertyFile(Option<PropertyTarget>),
@@ -167,7 +164,7 @@ pub enum Expr {
     All(Vec<Expr>),
     /// Some condition holds, checked in order until one does.
     Any(Vec<Expr>),
-    /// What any of the selections selects.
+    /// What any of the selections selects, in the order they select it.
     Union(Vec<Expr>),
     /// Two strings, or two booleans, are equal; an unset value equals no string.
     Eq(Box<Expr>, Box<Expr>),
@@ -175,6 +172,8 @@ pub enum Expr {
     In(Box<Expr>, Box<Expr>),
     /// The strings, one after another.
     Concat(Vec<Expr>),
+    /// The string without the whitespace at its ends; an unset value stays unset.
+    Trim(Box<Expr>),
     /// The lines of a string, as a list; an unset value has none.
     Lines(Box<Expr>),
     /// A list's strings, each ending in a newline.

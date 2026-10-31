@@ -246,13 +246,40 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 skip: format!("feature {name} is not declared"),
             }
         }
-        Operation::AddPolicy { target, policies } => Stmt::Edit {
-            selection: select(target.as_ref(), Scope::default()),
-            transform: Transform::AddPolicy {
-                policies: policies.clone(),
-                resolve_with: Expr::PolicyFiles,
-            },
-        },
+        // Checked against the files init compiles the policy from, named for the
+        // platform policy version the vendor targets: a step's binding, a token.
+        Operation::AddPolicy { target, policies } => {
+            let version = name("version");
+            let str = |text: &str| Expr::Literal(Value::Str(text.to_owned()));
+            let files = android_firmware::SEPOLICY_FILES
+                .iter()
+                .map(|(path, suffix)| match suffix {
+                    None => select(path, Scope::default()),
+                    Some(suffix) => select_expr(
+                        Expr::Concat(vec![str(path), Expr::Var(version.clone()), str(suffix)]),
+                        Scope::default(),
+                    ),
+                })
+                .collect();
+            let named = select(android_firmware::SEPOLICY_VERSION, Scope::default());
+            return vec![
+                expect(
+                    named.clone(),
+                    "the vendor does not name the platform policy version".into(),
+                ),
+                Stmt::Let {
+                    name: version,
+                    value: Expr::Trim(Box::new(Expr::Read(Box::new(named)))),
+                    body: vec![Stmt::Edit {
+                        selection: select(target.as_ref(), Scope::default()),
+                        transform: Transform::AddPolicy {
+                            policies: policies.clone(),
+                            resolve_with: Expr::Union(files),
+                        },
+                    }],
+                },
+            ];
+        }
         Operation::Append { target, content } => {
             let file = select(target.as_ref(), Scope::default());
             Stmt::Edit {
