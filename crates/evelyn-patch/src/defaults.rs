@@ -3,29 +3,12 @@
 //! would label it.
 
 use crate::{Composition, Error, Images, Target};
-use android_firmware::{AndroidMetadata, DevicePath, Mounts, Name, TargetPath};
+use android_firmware::{
+    AndroidMetadata, DevicePath, FILE_CONTEXTS, FS_CONFIG, Mounts, Name, TargetPath,
+};
 use android_fs::EntryKind;
 use android_fs::defaults::{FileContexts, FileKind, FsConfig, capability_xattr};
 use std::collections::BTreeMap;
-
-/// `fs_config_files` and `fs_config_dirs`, in the order Android reads them.
-const FS_CONFIG: [&str; 6] = [
-    "/system",
-    "/vendor",
-    "/oem",
-    "/odm",
-    "/product",
-    "/system_ext",
-];
-
-/// `file_contexts`, in the order Android loads them.
-const FILE_CONTEXTS: [&str; 5] = [
-    "/system/etc/selinux/plat_file_contexts",
-    "/system_ext/etc/selinux/system_ext_file_contexts",
-    "/product/etc/selinux/product_file_contexts",
-    "/vendor/etc/selinux/vendor_file_contexts",
-    "/odm/etc/selinux/odm_file_contexts",
-];
 
 pub(crate) struct Defaults {
     fs_config: FsConfig,
@@ -94,17 +77,18 @@ impl Defaults {
             .contexts
             .label(&path, file_kind)
             .ok_or_else(|| Error::NoLabel(path.clone()))?;
-        let mut selinux = label.as_bytes().to_vec();
-        selinux.push(0);
-        let mut xattrs = BTreeMap::from([("security.selinux".to_owned(), selinux)]);
-        if let Some(capabilities) = capability_xattr(ownership.capabilities) {
-            xattrs.insert("security.capability".to_owned(), capabilities);
-        }
-        Ok(AndroidMetadata {
+        let mut metadata = AndroidMetadata {
             uid: ownership.uid,
             gid: ownership.gid,
             mode: ownership.mode,
-            xattrs,
-        })
+            xattrs: BTreeMap::new(),
+        };
+        metadata.set_selinux(label);
+        if let Some(capabilities) = capability_xattr(ownership.capabilities) {
+            metadata
+                .xattrs
+                .insert("security.capability".to_owned(), capabilities);
+        }
+        Ok(metadata)
     }
 }

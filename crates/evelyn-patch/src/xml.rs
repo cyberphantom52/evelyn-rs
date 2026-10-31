@@ -1,8 +1,7 @@
-//! Hash-guarded XML edits on an xot tree. The edited document is written out
+//! XML edits on an xot tree. The edited document is written out
 //! again in full, so its formatting may change; its content changes only where
 //! the edits say.
 
-use android_firmware::Sha256Digest;
 use recipe::{XmlEdit, XmlMatch, XmlName, XmlPredicate, XmlStep};
 use thiserror::Error;
 use xot::{
@@ -12,8 +11,6 @@ use xot::{
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum Error {
-    #[error("XML input SHA-256 mismatch")]
-    HashMismatch,
     #[error("XML document is not UTF-8")]
     Utf8,
     #[error("invalid XML: {0}")]
@@ -38,14 +35,7 @@ pub enum Error {
 
 /// Later edits see earlier edits. A `PutChild` fragment must be exactly one element
 /// that matches its key where it is inserted.
-pub fn apply(
-    input: &[u8],
-    before: Option<&Sha256Digest>,
-    edits: &[XmlEdit],
-) -> Result<Vec<u8>, Error> {
-    if before.is_some_and(|before| Sha256Digest::bytes(input) != *before) {
-        return Err(Error::HashMismatch);
-    }
+pub fn apply(input: &[u8], edits: &[XmlEdit]) -> Result<Vec<u8>, Error> {
     let source = std::str::from_utf8(input).map_err(|_| Error::Utf8)?;
     let mut xot = Xot::new();
     let document = xot
@@ -154,7 +144,7 @@ fn fragment(xot: &mut Xot, parent: Node, element: &str) -> Result<Node, Error> {
         if prefix == xml {
             continue;
         }
-        let uri = escape(xot.namespace_str(namespace));
+        let uri = recipe::escape_attribute(xot.namespace_str(namespace));
         match xot.prefix_str(prefix) {
             "" => declarations.push_str(&format!(" xmlns=\"{uri}\"")),
             prefix => declarations.push_str(&format!(" xmlns:{prefix}=\"{uri}\"")),
@@ -250,12 +240,4 @@ fn select(xot: &Xot, document: Node, path: &[XmlStep]) -> Vec<Node> {
         nodes = next;
     }
     nodes
-}
-
-/// A namespace URI as an attribute value.
-fn escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('<', "&lt;")
 }

@@ -11,8 +11,7 @@ use android_firmware::{
 };
 use android_fs::PartitionTree;
 use recipe::{
-    Recipe,
-    tree::{Assigned, Expr, Stmt, Transform},
+    tree::{Assigned, Expr, Stmt, Transform, Tree},
     value::{Located, Place, Value},
 };
 use serde::Serialize;
@@ -84,9 +83,8 @@ impl Composition {
         }
     }
 
-    /// Apply a recipe: its primitive tree, steps in dependency order.
-    pub fn apply(&mut self, recipe: &Recipe, context: &Context<'_>) -> Result<(), Error> {
-        let tree = recipe.tree()?;
+    /// Apply a recipe's primitive tree, its steps in dependency order.
+    pub fn apply(&mut self, tree: &Tree, context: &Context<'_>) -> Result<(), Error> {
         let unnamed = Name::try_from("recipe".to_owned())?;
         for stmt in &tree.body {
             self.exec(stmt, &tree.name, &unnamed, context)?;
@@ -124,7 +122,7 @@ impl Composition {
         if self.package.is_some() && matches!(stmt, Stmt::SetMetadata { .. } | Stmt::Within { .. })
         {
             return Err(Error::Unsupported(
-                "inside a package only Edit, Write, Delete, Let, When and Assert run",
+                "inside a package only Edit, Copy, Delete, Let, When and Assert run",
             ));
         }
         match stmt {
@@ -417,7 +415,7 @@ impl Composition {
             None => RelativePath::try_from(path.to_owned()),
         };
         let files = if source.is_dir() {
-            crate::operations::files(&source)?
+            toolchain::files(&source)?
                 .into_iter()
                 .map(|(relative, file)| {
                     Ok((
@@ -535,10 +533,8 @@ impl Composition {
 
     /// Give the entries waiting for them Android's defaults, from the finished
     /// build's own policy as the device labels with it, then what was set over
-    /// them; write
-    /// every target's manifest and return the finished trees, with the steps that
-    /// were skipped, the removed patterns that matched nothing and the
-    /// `SetMetadata` that changed nothing.
+    /// them; write every target's manifest and return the finished trees, with the
+    /// steps that were skipped and the `SetMetadata` that changed nothing.
     pub fn finish(
         mut self,
         mounts: &Mounts,

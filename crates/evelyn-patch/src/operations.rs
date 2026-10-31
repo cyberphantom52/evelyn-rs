@@ -12,13 +12,7 @@ impl Target {
     /// Remove `path` (or every entry a glob matches) and its contents. Returns
     /// whether there was anything to remove.
     pub(crate) fn remove(&mut self, path: &RelativePath, step: &Name) -> Result<bool, Error> {
-        let matches = if layout::is_glob(path) {
-            layout::expand(&self.tree, path)
-        } else if self.tree.entries.contains_key(path) {
-            vec![path.clone()]
-        } else {
-            Vec::new()
-        };
+        let matches = layout::matches(&self.tree, path);
         if matches.is_empty() {
             return Ok(false);
         }
@@ -199,7 +193,7 @@ impl Target {
         context: &Context<'_>,
         step: &Name,
     ) -> Result<(), Error> {
-        let canonical = self.file(path)?.0.clone();
+        let canonical = self.file(path)?.path.clone();
         let bytes = self.read(path, context.images)?;
         let changed = transformed(&bytes, transform, context)?;
         if changed == bytes {
@@ -248,35 +242,6 @@ impl Target {
     }
 }
 
-/// Regular files under `root`, as (path relative to `root`, full path), sorted.
-pub(crate) fn files(root: &Path) -> Result<Vec<(String, std::path::PathBuf)>, Error> {
-    let mut found = Vec::new();
-    let mut pending = vec![(String::new(), root.to_path_buf())];
-    while let Some((prefix, dir)) = pending.pop() {
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let relative = if prefix.is_empty() {
-                name
-            } else {
-                format!("{prefix}/{name}")
-            };
-            let kind = entry.file_type()?;
-            if kind.is_dir() {
-                pending.push((relative, entry.path()));
-            } else if kind.is_file() {
-                found.push((relative, entry.path()));
-            } else {
-                return Err(Error::Unsupported(
-                    "asset trees may hold only files and directories",
-                ));
-            }
-        }
-    }
-    found.sort();
-    Ok(found)
-}
-
 /// A file's content after `transform`, wherever the file is: in the build or in a
 /// package.
 pub(crate) fn transformed(
@@ -289,11 +254,21 @@ pub(crate) fn transformed(
             .map_err(|_| Error::Unsupported("text edits require UTF-8"))
     };
     let asset = |path: &RelativePath| text(&std::fs::read(path.resolve(context.assets))?);
+    let before = match transform {
+        Transform::Bytes { before, .. } => Some(before),
+        Transform::Xml { before, .. } | Transform::TextPatch { before, .. } => before.as_ref(),
+        _ => None,
+    };
+    if let Some(before) = before
+        && Sha256Digest::bytes(bytes) != *before
+    {
+        return Err(Error::Before(before.clone()));
+    }
     Ok(match transform {
-        Transform::Bytes { before, edits } => crate::binary::apply(bytes, before, edits)?,
-        Transform::Xml { before, edits } => crate::xml::apply(bytes, before.as_ref(), edits)?,
-        Transform::TextPatch { patch, before } => {
-            crate::text::apply(&text(bytes)?, before.as_ref(), &asset(patch)?)?.into_bytes()
+        Transform::Bytes { edits, .. } => crate::binary::apply(bytes, edits)?,
+        Transform::Xml { edits, .. } => crate::xml::apply(bytes, edits)?,
+        Transform::TextPatch { patch, .. } => {
+            crate::text::apply(&text(bytes)?, &asset(patch)?)?.into_bytes()
         }
         Transform::Prop {
             key,
@@ -361,21 +336,14 @@ pub(crate) struct Pending {
     pub step: Name,
 }
 
-/// Set what `overrides` sets on `metadata`; whether that changed it. A label is the
-/// same with or without its terminating NUL, as for the kernel.
+/// Set what `overrides` sets on `metadata`; whether that changed it.
 fn set(metadata: &mut AndroidMetadata, overrides: &Overrides) -> bool {
     let before = metadata.clone();
     metadata.uid = overrides.uid.unwrap_or(metadata.uid);
     metadata.gid = overrides.gid.unwrap_or(metadata.gid);
     metadata.mode = overrides.mode.unwrap_or(metadata.mode);
-    let current = metadata.xattrs.get("security.selinux");
-    if let Some(label) = &overrides.selinux
-        && current
-            .is_none_or(|current| current.strip_suffix(&[0]).unwrap_or(current) != label.as_bytes())
-    {
-        let mut value = label.as_bytes().to_vec();
-        value.push(0);
-        metadata.xattrs.insert("security.selinux".into(), value);
+    if let Some(label) = &overrides.selinux {
+        metadata.set_selinux(label);
     }
     *metadata != before
 }
