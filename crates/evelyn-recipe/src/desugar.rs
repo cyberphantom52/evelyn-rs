@@ -1,12 +1,12 @@
 //! Surface recipes (steps of operations, `let:` and `when:`) into the primitive tree.
 
 use crate::{
-    Error, Expr as Written, Feature, Metadata, Operation, PropertyTarget, Recipe, Step, XmlEdit,
+    Error, Expr as Written, Feature, Location, Metadata, Operation, Recipe, Step, XmlEdit,
     XmlMatch, XmlName, XmlPath, XmlPredicate, escape_attribute,
-    tree::{Assigned, Expr, MethodEdit, Pattern, Scope, Stmt, Transform, Tree},
+    tree::{Assigned, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree},
     value::Value,
 };
-use android_firmware::Name;
+use android_firmware::{DevicePath, Name, RelativePath};
 
 impl Recipe {
     /// The recipe as primitives, its steps in dependency order.
@@ -59,16 +59,11 @@ fn expr(written: &Written) -> Expr {
     let boxed = |inner: &Written| Box::new(expr(inner));
     let all = |exprs: &[Written]| exprs.iter().map(expr).collect();
     match written {
-        Written::Build(_) | Written::Rom(_) | Written::Stock(_) | Written::Asset(_) => {
-            let (inside, pattern) = written.file().expect("a file reference");
-            select_expr(
-                text(pattern),
-                Scope {
-                    inside,
-                    ..Scope::default()
-                },
-            )
-        }
+        Written::Exists(inner) => match &**inner {
+            Written::At(Location::Partition(name)) => Expr::HasPartition(name.clone()),
+            inner => Expr::Exists(Box::new(expr(inner))),
+        },
+        Written::At(location) => at(location, Scope::default()),
         Written::Read(inner) => Expr::Read(boxed(inner)),
         Written::Hash(inner) => Expr::Hash(boxed(inner)),
         Written::Below(inner) => Expr::Below(boxed(inner)),
@@ -76,8 +71,6 @@ fn expr(written: &Written) -> Expr {
             key: key.clone(),
             files: target.as_ref().map(|_| Box::new(property_files(target))),
         },
-        Written::HasPartition(name) => Expr::HasPartition(name.clone()),
-        Written::Exists(inner) => Expr::Exists(boxed(inner)),
         Written::Not(inner) => Expr::Not(boxed(inner)),
         Written::All(exprs) => Expr::All(all(exprs)),
         Written::Any(exprs) => Expr::Any(all(exprs)),
@@ -150,6 +143,24 @@ fn text(written: &str) -> Expr {
     }
 }
 
+/// What a location selects, within `scope` in the build: in a firmware or the
+/// recipe's assets, or in the build or the open package, where a `Select` looks
+/// unless told otherwise. A partition is its property files.
+fn at(location: &Location, scope: Scope) -> Expr {
+    let inside = match location {
+        Location::Rom(_) => Some(Source::Rom),
+        Location::Stock(_) => Some(Source::Stock),
+        Location::Asset(_) => Some(Source::Assets),
+        Location::Build(_) | Location::Package(_) => None,
+        Location::Partition(name) => {
+            return Expr::PropertyFiles {
+                partition: Some(name.clone()),
+            };
+        }
+    };
+    select_expr(text(location.path()), Scope { inside, ..scope })
+}
+
 fn select(pattern: &str, scope: Scope) -> Expr {
     select_expr(Expr::Literal(Value::Str(pattern.to_owned())), scope)
 }
@@ -164,16 +175,18 @@ fn select_expr(pattern: Expr, scope: Scope) -> Expr {
 fn operation(operation: &Operation) -> Vec<Stmt> {
     let stmt = match operation {
         Operation::Copy { from, to, metadata } => {
-            let (inside, path) = from.file().expect("Copy copies from a file reference");
+            let path = from.path();
             let found = expect(
-                expr(from),
-                match inside {
-                    Some(source) => format!("{path} is not in {source}"),
-                    None => format!("{path} is not in the build"),
+                at(from, Scope::default()),
+                match from {
+                    Location::Rom(_) => format!("{path} is not in the ROM"),
+                    Location::Stock(_) => format!("{path} is not in the stock firmware"),
+                    Location::Asset(_) => format!("{path} is not in the recipe's assets"),
+                    _ => format!("{path} is not there"),
                 },
             );
             let copy = Stmt::Copy {
-                selection: expr(from),
+                selection: at(from, Scope::default()),
                 to: to.as_ref().map(expr),
             };
             // What the copy put in the build, by where it went.
@@ -210,7 +223,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             origin,
             partition,
         } => {
-            let selection = select(
+            let selection = at(
                 pattern,
                 Scope {
                     origin: *origin,
@@ -225,7 +238,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             }
         }
         Operation::SetMetadata { pattern, .. } => Stmt::SetMetadata {
-            selection: select(pattern.as_ref(), Scope::default()),
+            selection: at(pattern, Scope::default()),
             pattern: pattern.to_string(),
             metadata: Assigned::Fields(overrides(operation)),
         },
@@ -257,19 +270,20 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             skip: format!("property {key} is not defined there"),
         },
         Operation::ApplyDiff { target, patch } => Stmt::Edit {
-            selection: select(target.as_ref(), Scope::default()),
-            transform: Transform::ApplyDiff((**patch).clone()),
+            selection: at(target, Scope::default()),
+            transform: Transform::ApplyDiff(asset(patch)),
         },
         Operation::WriteBytes { target, edits } => Stmt::Edit {
-            selection: select(target.as_ref(), Scope::default()),
+            selection: at(target, Scope::default()),
             transform: Transform::WriteBytes(edits.clone()),
         },
         Operation::EditXml { target, edits } => Stmt::Edit {
-            selection: select(target.as_ref(), Scope::default()),
+            selection: at(target, Scope::default()),
             transform: Transform::Xml(edits.clone()),
         },
         Operation::Package { target, edits } => Stmt::Package {
-            package: (**target).clone(),
+            package: DevicePath::try_from(target.path().to_owned())
+                .expect("a Package target is checked to be written out"),
             body: edits.iter().flat_map(self::operation).collect(),
         },
         Operation::StubMethod {
@@ -281,12 +295,12 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             class,
             method,
             body,
-        } => smali(class, method, MethodEdit::Replace((**body).clone())),
+        } => smali(class, method, MethodEdit::Replace(asset(body))),
         Operation::InsertMethod {
             class,
             method,
             body,
-        } => smali(class, method, MethodEdit::Insert((**body).clone())),
+        } => smali(class, method, MethodEdit::Insert(asset(body))),
         Operation::EnableFeature(feature) => {
             let file = feature_file(feature);
             let (root, element, name, args) = match feature {
@@ -366,9 +380,9 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                     name: version,
                     value: Expr::Trim(Box::new(Expr::Read(Box::new(named)))),
                     body: vec![Stmt::Edit {
-                        selection: select(target.as_ref(), Scope::default()),
+                        selection: at(target, Scope::default()),
                         transform: Transform::AddPolicy {
-                            policies: policies.iter().map(|policy| (**policy).clone()).collect(),
+                            policies: policies.iter().map(asset).collect(),
                             resolve_with: Expr::Union(files),
                         },
                     }],
@@ -376,7 +390,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             ];
         }
         Operation::Append { target, content } => {
-            let file = select(target.as_ref(), Scope::default());
+            let file = at(target, Scope::default());
             Stmt::Edit {
                 transform: Transform::Write(appended(
                     Expr::Read(Box::new(file.clone())),
@@ -387,10 +401,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         }
         Operation::AssertHash { target, sha256 } => Stmt::Assert {
             condition: Expr::Eq(
-                Box::new(Expr::Hash(Box::new(select(
-                    target.as_ref(),
-                    Scope::default(),
-                )))),
+                Box::new(Expr::Hash(Box::new(at(target, Scope::default())))),
                 Box::new(Expr::Literal(Value::Str(sha256.to_string()))),
             ),
             message: format!("{target} does not have SHA-256 {sha256}"),
@@ -422,29 +433,31 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
     vec![expect(selection, message), stmt]
 }
 
+/// An asset's path in the recipe's directory, checked to be written out.
+fn asset(location: &Location) -> RelativePath {
+    RelativePath::try_from(location.path().to_owned()).expect("an asset path is checked")
+}
+
 /// The file a feature of its kind is declared in.
 fn feature_file(feature: &Feature) -> &str {
     match feature {
         Feature::Android(_) => "/my_product/etc/permissions/com.oplus.android-features.xml",
         Feature::Oplus(_) => "/my_product/etc/permissions/oplus.feature.android.xml",
-        Feature::App { file, .. } => file.as_ref(),
+        Feature::App { file, .. } => file.path(),
     }
 }
 
 /// The property files a target names: those init loads, or those of them in a
 /// partition, or one file.
-fn property_files(target: &Option<PropertyTarget>) -> Expr {
+fn property_files(target: &Option<Location>) -> Expr {
     match target {
         None => Expr::PropertyFiles { partition: None },
-        Some(PropertyTarget::Partition(partition)) => Expr::PropertyFiles {
-            partition: Some(partition.clone()),
-        },
-        Some(PropertyTarget::Build(path)) => select(path.as_ref(), Scope::default()),
+        Some(target) => at(target, Scope::default()),
     }
 }
 
 /// The property files in a target's scope that define `key`.
-fn defining(key: &str, target: &Option<PropertyTarget>) -> Expr {
+fn defining(key: &str, target: &Option<Location>) -> Expr {
     let file = name("file");
     Expr::Filter {
         over: Box::new(property_files(target)),
@@ -458,7 +471,7 @@ fn defining(key: &str, target: &Option<PropertyTarget>) -> Expr {
 
 /// The file a new key goes to: a target's file; a partition's own; without a
 /// target the one init loads last, so the key takes effect.
-fn new_property_file(target: &Option<PropertyTarget>) -> Expr {
+fn new_property_file(target: &Option<Location>) -> Expr {
     let first = |files: Vec<Expr>| {
         files
             .into_iter()
@@ -467,8 +480,7 @@ fn new_property_file(target: &Option<PropertyTarget>) -> Expr {
             .expect("files to choose from")
     };
     match target {
-        Some(PropertyTarget::Build(path)) => select(path.as_ref(), Scope::default()),
-        Some(PropertyTarget::Partition(partition)) => first(
+        Some(Location::Partition(partition)) => first(
             android_firmware::PARTITION_PROPERTY_FILES
                 .iter()
                 .map(|path| {
@@ -482,6 +494,7 @@ fn new_property_file(target: &Option<PropertyTarget>) -> Expr {
                 })
                 .collect(),
         ),
+        Some(file) => at(file, Scope::default()),
         // Last loaded first: within a group the canonical file, else the legacy
         // ones from the last loaded.
         None => first(

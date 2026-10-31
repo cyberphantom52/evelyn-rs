@@ -1,11 +1,12 @@
 //! The expressions recipes are written with: the primitive tree's, named for how a
 //! recipe reads, each desugared into the tree's when the recipe is loaded. A file
-//! is named by where it is looked for, and a string can name a bound value as
+//! is named by where it is looked for, a [`Location`], and a string can name a bound value as
 //! `{name}`: `Exists(Asset("apex/com.android.vndk.v{vndk}.apex"))`.
 
 use crate::{
-    PropertyTarget,
-    tree::{Pattern, Source},
+    Error,
+    location::{Kind, Location},
+    tree::Pattern,
 };
 use android_firmware::Name;
 use serde::{Deserialize, Serialize};
@@ -13,15 +14,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum Expr {
-    /// What a pattern matches in the build: a device path, globs allowed. A
-    /// relative pattern is tried in the directory of every partition.
-    Build(String),
-    /// What a device path, globs allowed, matches in the ROM.
-    Rom(String),
-    /// What a device path, globs allowed, matches in the stock firmware.
-    Stock(String),
-    /// A file or directory in the recipe's directory, by its path there.
-    Asset(String),
     /// The text of the one file selected.
     Read(Box<Expr>),
     /// The SHA-256 of the one file selected.
@@ -29,15 +21,13 @@ pub enum Expr {
     /// The entries selected and everything below them.
     Below(Box<Expr>),
     /// A property's value, or unset: without a target the value the device ends
-    /// up with, as init loads it; with a partition or a file, from its files.
+    /// up with, as init loads it; with `Partition(…)` or `Build(…)`, from its files.
     Property {
         key: String,
         #[serde(default)]
-        target: Option<PropertyTarget>,
+        target: Option<Location>,
     },
-    /// The build has this partition.
-    HasPartition(Name),
-    /// A string is set, or a selection is not empty.
+    /// A string is set, a selection is not empty, or the build has a `Partition(…)`.
     Exists(Box<Expr>),
     Not(Box<Expr>),
     All(Vec<Expr>),
@@ -67,6 +57,9 @@ pub enum Expr {
     Trim(Box<Expr>),
     /// The string has a match of the regular expression in it.
     Matches(Box<Expr>, Pattern),
+    /// The files a location selects: `Build("/…")`, `Rom("/…")` and so on.
+    #[serde(untagged)]
+    At(Location),
     /// A string, in which `{name}` is the value `name` is bound to.
     #[serde(untagged)]
     Text(String),
@@ -77,14 +70,53 @@ pub enum Expr {
 }
 
 impl Expr {
-    /// Where a file reference looks, the build being `None`, and its pattern.
-    pub fn file(&self) -> Option<(Option<Source>, &str)> {
+    /// That every location in it is one an expression can select: inside a
+    /// package its files, `Package(…)`, outside it the build's, `Build(…)`; a
+    /// `Partition(…)` only to test it exists or to read properties from.
+    pub(crate) fn check(&self, in_package: bool) -> Result<(), Error> {
+        let files: &[Kind] = match in_package {
+            true => &[Kind::Package, Kind::Rom, Kind::Stock, Kind::Asset],
+            false => &[Kind::Build, Kind::Rom, Kind::Stock, Kind::Asset],
+        };
+        let check = |expr: &Expr| expr.check(in_package);
         match self {
-            Self::Build(path) => Some((None, path)),
-            Self::Rom(path) => Some((Some(Source::Rom), path)),
-            Self::Stock(path) => Some((Some(Source::Stock), path)),
-            Self::Asset(path) => Some((Some(Source::Assets), path)),
-            _ => None,
+            Self::At(location) => location.check(files, "an expression"),
+            Self::Exists(inner) => match &**inner {
+                Self::At(Location::Partition(_)) => Ok(()),
+                inner => check(inner),
+            },
+            Self::Property { target, .. } => target
+                .iter()
+                .try_for_each(|target| target.check(&[Kind::Build, Kind::Partition], "Property")),
+            Self::Read(inner)
+            | Self::Hash(inner)
+            | Self::Below(inner)
+            | Self::Not(inner)
+            | Self::Lines(inner)
+            | Self::Join(inner)
+            | Self::Trim(inner)
+            | Self::Matches(inner, _) => check(inner),
+            Self::All(exprs) | Self::Any(exprs) | Self::Union(exprs) => {
+                exprs.iter().try_for_each(check)
+            }
+            Self::Eq(left, right) | Self::In(left, right) => {
+                check(left)?;
+                check(right)
+            }
+            Self::If {
+                condition,
+                then,
+                otherwise,
+            } => {
+                check(condition)?;
+                check(then)?;
+                check(otherwise)
+            }
+            Self::Filter { over, keep, .. } => {
+                check(over)?;
+                check(keep)
+            }
+            Self::Text(_) | Self::Bool(_) | Self::List(_) => Ok(()),
         }
     }
 }

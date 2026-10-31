@@ -55,8 +55,8 @@ pub fn capture(
             let patch = diffy::create_patch(before, after).to_string().into_bytes();
             (
                 vec![Operation::ApplyDiff {
-                    target: recipe::Build::Build(target),
-                    patch: recipe::Asset::Asset(asset),
+                    target: recipe::Location::Build(target.to_string()),
+                    patch: recipe::Location::Asset(asset.to_string()),
                 }],
                 Some(patch),
             )
@@ -81,11 +81,11 @@ pub fn capture(
             (
                 vec![
                     Operation::AssertHash {
-                        target: recipe::Build::Build(target.clone()),
+                        target: recipe::Location::Build(target.to_string()),
                         sha256: Sha256Digest::bytes(before),
                     },
                     Operation::WriteBytes {
-                        target: recipe::Build::Build(target),
+                        target: recipe::Location::Build(target.to_string()),
                         edits,
                     },
                 ],
@@ -94,7 +94,7 @@ pub fn capture(
         }
         CaptureKind::Replace => (
             vec![Operation::Copy {
-                from: recipe::Expr::Asset(asset.to_string()),
+                from: recipe::Location::Asset(asset.to_string()),
                 to: Some(recipe::Expr::Text(target.to_string())),
                 metadata: recipe::Metadata::Copy,
             }],
