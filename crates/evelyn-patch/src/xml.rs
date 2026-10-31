@@ -17,12 +17,6 @@ pub enum Error {
     Parse(String),
     #[error("XML edit failed")]
     InvalidXml,
-    #[error("XML edit {edit} expected {expected} matches, found {actual}")]
-    Count {
-        edit: usize,
-        expected: usize,
-        actual: usize,
-    },
     #[error("XML scalar edit cannot replace element children")]
     MixedContent,
     #[error("XML document element cannot be removed")]
@@ -42,8 +36,8 @@ pub fn apply(input: &[u8], edits: &[XmlEdit]) -> Result<Vec<u8>, Error> {
         .parse(source)
         .map_err(|error| Error::Parse(error.to_string()))?;
     let mut changed = false;
-    for (index, edit) in edits.iter().enumerate() {
-        changed |= apply_one(&mut xot, document, index, edit)?;
+    for edit in edits {
+        changed |= apply_one(&mut xot, document, edit)?;
     }
     // A document no edit changed is not written out again.
     if !changed {
@@ -63,18 +57,11 @@ pub fn apply(input: &[u8], edits: &[XmlEdit]) -> Result<Vec<u8>, Error> {
 }
 
 /// Apply one edit; whether it changed the document.
-fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Result<bool, Error> {
+fn apply_one(xot: &mut Xot, document: Node, edit: &XmlEdit) -> Result<bool, Error> {
     let invalid = |_| Error::InvalidXml;
     match edit {
-        XmlEdit::SetText {
-            path,
-            expect,
-            value,
-        } => {
+        XmlEdit::SetText { path, value } => {
             let nodes = select(xot, document, &path.selectors);
-            if let Some(expect) = expect {
-                count(index, *expect, nodes.len())?;
-            }
             let changed = !nodes.is_empty();
             for node in nodes {
                 if xot.children(node).any(|child| xot.is_element(child)) {
@@ -89,16 +76,8 @@ fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Res
             }
             Ok(changed)
         }
-        XmlEdit::SetAttribute {
-            path,
-            name,
-            value,
-            expect,
-        } => {
+        XmlEdit::SetAttribute { path, name, value } => {
             let nodes = select(xot, document, &path.selectors);
-            if let Some(expect) = expect {
-                count(index, *expect, nodes.len())?;
-            }
             let namespace = match &name.namespace {
                 Some(uri) => xot.add_namespace(uri),
                 None => xot.no_namespace(),
@@ -114,11 +93,8 @@ fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Res
             }
             Ok(changed)
         }
-        XmlEdit::Remove { path, expect } => {
+        XmlEdit::Remove { path } => {
             let nodes = select(xot, document, &path.selectors);
-            if let Some(expect) = expect {
-                count(index, *expect, nodes.len())?;
-            }
             let root = xot.document_element(document).map_err(invalid)?;
             for node in &nodes {
                 if *node == root {
@@ -134,31 +110,29 @@ fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Res
         XmlEdit::PutChild {
             parent,
             key,
-            expect,
             element,
         } => {
             let parents = select(xot, document, &parent.selectors);
-            count(index, 1, parents.len())?;
-            let parent = parents[0];
-            let children: Vec<_> = xot
-                .children(parent)
-                .filter(|node| matches(xot, *node, key))
-                .collect();
-            // Without `expect`, a child to replace may or may not be there.
-            count(
-                index,
-                expect.unwrap_or(children.len().min(1)),
-                children.len(),
-            )?;
-            let fragment = fragment(xot, parent, element)?;
-            if !matches(xot, fragment, key) {
-                return Err(Error::Fragment);
+            for parent in &parents {
+                let children: Vec<_> = xot
+                    .children(*parent)
+                    .filter(|node| matches(xot, *node, key))
+                    .collect();
+                let fragment = fragment(xot, *parent, element)?;
+                if !matches(xot, fragment, key) {
+                    return Err(Error::Fragment);
+                }
+                match children.split_first() {
+                    Some((first, rest)) => {
+                        xot.replace(*first, fragment).map_err(invalid)?;
+                        for child in rest {
+                            xot.remove(*child).map_err(invalid)?;
+                        }
+                    }
+                    None => xot.append(*parent, fragment).map_err(invalid)?,
+                }
             }
-            match children.first() {
-                Some(child) => xot.replace(*child, fragment).map_err(invalid)?,
-                None => xot.append(parent, fragment).map_err(invalid)?,
-            }
-            Ok(true)
+            Ok(!parents.is_empty())
         }
     }
 }
@@ -191,18 +165,6 @@ fn fragment(xot: &mut Xot, parent: Node, element: &str) -> Result<Node, Error> {
     }
     xot.detach(node).map_err(|_| Error::Fragment)?;
     Ok(node)
-}
-
-fn count(edit: usize, expected: usize, actual: usize) -> Result<(), Error> {
-    if expected == actual {
-        Ok(())
-    } else {
-        Err(Error::Count {
-            edit,
-            expected,
-            actual,
-        })
-    }
 }
 
 /// Whether an xot name is `name`: its local name and namespace, if any.

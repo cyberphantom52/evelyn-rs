@@ -244,22 +244,18 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 },
             ];
         }
-        // Every definition, or a lower one would show; there must be one.
-        Operation::RemoveProperty { key, target } => {
-            return vec![
-                expect(
-                    defining(key, target),
-                    format!("property {key} is not defined there"),
-                ),
-                Stmt::Edit {
-                    selection: defining(key, target),
-                    transform: Transform::Property {
-                        key: key.clone(),
-                        value: None,
-                    },
+        // Every definition, or a lower one would show.
+        Operation::RemoveProperty { key, target } => Stmt::When {
+            condition: defined(defining(key, target)),
+            body: vec![Stmt::Edit {
+                selection: defining(key, target),
+                transform: Transform::Property {
+                    key: key.clone(),
+                    value: None,
                 },
-            ];
-        }
+            }],
+            skip: format!("property {key} is not defined there"),
+        },
         Operation::ApplyDiff { target, patch } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
             transform: Transform::ApplyDiff((**patch).clone()),
@@ -308,7 +304,6 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 transform: Transform::Xml(vec![XmlEdit::PutChild {
                     parent: XmlPath::try_from(root.to_owned()).expect("a literal XML path"),
                     key: feature_match(element, name),
-                    expect: None,
                     element: format!("<{element} name=\"{}\"{args}/>", escape_attribute(name)),
                 }]),
             }
@@ -321,7 +316,6 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                         feature_match(element, name),
                         format!("//{element}[@name='{name}']"),
                     ),
-                    expect: None,
                 })
                 .collect();
             // Only the files that mention the feature: one that cannot hold it is

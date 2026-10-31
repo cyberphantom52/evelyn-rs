@@ -7,32 +7,20 @@
 //! preserves the text up to the value and the original line ending, and an append
 //! uses the file's own line ending (LF by default).
 
-use thiserror::Error;
-
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum Error {
-    #[error("property match count: expected {expected}, found {actual}")]
-    Count { expected: usize, actual: usize },
-    #[error("property {0} is not defined")]
-    Undefined(String),
-}
-
 /// Whether a file at `path` is a property file Android reads (`build.prop`,
 /// `default.prop`, ...).
 pub fn is_property_file(path: &str) -> bool {
     path.ends_with(".prop")
 }
 
-/// Set every assignment of `key`, appending one when there is none. `expect`
-/// pins how many assignments there must be.
-pub fn set(input: &str, key: &str, value: &str, expect: Option<usize>) -> Result<String, Error> {
-    edit(input, key, Some(value), expect)
+/// Set every assignment of `key`, appending one when there is none.
+pub fn set(input: &str, key: &str, value: &str) -> String {
+    edit(input, key, Some(value))
 }
 
 /// Remove every complete assignment line of `key`, including its line ending.
-/// `expect` pins how many there must be; without it, at least one.
-pub fn remove(input: &str, key: &str, expect: Option<usize>) -> Result<String, Error> {
-    edit(input, key, None, expect)
+pub fn remove(input: &str, key: &str) -> String {
+    edit(input, key, None)
 }
 
 /// One assignment, in file order.
@@ -138,23 +126,11 @@ fn prefix<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     (entry.key == key).then_some(prefix)
 }
 
-fn edit(
-    input: &str,
-    key: &str,
-    value: Option<&str>,
-    expect: Option<usize>,
-) -> Result<String, Error> {
+fn edit(input: &str, key: &str, value: Option<&str>) -> String {
     let actual = input
         .split_inclusive('\n')
         .filter(|line| prefix(line, key).is_some())
         .count();
-    match expect {
-        Some(expected) if actual != expected => {
-            return Err(Error::Count { expected, actual });
-        }
-        None if actual == 0 && value.is_none() => return Err(Error::Undefined(key.into())),
-        _ => {}
-    }
     let mut output = String::with_capacity(input.len());
     for line in input.split_inclusive('\n') {
         match prefix(line, key) {
@@ -180,5 +156,5 @@ fn edit(
         output.push_str(value);
         output.push_str(eol);
     }
-    Ok(output)
+    output
 }

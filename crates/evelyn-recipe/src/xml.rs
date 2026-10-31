@@ -1,6 +1,5 @@
 //! Literal XML selectors; paths include the document element.
 
-use crate::Error;
 use serde::{Deserialize, Serialize};
 
 /// An element or attribute name, written as `local` or, with a namespace,
@@ -209,66 +208,27 @@ impl From<XmlPath> for String {
     }
 }
 
-fn some_one() -> Option<usize> {
-    Some(1)
-}
-
-fn is_some_one(expect: &Option<usize>) -> bool {
-    *expect == Some(1)
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum XmlEdit {
-    /// Replace the text of every match; `expect` (default 1) pins how many, and
-    /// `None` lets there be any number.
-    SetText {
-        path: XmlPath,
-        #[serde(default = "some_one", skip_serializing_if = "is_some_one")]
-        expect: Option<usize>,
-        value: String,
-    },
+    /// Replace the text of every match.
+    SetText { path: XmlPath, value: String },
     /// Set the attribute `name` of every match to `value`, adding it where it is
-    /// missing; `expect` (default 1) pins how many, and `None` lets there be any
-    /// number.
+    /// missing.
     SetAttribute {
         path: XmlPath,
         name: XmlName,
         value: String,
-        #[serde(default = "some_one", skip_serializing_if = "is_some_one")]
-        expect: Option<usize>,
     },
-    /// Remove every match; `expect` (default 1) pins how many, and `None` lets
-    /// there be any number, none included.
-    Remove {
-        path: XmlPath,
-        #[serde(default = "some_one", skip_serializing_if = "is_some_one")]
-        expect: Option<usize>,
-    },
-    /// Add `element` under `parent`, replacing the child `key` matches if there is
-    /// one. `expect` pins whether there must be (1) or must not be (0).
+    /// Remove every match.
+    Remove { path: XmlPath },
+    /// Add `element` under every match of `parent`, in place of the children `key`
+    /// matches there, if there are any.
     PutChild {
         parent: XmlPath,
         key: XmlMatch,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        expect: Option<usize>,
         element: String,
     },
-}
-
-/// Shape rules the editor relies on; names, values and fragments are checked when applied.
-pub(crate) fn validate(edits: &[XmlEdit]) -> Result<(), Error> {
-    for edit in edits {
-        if let XmlEdit::PutChild {
-            expect: Some(2..), ..
-        } = edit
-        {
-            return Err(Error::Invalid(
-                "XML PutChild expects 0 or 1 existing child".into(),
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// Text as an XML attribute value.
