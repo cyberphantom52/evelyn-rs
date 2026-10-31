@@ -28,7 +28,7 @@ impl Tree {
     }
 }
 
-/// Walk statements on their own, such as a `Within`'s body.
+/// Walk statements on their own, such as a `Package`'s body.
 pub fn walk(body: &[Stmt], visitor: &mut impl Visitor) -> Result<(), Error> {
     let mut bound = Vec::new();
     body.iter()
@@ -49,7 +49,7 @@ fn walk_stmt<'a>(
                 Error::Invalid(message) => Error::Invalid(format!("step {id}: {message}")),
                 error => error,
             }),
-        Stmt::Within { body, .. } => body
+        Stmt::Package { body, .. } => body
             .iter()
             .try_for_each(|stmt| walk_stmt(stmt, visitor, bound)),
         Stmt::Let { name, value, body } => {
@@ -72,14 +72,14 @@ fn walk_stmt<'a>(
             selection,
             transform:
                 Transform::Append(text)
-                | Transform::Sepolicy {
+                | Transform::AddPolicy {
                     resolve_with: text, ..
                 },
         } => {
             walk_expr(selection, visitor, bound)?;
             walk_expr(text, visitor, bound)
         }
-        Stmt::Delete { selection, .. }
+        Stmt::Remove { selection, .. }
         | Stmt::Copy { selection, .. }
         | Stmt::SetMetadata { selection, .. }
         | Stmt::Edit { selection, .. } => walk_expr(selection, visitor, bound),
@@ -91,7 +91,7 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
     visitor.expr(expr, bound)?;
     match expr {
         Expr::Hash(inner)
-        | Expr::Content(inner)
+        | Expr::Read(inner)
         | Expr::Below(inner)
         | Expr::Unary { expr: inner, .. }
         | Expr::Matches { text: inner, .. } => walk_expr(inner, visitor, bound),
@@ -125,11 +125,11 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         Expr::Literal(_)
         | Expr::Var(_)
         | Expr::Select { .. }
-        | Expr::Prop { .. }
+        | Expr::Property { .. }
         | Expr::PropertyFiles { .. }
         | Expr::PolicyFiles
         | Expr::NewPropertyFile(_)
-        | Expr::Partition(_) => Ok(()),
+        | Expr::HasPartition(_) => Ok(()),
     }
 }
 
@@ -167,8 +167,8 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
         expect(found, allowed, what).map(|()| found)
     };
     Ok(match expr {
-        Expr::Literal(Value::Str(_) | Value::Unset) | Expr::Prop { .. } => Kind::Str,
-        Expr::Literal(Value::Bool(_)) | Expr::Partition(_) => Kind::Bool,
+        Expr::Literal(Value::Str(_) | Value::Unset) | Expr::Property { .. } => Kind::Str,
+        Expr::Literal(Value::Bool(_)) | Expr::HasPartition(_) => Kind::Bool,
         Expr::Literal(Value::List(_)) => Kind::List,
         Expr::Literal(Value::Selection(_))
         | Expr::Select { .. }
@@ -184,7 +184,7 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
             }
         },
         Expr::Hash(inner) => of(inner, &[Kind::Selection], "Hash").map(|_| Kind::Str)?,
-        Expr::Content(inner) => of(inner, &[Kind::Selection], "Content").map(|_| Kind::Str)?,
+        Expr::Read(inner) => of(inner, &[Kind::Selection], "Read").map(|_| Kind::Str)?,
         Expr::Below(inner) => of(inner, &[Kind::Selection], "Below")?,
         Expr::Matches { text, .. } => of(text, &[Kind::Str], "Matches").map(|_| Kind::Bool)?,
         Expr::Let { name, value, body } => kind(body, &binding(bound, name, kind(value, bound)?))?,
@@ -209,8 +209,8 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
         }
         Expr::Unary { op, expr } => match op {
             UnaryOp::Not => of(expr, &[Kind::Bool], "Not")?,
-            UnaryOp::Defined => {
-                of(expr, &[Kind::Str, Kind::Selection], "Defined").map(|_| Kind::Bool)?
+            UnaryOp::Exists => {
+                of(expr, &[Kind::Str, Kind::Selection], "Exists").map(|_| Kind::Bool)?
             }
             UnaryOp::Lines => of(expr, &[Kind::Str], "Lines").map(|_| Kind::List)?,
             UnaryOp::Join => of(expr, &[Kind::List], "Join").map(|_| Kind::Str)?,
@@ -260,7 +260,7 @@ impl Visitor for Check {
                 selection,
                 transform:
                     Transform::Append(text)
-                    | Transform::Sepolicy {
+                    | Transform::AddPolicy {
                         resolve_with: text, ..
                     },
             } => {
@@ -270,20 +270,20 @@ impl Visitor for Check {
                         transform: Transform::Append(_),
                         ..
                     } => of(text, &[Kind::Str], "Append")?,
-                    _ => of(text, &[Kind::Selection], "SepolicyPatch")?,
+                    _ => of(text, &[Kind::Selection], "AddPolicy")?,
                 }
             }
-            Stmt::Delete { selection, .. }
+            Stmt::Remove { selection, .. }
             | Stmt::Copy { selection, .. }
             | Stmt::SetMetadata { selection, .. }
             | Stmt::Edit { selection, .. } => of(selection, &[Kind::Selection], "a selection")?,
-            Stmt::Within { .. } => {}
+            Stmt::Package { .. } => {}
         }
         // Only the statement's own fields: bodies are checked as they are walked.
         let own = match stmt {
             Stmt::Let { value, .. } => ron(value)?,
             Stmt::When { condition, .. } => ron(condition)?,
-            Stmt::Within {
+            Stmt::Package {
                 package, before, ..
             } => ron(&(package, before))?,
             other => ron(other)?,

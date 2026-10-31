@@ -34,7 +34,7 @@ pub enum Stmt {
         skip: String,
     },
     /// Remove every entry selected.
-    Delete { selection: Expr },
+    Remove { selection: Expr },
     /// Copy what is selected (from a firmware, the recipe's assets, or the build
     /// itself) into the build, at the same path or at `to`. Overwritten entries
     /// keep their metadata; new ones have their source's, and assets, which have
@@ -59,7 +59,7 @@ pub enum Stmt {
     Assert { condition: Expr, message: String },
     /// Decode a package (APK or JAR), run the body inside it and rebuild it. In
     /// the body, `/` is the package's root: `/res/values/strings.xml`.
-    Within {
+    Package {
         package: DevicePath,
         before: Option<Sha256Digest>,
         body: Vec<Stmt>,
@@ -68,11 +68,11 @@ pub enum Stmt {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Transform {
-    TextPatch {
+    Diff {
         patch: RelativePath,
         before: Option<Sha256Digest>,
     },
-    Bytes {
+    WriteBytes {
         before: Sha256Digest,
         edits: BTreeMap<u64, Hex>,
     },
@@ -81,7 +81,7 @@ pub enum Transform {
         edits: Vec<XmlEdit>,
     },
     /// Set a property to `value`, or remove it without one.
-    Prop { key: String, value: Option<String> },
+    Property { key: String, value: Option<String> },
     /// Add a string at the end, on a line of its own.
     Append(Expr),
     /// Change one method of the class a smali file defines.
@@ -92,7 +92,7 @@ pub enum Transform {
     },
     /// Patch one of the device's CIL policy files with TE `policies` (assets), checked
     /// to resolve with the policy files `resolve_with` selects, less the one patched.
-    Sepolicy {
+    AddPolicy {
         policies: Vec<RelativePath>,
         resolve_with: Expr,
     },
@@ -108,7 +108,7 @@ pub enum Expr {
         scope: Scope,
     },
     /// A property's value, or unset.
-    Prop {
+    Property {
         key: String,
         target: Option<PropertyTarget>,
     },
@@ -148,7 +148,7 @@ pub enum Expr {
     /// The entries selected and everything below them.
     Below(Box<Expr>),
     /// The text of the one file selected, in the build or a firmware.
-    Content(Box<Expr>),
+    Read(Box<Expr>),
     /// The string has a match of `pattern` in it; an unset value has none.
     Matches {
         text: Box<Expr>,
@@ -157,7 +157,7 @@ pub enum Expr {
     /// The SHA-256 of the one file selected.
     Hash(Box<Expr>),
     /// The build has this partition.
-    Partition(Name),
+    HasPartition(Name),
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
@@ -214,7 +214,7 @@ pub struct Scope {
 pub enum UnaryOp {
     Not,
     /// A string is set, or a selection is not empty.
-    Defined,
+    Exists,
     /// The lines of a string, as a list; an unset value has none.
     Lines,
     /// A list's strings, each ending in a newline.

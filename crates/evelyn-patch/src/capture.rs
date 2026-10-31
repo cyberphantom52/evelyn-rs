@@ -53,7 +53,7 @@ pub fn capture(
             let after = std::str::from_utf8(after)?;
             let patch = diffy::create_patch(before, after).to_string().into_bytes();
             (
-                vec![Operation::TextPatch {
+                vec![Operation::Diff {
                     target,
                     patch: asset,
                 }],
@@ -78,7 +78,7 @@ pub fn capture(
                 edits.insert(start as u64, Hex(after[start..cursor].to_vec()));
             }
             (
-                vec![Operation::BinaryPatch {
+                vec![Operation::WriteBytes {
                     target,
                     before: Sha256Digest::bytes(before),
                     edits,

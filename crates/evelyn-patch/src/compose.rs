@@ -60,7 +60,7 @@ pub struct Composition {
     skipped: Vec<Skipped>,
     /// Every `SetMetadata` statement, and whether it changed anything.
     set: Vec<(Unchanged, bool)>,
-    /// The package a `Within` has open.
+    /// The package a `Package` has open.
     package: Option<Opened>,
 }
 
@@ -119,10 +119,10 @@ impl Composition {
         step: &Name,
         context: &Context<'_>,
     ) -> Result<(), Error> {
-        if self.package.is_some() && matches!(stmt, Stmt::SetMetadata { .. } | Stmt::Within { .. })
+        if self.package.is_some() && matches!(stmt, Stmt::SetMetadata { .. } | Stmt::Package { .. })
         {
             return Err(Error::Unsupported(
-                "inside a package only Edit, Copy, Delete, Let, When and Assert run",
+                "inside a package only Edit, Copy, Remove, Let, When and Assert run",
             ));
         }
         match stmt {
@@ -156,7 +156,7 @@ impl Composition {
                     self.skip(recipe, step, skip.clone());
                 }
             }
-            Stmt::Delete { selection } => {
+            Stmt::Remove { selection } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
                 for entry in selected {
@@ -264,7 +264,7 @@ impl Composition {
                             .ok_or(Error::Unsupported("Append needs a string that is set"))?;
                         Transform::Append(Expr::Literal(Value::Str(text.to_owned())))
                     }
-                    Transform::Sepolicy {
+                    Transform::AddPolicy {
                         policies,
                         resolve_with,
                     } => {
@@ -274,10 +274,10 @@ impl Composition {
                                 continue;
                             }
                             let file = Expr::Literal(Value::Selection(vec![file.clone()]));
-                            let text = self.eval(&Expr::Content(Box::new(file)), context, step)?;
+                            let text = self.eval(&Expr::Read(Box::new(file)), context, step)?;
                             texts.extend(text.as_str()?.map(str::to_owned));
                         }
-                        Transform::Sepolicy {
+                        Transform::AddPolicy {
                             policies: policies.clone(),
                             resolve_with: Expr::Literal(Value::List(texts)),
                         }
@@ -321,7 +321,7 @@ impl Composition {
                     });
                 }
             }
-            Stmt::Within {
+            Stmt::Package {
                 package,
                 before,
                 body,

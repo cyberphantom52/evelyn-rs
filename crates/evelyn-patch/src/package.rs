@@ -1,4 +1,4 @@
-//! Packages (APKs and JARs) a `Within` edits: decoded with apktool into a
+//! Packages (APKs and JARs) a `Package` edits: decoded with apktool into a
 //! directory its body runs in, then rebuilt in place of the original. A failed
 //! body leaves the directory partially changed; the next decode replaces it.
 
@@ -20,7 +20,7 @@ pub enum Error {
     Io(PathBuf, #[source] std::io::Error),
 }
 
-/// A decoded package, open for the statements inside a `Within`.
+/// A decoded package, open for the statements inside a `Package`.
 pub(crate) struct Opened {
     pub decoded: PathBuf,
     /// The partition the package is in.
