@@ -25,6 +25,8 @@ pub enum Error {
     #[error(transparent)]
     Align(#[from] crate::align::Error),
     #[error(transparent)]
+    Sepolicy(#[from] crate::sepolicy::Error),
+    #[error(transparent)]
     Binary(#[from] crate::binary::Error),
     #[error(transparent)]
     Text(#[from] crate::text::Error),

@@ -13,6 +13,7 @@ mod operations;
 mod package;
 pub mod preview;
 mod scope;
+mod sepolicy;
 mod target;
 mod text;
 mod xml;

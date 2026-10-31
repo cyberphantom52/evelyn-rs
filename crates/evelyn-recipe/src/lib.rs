@@ -223,6 +223,13 @@ pub enum Operation {
         target: DevicePath,
         content: Data,
     },
+    /// Patch one of the device's CIL policy files with TE `policies` (assets), written
+    /// with Android's policy macros. The result must resolve with the device's other
+    /// policy files, as init loads them.
+    SepolicyPatch {
+        target: DevicePath,
+        policies: Vec<RelativePath>,
+    },
 }
 
 /// What new entries an import brings get: the firmware's metadata, Android's
@@ -367,6 +374,7 @@ impl Operation {
             Self::EnableFeature(..) => "EnableFeature",
             Self::DisableFeature(..) => "DisableFeature",
             Self::Append { .. } => "Append",
+            Self::SepolicyPatch { .. } => "SepolicyPatch",
         }
     }
 
@@ -406,6 +414,9 @@ impl Operation {
             Self::RemoveProperty { key, .. } if !property_key(key) => {
                 Err(Error::Invalid(format!("invalid property key {key:?}")))
             }
+            Self::SepolicyPatch { policies, .. } if policies.is_empty() => Err(Error::Invalid(
+                "SepolicyPatch needs at least one policy".into(),
+            )),
             Self::Remove {
                 partition, pattern, ..
             } => {

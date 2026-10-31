@@ -410,3 +410,39 @@ impl SuperLayout {
         }
     }
 }
+
+/// Where the vendor names the platform policy version its own policy is written against.
+pub const SEPOLICY_VERSION: &str = "/vendor/etc/selinux/plat_sepolicy_vers.txt";
+
+/// The CIL files init compiles a device's split SELinux policy from, in the order it
+/// passes them to secilc, for the platform policy `version` the vendor's targets. Init
+/// requires the platform policy and its mapping, `plat_pub_versioned.cil` and the
+/// vendor's policy, and uses each of the others only if the device has it.
+pub fn sepolicy_files(version: &str) -> Result<Vec<DevicePath>, Error> {
+    if version.is_empty()
+        || !version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    {
+        return Err(Error::Invalid {
+            kind: "SELinux policy version",
+            value: version.to_owned(),
+        });
+    }
+    [
+        "/system/etc/selinux/plat_sepolicy.cil".to_owned(),
+        format!("/system/etc/selinux/mapping/{version}.cil"),
+        format!("/system/etc/selinux/mapping/{version}.compat.cil"),
+        "/system_ext/etc/selinux/system_ext_sepolicy.cil".to_owned(),
+        format!("/system_ext/etc/selinux/mapping/{version}.cil"),
+        format!("/system_ext/etc/selinux/mapping/{version}.compat.cil"),
+        "/product/etc/selinux/product_sepolicy.cil".to_owned(),
+        format!("/product/etc/selinux/mapping/{version}.cil"),
+        "/vendor/etc/selinux/plat_pub_versioned.cil".to_owned(),
+        "/vendor/etc/selinux/vendor_sepolicy.cil".to_owned(),
+        "/odm/etc/selinux/odm_sepolicy.cil".to_owned(),
+    ]
+    .into_iter()
+    .map(DevicePath::try_from)
+    .collect()
+}

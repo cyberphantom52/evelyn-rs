@@ -31,6 +31,7 @@ toml = "1.1.8"
 sha2 = "0.11.1"
 fs-core = { package = "rust-fs-core", version = "0.4.2" }
 fs-ext4 = { package = "rust-fs-ext4", git = "https://github.com/cyberphantom52/rust-fs-ext4", rev = "91677a6bd9535bef4bace45b5f08172f1a1e8164" }
+sepolicy = { package = "sepolicy-inject-rs", git = "https://github.com/cyberphantom52/sepolicy-inject-rs", rev = "dc66735cf18ec14ee59f4605831408f77a796425" }
 fs-erofs = { package = "rust-fs-erofs", git = "https://github.com/cyberphantom52/rust-fs-erofs", rev = "88a3858f1d0f1f9b58ac2443c48fa935c55c1da6" }
 diffy = "0.5.2"
 xot = "0.31.2"

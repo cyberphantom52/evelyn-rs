@@ -408,6 +408,24 @@ impl Scope<'_> {
         })
     }
 
+    /// The CIL files init compiles the device's SELinux policy from, in its order,
+    /// that the build has: for the platform policy version the vendor names.
+    fn policy_files(&self) -> Result<Vec<Located>, Error> {
+        let [version] = &self.select(android_firmware::SEPOLICY_VERSION, &Range::default())?[..]
+        else {
+            return Err(Error::Unsupported(
+                "the vendor does not name the platform policy version",
+            ));
+        };
+        let version = String::from_utf8(self.content(version)?)
+            .map_err(|_| Error::Unsupported("the platform policy version is UTF-8 text"))?;
+        let mut found = Vec::new();
+        for path in android_firmware::sepolicy_files(version.trim())? {
+            found.extend(self.select(path.as_ref(), &Range::default())?);
+        }
+        Ok(found)
+    }
+
     /// A partition the build must have.
     fn partition(&self, partition: &Name) -> Result<(), Error> {
         if self.targets.contains_key(partition) {
@@ -430,6 +448,7 @@ impl Scope<'_> {
             Expr::PropertyFiles { key, target } => {
                 Value::Selection(self.property_files(key, target.as_ref())?)
             }
+            Expr::PolicyFiles => Value::Selection(self.policy_files()?),
             Expr::NewPropertyFile(target) => {
                 Value::Selection(vec![self.new_property_file(target.as_ref())?])
             }

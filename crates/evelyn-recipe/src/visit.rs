@@ -62,7 +62,11 @@ fn walk_stmt<'a>(
         }
         Stmt::Edit {
             selection,
-            transform: Transform::Append(text),
+            transform:
+                Transform::Append(text)
+                | Transform::Sepolicy {
+                    resolve_with: text, ..
+                },
         } => {
             walk_expr(selection, visitor, bound)?;
             walk_expr(text, visitor, bound)
@@ -98,6 +102,7 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         | Expr::Select { .. }
         | Expr::Prop { .. }
         | Expr::PropertyFiles { .. }
+        | Expr::PolicyFiles
         | Expr::NewPropertyFile(_)
         | Expr::Partition(_) => Ok(()),
     }
@@ -125,6 +130,7 @@ impl Expr {
             | Self::Containing { .. }
             | Self::Below(_)
             | Self::PropertyFiles { .. }
+            | Self::PolicyFiles
             | Self::NewPropertyFile(_)
             | Self::Else(..) => Kind::Selection,
             Self::Binary {
@@ -197,12 +203,16 @@ impl Check {
             | Stmt::SetMetadata { selection, .. }
             | Stmt::Edit { selection, .. } => {
                 expect(selection.kind(), &[Kind::Selection], "a selection")?;
-                if let Stmt::Edit {
-                    transform: Transform::Append(text),
-                    ..
-                } = stmt
-                {
-                    expect(text.kind(), &[Kind::Str], "Append")?;
+                match stmt {
+                    Stmt::Edit {
+                        transform: Transform::Append(text),
+                        ..
+                    } => expect(text.kind(), &[Kind::Str], "Append")?,
+                    Stmt::Edit {
+                        transform: Transform::Sepolicy { resolve_with, .. },
+                        ..
+                    } => expect(resolve_with.kind(), &[Kind::Selection], "SepolicyPatch")?,
+                    _ => {}
                 }
             }
             _ => {}
