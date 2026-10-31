@@ -87,38 +87,61 @@ pub(crate) fn is_glob(path: &RelativePath) -> bool {
     path.as_ref().contains(['*', '?'])
 }
 
-/// Entries matching `pattern`, outermost only: a matched directory covers its contents.
-pub(crate) fn expand(tree: &PartitionTree, pattern: &RelativePath) -> Vec<RelativePath> {
-    let mut matched: Vec<RelativePath> = Vec::new();
-    for path in tree.entries.keys() {
-        if glob_matches(pattern, path) && !matched.iter().any(|outer| within(path, outer)) {
-            matched.push(path.clone());
-        }
-    }
-    matched
-}
-
 /// The entries `path` names in a tree: every match of a glob, else the entry if
 /// it is there.
 pub(crate) fn matches(tree: &PartitionTree, path: &RelativePath) -> Vec<RelativePath> {
-    if is_glob(path) {
-        expand(tree, path)
-    } else if tree.entries.contains_key(path) {
-        vec![path.clone()]
-    } else {
-        Vec::new()
-    }
+    let children = |dir: &str| {
+        let prefix = match dir {
+            "" => String::new(),
+            dir => format!("{dir}/"),
+        };
+        tree.entries
+            .keys()
+            .map(|path| path.as_ref())
+            .filter_map(|path| path.strip_prefix(prefix.as_str()))
+            .filter(|rest| !rest.is_empty() && !rest.contains('/'))
+            .map(str::to_owned)
+            .collect()
+    };
+    walk(path.as_ref(), children, |path| {
+        RelativePath::try_from(path.to_owned()).is_ok_and(|path| tree.entries.contains_key(&path))
+    })
+    .into_iter()
+    .filter_map(|path| RelativePath::try_from(path).ok())
+    .collect()
 }
 
-/// Whether `path` matches `pattern` component by component.
-fn glob_matches(pattern: &RelativePath, path: &RelativePath) -> bool {
-    let pattern: Vec<_> = pattern.as_ref().split('/').collect();
-    let parts: Vec<_> = path.as_ref().split('/').collect();
-    parts.len() == pattern.len()
-        && pattern
-            .iter()
-            .zip(&parts)
-            .all(|(p, n)| android_firmware::glob(p, n))
+/// What `pattern`, a relative path, matches below a root, in path order: `*` and
+/// `?` match within one name, and a segment without them names the one entry.
+/// Only the directories a glob needs are listed: `children` names what is in a
+/// directory (the root is `""`), and `exists` says whether a path is there.
+pub(crate) fn walk(
+    pattern: &str,
+    children: impl Fn(&str) -> Vec<String>,
+    exists: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut found = vec![String::new()];
+    for segment in pattern.split('/') {
+        let mut next = Vec::new();
+        for dir in found {
+            let join = |name: &str| match dir.is_empty() {
+                true => name.to_owned(),
+                false => format!("{dir}/{name}"),
+            };
+            if segment.contains(['*', '?']) {
+                for name in children(&dir) {
+                    if android_firmware::glob(segment, &name) {
+                        next.push(join(&name));
+                    }
+                }
+            } else if exists(&join(segment)) {
+                next.push(join(segment));
+            }
+        }
+        found = next;
+    }
+    found.sort();
+    found
 }
 
 /// Create any missing directories above `path`. Each takes the metadata of the same
