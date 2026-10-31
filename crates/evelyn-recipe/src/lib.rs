@@ -101,22 +101,22 @@ pub enum Operation {
         metadata: Metadata,
     },
     /// Remove what `pattern` matches from the build. A relative pattern is tried in
-    /// the directory of every build partition the scope selects: those from the ROM
-    /// or the stock firmware (`from`), named by `partition` (a name or glob), both,
-    /// or with neither, all of them. A `/...` pattern is a device path, outside any
-    /// scope. A pattern that matches nothing is reported, not an error; a scope that
-    /// selects no partition is an error.
+    /// the directory of every build partition the scope selects: those that came
+    /// from the ROM or the stock firmware (`origin`), named by `partition` (a name
+    /// or glob), both, or with neither, all of them. A `/...` pattern is a device
+    /// path, outside any scope. A pattern that matches nothing is reported, not an
+    /// error; a scope that selects no partition is an error.
     Remove {
+        pattern: Build<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        from: Option<Firmware>,
+        origin: Option<Firmware>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         partition: Option<String>,
-        pattern: String,
     },
     /// Set metadata Android's defaults do not give, on every entry `pattern` (a
     /// device path, globs allowed) matches in the build.
     SetMetadata {
-        pattern: DevicePath,
+        pattern: Build<DevicePath>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         uid: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -144,25 +144,25 @@ pub enum Operation {
     },
     /// Apply a unified diff (an asset) to a file and its hardlinks.
     ApplyDiff {
-        target: DevicePath,
+        target: Build<DevicePath>,
         patch: RelativePath,
     },
     /// Overwrite bytes at offsets of a file. What is there decides what the bytes
     /// mean, so an `AssertHash` of the file should come first.
     WriteBytes {
-        target: DevicePath,
+        target: Build<DevicePath>,
         /// Offsets and the bytes written there, as hex: `{487572: "a9008052"}`.
         edits: BTreeMap<u64, Hex>,
     },
     EditXml {
-        target: DevicePath,
+        target: Build<DevicePath>,
         edits: Vec<XmlEdit>,
     },
     /// Decode an APK or JAR, apply `edits` inside it and rebuild it. The edits are
     /// ordinary operations with paths from the package's root
     /// (`/res/values/strings.xml`), plus the smali edits only a package has.
     Package {
-        target: DevicePath,
+        target: Build<DevicePath>,
         edits: Vec<Operation>,
     },
     /// Inside a `Package`: replace a smali method with the asset `body`.
@@ -185,7 +185,7 @@ pub enum Operation {
     },
     /// The file's content must have this SHA-256.
     AssertHash {
-        target: DevicePath,
+        target: Build<DevicePath>,
         sha256: Sha256Digest,
     },
     /// Declare a feature, in its kind's file: added there, or replaced if it is.
@@ -195,7 +195,7 @@ pub enum Operation {
     DisableFeature(String),
     /// Add `content` at the end of a file, on a line of its own.
     Append {
-        target: DevicePath,
+        target: Build<DevicePath>,
         /// A string expression.
         content: Expr,
     },
@@ -203,7 +203,7 @@ pub enum Operation {
     /// with Android's policy macros. The result must resolve with the device's other
     /// policy files, as init loads them.
     AddPolicy {
-        target: DevicePath,
+        target: Build<DevicePath>,
         policies: Vec<RelativePath>,
     },
 }
@@ -247,7 +247,7 @@ pub enum Feature {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         args: Option<String>,
-        file: DevicePath,
+        file: Build<DevicePath>,
     },
 }
 
@@ -277,6 +277,28 @@ impl Overrides {
             }
             _ => Ok(()),
         }
+    }
+}
+
+/// A path in the build, written `Build("/…")`, as a recipe names a build file
+/// wherever it names one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Build<P> {
+    Build(P),
+}
+
+impl<P: std::fmt::Display> std::fmt::Display for Build<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (**self).fmt(f)
+    }
+}
+
+impl<P> std::ops::Deref for Build<P> {
+    type Target = P;
+
+    fn deref(&self) -> &P {
+        let Self::Build(path) = self;
+        path
     }
 }
 
@@ -384,7 +406,7 @@ impl Operation {
     fn in_package(&self) -> bool {
         match self {
             Self::Remove {
-                from: None,
+                origin: None,
                 partition: None,
                 pattern,
             } => pattern.starts_with('/'),
@@ -458,9 +480,9 @@ impl Operation {
                     return Err(Error::Invalid(format!("invalid partition {partition:?}")));
                 }
                 if pattern.starts_with('/') {
-                    DevicePath::try_from(pattern.clone())?;
+                    DevicePath::try_from((**pattern).clone())?;
                 } else {
-                    RelativePath::try_from(pattern.clone())?;
+                    RelativePath::try_from((**pattern).clone())?;
                 }
                 Ok(())
             }
