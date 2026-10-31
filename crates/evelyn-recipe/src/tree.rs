@@ -149,17 +149,10 @@ pub enum Expr {
     Below(Box<Expr>),
     /// The text of the one file selected, in the build or a firmware.
     Content(Box<Expr>),
-    /// The lines of a string that contain any of `containing` and none of `except`,
-    /// each ending in a newline.
-    Lines {
+    /// The string has a match of `pattern` in it; an unset value has none.
+    Matches {
         text: Box<Expr>,
-        containing: Vec<String>,
-        except: Vec<String>,
-    },
-    /// The files selected whose content contains `text`.
-    Containing {
-        selection: Box<Expr>,
-        text: Box<Expr>,
+        pattern: Pattern,
     },
     /// The SHA-256 of the one file selected.
     Hash(Box<Expr>),
@@ -222,6 +215,10 @@ pub enum UnaryOp {
     Not,
     /// A string is set, or a selection is not empty.
     Defined,
+    /// The lines of a string, as a list; an unset value has none.
+    Lines,
+    /// A list's strings, each ending in a newline.
+    Join,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -230,4 +227,34 @@ pub enum BinaryOp {
     Or,
     Eq,
     In,
+}
+
+/// A regular expression, compiled when the recipe is loaded.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Pattern(regex::Regex);
+
+impl Pattern {
+    /// A pattern that matches `text` as it is.
+    pub fn literal(text: &str) -> Self {
+        Self(regex::Regex::new(&regex::escape(text)).expect("an escaped pattern compiles"))
+    }
+
+    pub fn is_match(&self, text: &str) -> bool {
+        self.0.is_match(text)
+    }
+}
+
+impl TryFrom<String> for Pattern {
+    type Error = regex::Error;
+
+    fn try_from(pattern: String) -> Result<Self, regex::Error> {
+        regex::Regex::new(&pattern).map(Self)
+    }
+}
+
+impl From<Pattern> for String {
+    fn from(pattern: Pattern) -> Self {
+        pattern.0.as_str().to_owned()
+    }
 }

@@ -483,6 +483,7 @@ name = "evelyn-recipe"
 version = "0.1.0"
 dependencies = [
  "android-firmware",
+ "regex",
  "ron",
  "serde",
  "thiserror",

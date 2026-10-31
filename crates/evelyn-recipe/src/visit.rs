@@ -93,13 +93,9 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         Expr::Hash(inner)
         | Expr::Content(inner)
         | Expr::Below(inner)
-        | Expr::Lines { text: inner, .. }
-        | Expr::Unary { expr: inner, .. } => walk_expr(inner, visitor, bound),
-        Expr::Containing {
-            selection: first,
-            text: second,
-        }
-        | Expr::Let {
+        | Expr::Unary { expr: inner, .. }
+        | Expr::Matches { text: inner, .. } => walk_expr(inner, visitor, bound),
+        Expr::Let {
             value: first,
             body: second,
             ..
@@ -189,12 +185,8 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
         },
         Expr::Hash(inner) => of(inner, &[Kind::Selection], "Hash").map(|_| Kind::Str)?,
         Expr::Content(inner) => of(inner, &[Kind::Selection], "Content").map(|_| Kind::Str)?,
-        Expr::Lines { text, .. } => of(text, &[Kind::Str], "Lines").map(|_| Kind::Str)?,
         Expr::Below(inner) => of(inner, &[Kind::Selection], "Below")?,
-        Expr::Containing { selection, text } => {
-            of(text, &[Kind::Str], "Containing")?;
-            of(selection, &[Kind::Selection], "Containing")?
-        }
+        Expr::Matches { text, .. } => of(text, &[Kind::Str], "Matches").map(|_| Kind::Bool)?,
         Expr::Let { name, value, body } => kind(body, &binding(bound, name, kind(value, bound)?))?,
         Expr::Filter { over, name, keep } => {
             let over = of(over, &[Kind::List, Kind::Selection], "Filter")?;
@@ -220,6 +212,8 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
             UnaryOp::Defined => {
                 of(expr, &[Kind::Str, Kind::Selection], "Defined").map(|_| Kind::Bool)?
             }
+            UnaryOp::Lines => of(expr, &[Kind::Str], "Lines").map(|_| Kind::List)?,
+            UnaryOp::Join => of(expr, &[Kind::List], "Join").map(|_| Kind::Str)?,
         },
         Expr::Binary { op, left, right } => match op {
             BinaryOp::And => {

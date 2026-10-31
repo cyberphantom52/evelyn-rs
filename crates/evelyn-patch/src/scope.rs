@@ -567,46 +567,9 @@ impl Scope<'_> {
                         .map_err(|_| Error::Unsupported("Content reads UTF-8 text"))?,
                 )
             }
-            Expr::Lines {
-                text,
-                containing,
-                except,
-            } => {
+            Expr::Matches { text, pattern } => {
                 let text = self.eval_in(text, bound)?;
-                let text = text
-                    .as_str()?
-                    .ok_or(Error::Unsupported("Lines needs a string that is set"))?;
-                Value::Str(
-                    text.lines()
-                        .filter(|line| {
-                            containing
-                                .iter()
-                                .any(|wanted| line.contains(wanted.as_str()))
-                                && !except
-                                    .iter()
-                                    .any(|unwanted| line.contains(unwanted.as_str()))
-                        })
-                        .flat_map(|line| [line, "\n"])
-                        .collect(),
-                )
-            }
-            Expr::Containing { selection, text } => {
-                let selection = self.eval_in(selection, bound)?;
-                let text = self.eval_in(text, bound)?;
-                let text = text
-                    .as_str()?
-                    .ok_or(Error::Unsupported("Containing needs a string that is set"))?;
-                let mut found = Vec::new();
-                for entry in selection.as_selection()? {
-                    let content = self.content(entry)?;
-                    if content
-                        .windows(text.len())
-                        .any(|window| window == text.as_bytes())
-                    {
-                        found.push(entry.clone());
-                    }
-                }
-                Value::Selection(found)
+                Value::Bool(text.as_str()?.is_some_and(|text| pattern.is_match(text)))
             }
             Expr::Partition(name) => Value::Bool(self.targets.contains_key(name)),
             Expr::Unary { op, expr } => {
@@ -614,6 +577,8 @@ impl Scope<'_> {
                 match op {
                     UnaryOp::Not => (!value)?,
                     UnaryOp::Defined => value.defined()?,
+                    UnaryOp::Lines => value.lines()?,
+                    UnaryOp::Join => value.join()?,
                 }
             }
             Expr::Binary { op, left, right } => {
