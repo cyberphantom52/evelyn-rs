@@ -527,6 +527,29 @@ impl Scope<'_> {
                         .map_err(|_| Error::Unsupported("Content reads UTF-8 text"))?,
                 )
             }
+            Expr::Lines {
+                text,
+                containing,
+                except,
+            } => {
+                let text = self.eval(text)?;
+                let text = text
+                    .as_str()?
+                    .ok_or(Error::Unsupported("Lines needs a string that is set"))?;
+                Value::Str(
+                    text.lines()
+                        .filter(|line| {
+                            containing
+                                .iter()
+                                .any(|wanted| line.contains(wanted.as_str()))
+                                && !except
+                                    .iter()
+                                    .any(|unwanted| line.contains(unwanted.as_str()))
+                        })
+                        .flat_map(|line| [line, "\n"])
+                        .collect(),
+                )
+            }
             Expr::Containing { selection, text } => {
                 let selection = self.eval(selection)?;
                 let text = self.eval(text)?;

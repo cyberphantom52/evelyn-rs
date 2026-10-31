@@ -277,7 +277,9 @@ pub(crate) fn transformed(
         Transform::Prop { key, value: None } => {
             android_property::remove(&text(bytes)?, key, None)?.into_bytes()
         }
-        // The string is evaluated before the edit, where expressions are.
+        // The string is evaluated before the edit, where expressions are. Appending
+        // nothing changes nothing.
+        Transform::Append(Expr::Literal(Value::Str(data))) if data.is_empty() => bytes.to_vec(),
         Transform::Append(Expr::Literal(Value::Str(data))) => {
             let mut text = text(bytes)?;
             if !text.is_empty() && !text.ends_with('\n') {

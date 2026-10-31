@@ -354,6 +354,16 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 Data::File { from, path } => {
                     Expr::Content(Box::new(firmware_file(path.as_ref(), *from)))
                 }
+                Data::Lines {
+                    from,
+                    path,
+                    containing,
+                    except,
+                } => Expr::Lines {
+                    text: Box::new(Expr::Content(Box::new(firmware_file(path.as_ref(), *from)))),
+                    containing: containing.clone(),
+                    except: except.clone(),
+                },
             }),
         },
         Operation::AssertHash { target, sha256 } => Stmt::Assert {

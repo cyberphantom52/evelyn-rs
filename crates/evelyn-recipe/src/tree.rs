@@ -130,6 +130,13 @@ pub enum Expr {
     Below(Box<Expr>),
     /// The text of the one file selected, in the build or a firmware.
     Content(Box<Expr>),
+    /// The lines of a string that contain any of `containing` and none of `except`,
+    /// each ending in a newline.
+    Lines {
+        text: Box<Expr>,
+        containing: Vec<String>,
+        except: Vec<String>,
+    },
     /// The files selected whose content contains `text`.
     Containing {
         selection: Box<Expr>,
