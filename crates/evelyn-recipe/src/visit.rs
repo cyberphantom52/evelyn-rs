@@ -95,19 +95,39 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
         | Expr::Below(inner)
         | Expr::Lines { text: inner, .. }
         | Expr::Unary { expr: inner, .. } => walk_expr(inner, visitor, bound),
-        Expr::Containing { selection, text } => {
-            walk_expr(selection, visitor, bound)?;
-            walk_expr(text, visitor, bound)
+        Expr::Containing {
+            selection: first,
+            text: second,
         }
-        Expr::Else(first, otherwise) => {
+        | Expr::Let {
+            value: first,
+            body: second,
+            ..
+        }
+        | Expr::Filter {
+            over: first,
+            keep: second,
+            ..
+        }
+        | Expr::Binary {
+            left: first,
+            right: second,
+            ..
+        } => {
             walk_expr(first, visitor, bound)?;
+            walk_expr(second, visitor, bound)
+        }
+        Expr::If {
+            condition,
+            then,
+            otherwise,
+        } => {
+            walk_expr(condition, visitor, bound)?;
+            walk_expr(then, visitor, bound)?;
             walk_expr(otherwise, visitor, bound)
         }
-        Expr::Binary { left, right, .. } => {
-            walk_expr(left, visitor, bound)?;
-            walk_expr(right, visitor, bound)
-        }
         Expr::Literal(_)
+        | Expr::Var(_)
         | Expr::Select { .. }
         | Expr::Prop { .. }
         | Expr::PropertyFiles { .. }
@@ -126,39 +146,8 @@ pub enum Kind {
     Selection,
 }
 
-impl Expr {
-    pub fn kind(&self) -> Kind {
-        match self {
-            Self::Literal(Value::Str(_) | Value::Unset)
-            | Self::Prop { .. }
-            | Self::Hash(_)
-            | Self::Content(_)
-            | Self::Lines { .. } => Kind::Str,
-            Self::Literal(Value::List(_)) => Kind::List,
-            Self::Literal(Value::Selection(_))
-            | Self::Select { .. }
-            | Self::Containing { .. }
-            | Self::Below(_)
-            | Self::PropertyFiles { .. }
-            | Self::PolicyFiles
-            | Self::NewPropertyFile(_)
-            | Self::Else(..) => Kind::Selection,
-            Self::Binary {
-                op: BinaryOp::Or,
-                left,
-                ..
-            } if left.kind() == Kind::Selection => Kind::Selection,
-            Self::Literal(Value::Bool(_))
-            | Self::Partition(_)
-            | Self::Unary { .. }
-            | Self::Binary { .. } => Kind::Bool,
-        }
-    }
-}
-
 /// The load-time check: every expression gets operands of the kinds its operator
-/// is defined for, `let:` binds strings, conditions are booleans, and every
-/// `{name}` a statement uses is bound by an enclosing `let:`.
+/// is defined for, every name it uses is bound, and conditions are booleans.
 pub(crate) struct Check;
 
 fn expect(found: Kind, allowed: &[Kind], what: &str) -> Result<(), Error> {
@@ -171,33 +160,130 @@ fn expect(found: Kind, allowed: &[Kind], what: &str) -> Result<(), Error> {
     }
 }
 
+/// The names bound around an expression, innermost last, with their kinds.
+type Bound<'a> = Vec<(&'a Name, Kind)>;
+
+/// The kind `expr` produces, once its operands are checked to be of the kinds its
+/// operator takes.
+fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
+    let of = |inner: &'a Expr, allowed: &[Kind], what: &str| {
+        let found = kind(inner, bound)?;
+        expect(found, allowed, what).map(|()| found)
+    };
+    Ok(match expr {
+        Expr::Literal(Value::Str(_) | Value::Unset) | Expr::Prop { .. } => Kind::Str,
+        Expr::Literal(Value::Bool(_)) | Expr::Partition(_) => Kind::Bool,
+        Expr::Literal(Value::List(_)) => Kind::List,
+        Expr::Literal(Value::Selection(_))
+        | Expr::Select { .. }
+        | Expr::PropertyFiles { .. }
+        | Expr::PolicyFiles
+        | Expr::NewPropertyFile(_) => Kind::Selection,
+        Expr::Var(name) => match bound.iter().rev().find(|(bound, _)| *bound == name) {
+            Some((_, kind)) => *kind,
+            None => {
+                return Err(Error::Invalid(format!(
+                    "{name} is not bound by an enclosing Let or Filter"
+                )));
+            }
+        },
+        Expr::Hash(inner) => of(inner, &[Kind::Selection], "Hash").map(|_| Kind::Str)?,
+        Expr::Content(inner) => of(inner, &[Kind::Selection], "Content").map(|_| Kind::Str)?,
+        Expr::Lines { text, .. } => of(text, &[Kind::Str], "Lines").map(|_| Kind::Str)?,
+        Expr::Below(inner) => of(inner, &[Kind::Selection], "Below")?,
+        Expr::Containing { selection, text } => {
+            of(text, &[Kind::Str], "Containing")?;
+            of(selection, &[Kind::Selection], "Containing")?
+        }
+        Expr::Let { name, value, body } => kind(body, &binding(bound, name, kind(value, bound)?))?,
+        Expr::Filter { over, name, keep } => {
+            let over = of(over, &[Kind::List, Kind::Selection], "Filter")?;
+            let each = if over == Kind::List { Kind::Str } else { over };
+            expect(
+                kind(keep, &binding(bound, name, each))?,
+                &[Kind::Bool],
+                "Filter",
+            )?;
+            over
+        }
+        Expr::If {
+            condition,
+            then,
+            otherwise,
+        } => {
+            of(condition, &[Kind::Bool], "If")?;
+            let then = kind(then, bound)?;
+            of(otherwise, &[then], "If")?
+        }
+        Expr::Unary { op, expr } => match op {
+            UnaryOp::Not => of(expr, &[Kind::Bool], "Not")?,
+            UnaryOp::Defined => {
+                of(expr, &[Kind::Str, Kind::Selection], "Defined").map(|_| Kind::Bool)?
+            }
+        },
+        Expr::Binary { op, left, right } => match op {
+            BinaryOp::And => {
+                of(left, &[Kind::Bool], "All")?;
+                of(right, &[Kind::Bool], "All")?
+            }
+            // Of booleans, either holds; of selections, what either selects.
+            BinaryOp::Or => {
+                let left = of(left, &[Kind::Bool, Kind::Selection], "Any")?;
+                of(right, &[left], "Any")?
+            }
+            BinaryOp::Eq => {
+                let left = of(left, &[Kind::Str, Kind::Bool], "Eq")?;
+                of(right, &[left], "Eq").map(|_| Kind::Bool)?
+            }
+            BinaryOp::In => {
+                of(left, &[Kind::Str], "In")?;
+                of(right, &[Kind::List], "In").map(|_| Kind::Bool)?
+            }
+        },
+    })
+}
+
+/// `bound`, and `name` bound to a value of kind `kind`.
+fn binding<'a>(bound: &Bound<'a>, name: &'a Name, kind: Kind) -> Bound<'a> {
+    let mut bound = bound.clone();
+    bound.push((name, kind));
+    bound
+}
+
 impl Visitor for Check {
     fn stmt(&mut self, stmt: &Stmt, bound: &[&Name]) -> Result<(), Error> {
+        let of = |expr: &Expr, allowed: &[Kind], what: &str| {
+            expect(kind(expr, &Vec::new())?, allowed, what)
+        };
         match stmt {
             // Its body is checked as it is walked.
             Stmt::Step { .. } => return Ok(()),
-            Stmt::Let { value, .. } => expect(value.kind(), &[Kind::Str], "let:")?,
+            Stmt::Let { value, .. } => of(value, &[Kind::Str], "let:")?,
             Stmt::When { condition, .. } | Stmt::Assert { condition, .. } => {
-                expect(condition.kind(), &[Kind::Bool], "a condition")?
+                of(condition, &[Kind::Bool], "a condition")?
+            }
+            Stmt::Edit {
+                selection,
+                transform:
+                    Transform::Append(text)
+                    | Transform::Sepolicy {
+                        resolve_with: text, ..
+                    },
+            } => {
+                of(selection, &[Kind::Selection], "a selection")?;
+                match &stmt {
+                    Stmt::Edit {
+                        transform: Transform::Append(_),
+                        ..
+                    } => of(text, &[Kind::Str], "Append")?,
+                    _ => of(text, &[Kind::Selection], "SepolicyPatch")?,
+                }
             }
             Stmt::Delete { selection, .. }
             | Stmt::Copy { selection, .. }
             | Stmt::SetMetadata { selection, .. }
-            | Stmt::Edit { selection, .. } => {
-                expect(selection.kind(), &[Kind::Selection], "a selection")?;
-                match stmt {
-                    Stmt::Edit {
-                        transform: Transform::Append(text),
-                        ..
-                    } => expect(text.kind(), &[Kind::Str], "Append")?,
-                    Stmt::Edit {
-                        transform: Transform::Sepolicy { resolve_with, .. },
-                        ..
-                    } => expect(resolve_with.kind(), &[Kind::Selection], "SepolicyPatch")?,
-                    _ => {}
-                }
-            }
-            _ => {}
+            | Stmt::Edit { selection, .. } => of(selection, &[Kind::Selection], "a selection")?,
+            Stmt::Within { .. } => {}
         }
         // Only the statement's own fields: bodies are checked as they are walked.
         let own = match stmt {
@@ -216,50 +302,6 @@ impl Visitor for Check {
                 "{{{unbound}}} is not bound by an enclosing let:"
             ))),
             None => Ok(()),
-        }
-    }
-
-    fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), Error> {
-        match expr {
-            Expr::Hash(inner) => expect(inner.kind(), &[Kind::Selection], "Hash"),
-            Expr::Content(inner) => expect(inner.kind(), &[Kind::Selection], "Content"),
-            Expr::Lines { text, .. } => expect(text.kind(), &[Kind::Str], "Lines"),
-            Expr::Below(inner) => expect(inner.kind(), &[Kind::Selection], "Below"),
-            Expr::Else(first, otherwise) => {
-                expect(first.kind(), &[Kind::Selection], "Else")?;
-                expect(otherwise.kind(), &[Kind::Selection], "Else")
-            }
-            Expr::Containing { selection, text } => {
-                expect(selection.kind(), &[Kind::Selection], "Containing")?;
-                expect(text.kind(), &[Kind::Str], "Containing")
-            }
-            Expr::Unary { op, expr } => match op {
-                UnaryOp::Not => expect(expr.kind(), &[Kind::Bool], "Not"),
-                UnaryOp::Defined => expect(expr.kind(), &[Kind::Str, Kind::Selection], "Defined"),
-            },
-            Expr::Binary { op, left, right } => {
-                let (left, right) = (left.kind(), right.kind());
-                match op {
-                    BinaryOp::And => {
-                        expect(left, &[Kind::Bool], "All")?;
-                        expect(right, &[Kind::Bool], "All")
-                    }
-                    // Of booleans, either holds; of selections, what either selects.
-                    BinaryOp::Or => {
-                        expect(left, &[Kind::Bool, Kind::Selection], "Any")?;
-                        expect(right, &[left], "Any")
-                    }
-                    BinaryOp::Eq => {
-                        expect(left, &[Kind::Str, Kind::Bool], "Eq")?;
-                        expect(right, &[left], "Eq")
-                    }
-                    BinaryOp::In => {
-                        expect(left, &[Kind::Str], "In")?;
-                        expect(right, &[Kind::List], "In")
-                    }
-                }
-            }
-            _ => Ok(()),
         }
     }
 }

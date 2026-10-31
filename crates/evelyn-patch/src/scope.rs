@@ -439,6 +439,10 @@ impl Scope<'_> {
 
     /// The one rule for each kind of expression.
     pub fn eval(&self, expr: &Expr) -> Result<Value, Error> {
+        self.eval_in(expr, None)
+    }
+
+    fn eval_in(&self, expr: &Expr, bound: Option<&Bound<'_>>) -> Result<Value, Error> {
         Ok(match expr {
             Expr::Literal(value) => value.clone(),
             Expr::Select { pattern, scope } => Value::Selection(self.select(pattern, scope)?),
@@ -452,15 +456,51 @@ impl Scope<'_> {
             Expr::NewPropertyFile(target) => {
                 Value::Selection(vec![self.new_property_file(target.as_ref())?])
             }
-            Expr::Else(first, otherwise) => {
-                let first = self.eval(first)?;
-                match first.as_selection()?.is_empty() {
-                    true => self.eval(otherwise)?,
-                    false => first,
+            Expr::Var(name) => std::iter::successors(bound, |bound| bound.outer)
+                .find(|bound| bound.name == name)
+                .map(|bound| bound.value.clone())
+                .ok_or(Error::Unsupported("a name no Let or Filter binds"))?,
+            Expr::Let { name, value, body } => {
+                let value = self.eval_in(value, bound)?;
+                self.eval_in(body, Some(&Bound::new(name, value, bound)))?
+            }
+            Expr::Filter { over, name, keep } => {
+                let holds = |value| {
+                    let bound = Bound::new(name, value, bound);
+                    Ok::<_, Error>(self.eval_in(keep, Some(&bound))?.as_bool()?)
+                };
+                match self.eval_in(over, bound)? {
+                    Value::List(items) => {
+                        let mut kept = Vec::new();
+                        for item in items {
+                            if holds(Value::Str(item.clone()))? {
+                                kept.push(item);
+                            }
+                        }
+                        Value::List(kept)
+                    }
+                    Value::Selection(entries) => {
+                        let mut kept = Vec::new();
+                        for entry in entries {
+                            if holds(Value::Selection(vec![entry.clone()]))? {
+                                kept.push(entry);
+                            }
+                        }
+                        Value::Selection(kept)
+                    }
+                    _ => return Err(Error::Unsupported("Filter takes a list or a selection")),
                 }
             }
+            Expr::If {
+                condition,
+                then,
+                otherwise,
+            } => match self.eval_in(condition, bound)?.as_bool()? {
+                true => self.eval_in(then, bound)?,
+                false => self.eval_in(otherwise, bound)?,
+            },
             Expr::Hash(inner) => {
-                let selection = self.eval(inner)?;
+                let selection = self.eval_in(inner, bound)?;
                 let [entry] = selection.as_selection()? else {
                     return Err(Error::Unsupported("Hash needs exactly one file"));
                 };
@@ -478,7 +518,7 @@ impl Scope<'_> {
             }
             Expr::Below(inner) => {
                 let mut found = Vec::new();
-                for entry in self.eval(inner)?.as_selection()? {
+                for entry in self.eval_in(inner, bound)?.as_selection()? {
                     let tree = match entry.place {
                         Place::Build => {
                             &self
@@ -518,7 +558,7 @@ impl Scope<'_> {
                 Value::Selection(found)
             }
             Expr::Content(inner) => {
-                let selection = self.eval(inner)?;
+                let selection = self.eval_in(inner, bound)?;
                 let [entry] = selection.as_selection()? else {
                     return Err(Error::Unsupported("Content needs exactly one file"));
                 };
@@ -532,7 +572,7 @@ impl Scope<'_> {
                 containing,
                 except,
             } => {
-                let text = self.eval(text)?;
+                let text = self.eval_in(text, bound)?;
                 let text = text
                     .as_str()?
                     .ok_or(Error::Unsupported("Lines needs a string that is set"))?;
@@ -551,8 +591,8 @@ impl Scope<'_> {
                 )
             }
             Expr::Containing { selection, text } => {
-                let selection = self.eval(selection)?;
-                let text = self.eval(text)?;
+                let selection = self.eval_in(selection, bound)?;
+                let text = self.eval_in(text, bound)?;
                 let text = text
                     .as_str()?
                     .ok_or(Error::Unsupported("Containing needs a string that is set"))?;
@@ -570,22 +610,22 @@ impl Scope<'_> {
             }
             Expr::Partition(name) => Value::Bool(self.targets.contains_key(name)),
             Expr::Unary { op, expr } => {
-                let value = self.eval(expr)?;
+                let value = self.eval_in(expr, bound)?;
                 match op {
                     UnaryOp::Not => (!value)?,
                     UnaryOp::Defined => value.defined()?,
                 }
             }
             Expr::Binary { op, left, right } => {
-                let left = self.eval(left)?;
+                let left = self.eval_in(left, bound)?;
                 match op {
                     // `All` and `Any` stop at the first value that decides them.
                     BinaryOp::And if !left.as_bool()? => Value::Bool(false),
                     BinaryOp::Or if matches!(left, Value::Bool(true)) => Value::Bool(true),
-                    BinaryOp::And => (left & self.eval(right)?)?,
-                    BinaryOp::Or => (left | self.eval(right)?)?,
-                    BinaryOp::Eq => left.equals(&self.eval(right)?)?,
-                    BinaryOp::In => left.is_in(&self.eval(right)?)?,
+                    BinaryOp::And => (left & self.eval_in(right, bound)?)?,
+                    BinaryOp::Or => (left | self.eval_in(right, bound)?)?,
+                    BinaryOp::Eq => left.equals(&self.eval_in(right, bound)?)?,
+                    BinaryOp::In => left.is_in(&self.eval_in(right, bound)?)?,
                 }
             }
         })
@@ -645,4 +685,17 @@ fn property_files(target: &Target) -> Vec<RelativePath> {
         })
         .map(|(path, _)| path.clone())
         .collect()
+}
+
+/// A value a `Let` or `Filter` binds, and those bound around it.
+struct Bound<'a> {
+    name: &'a Name,
+    value: Value,
+    outer: Option<&'a Bound<'a>>,
+}
+
+impl<'a> Bound<'a> {
+    fn new(name: &'a Name, value: Value, outer: Option<&'a Bound<'a>>) -> Self {
+        Self { name, value, outer }
+    }
 }
