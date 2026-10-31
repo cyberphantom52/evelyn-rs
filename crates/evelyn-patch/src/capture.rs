@@ -96,7 +96,7 @@ pub fn capture(
             vec![Operation::Copy {
                 from: recipe::Location::Asset(asset.to_string()),
                 to: Some(recipe::Expr::Text(target.to_string())),
-                metadata: recipe::Metadata::Copy,
+                metadata: recipe::Metadata::Source,
             }],
             Some(after.to_vec()),
         ),

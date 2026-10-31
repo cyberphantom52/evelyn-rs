@@ -201,21 +201,11 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             let defaults = || Stmt::SetMetadata {
                 selection: Expr::Below(Box::new(in_build())),
                 pattern: placed.clone(),
-                metadata: Assigned::Defaults,
+                metadata: Assigned::Default,
             };
             return match metadata {
-                Metadata::Copy => vec![found, copy],
+                Metadata::Source => vec![found, copy],
                 Metadata::Default => vec![found, copy, defaults()],
-                Metadata::Explicit { .. } => vec![
-                    found,
-                    copy,
-                    defaults(),
-                    Stmt::SetMetadata {
-                        selection: in_build(),
-                        pattern: placed.clone(),
-                        metadata: Assigned::Fields(overrides(operation)),
-                    },
-                ],
             };
         }
         Operation::Remove {
@@ -240,7 +230,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         Operation::SetMetadata { pattern, .. } => Stmt::SetMetadata {
             selection: at(pattern, Scope::default()),
             pattern: pattern.to_string(),
-            metadata: Assigned::Fields(overrides(operation)),
+            metadata: Assigned::Fields(crate::set(operation)),
         },
         // Where the key is defined, everywhere in the target's scope; or added
         // where a new one goes.
@@ -528,13 +518,6 @@ fn smali(class: &str, method: &str, edit: MethodEdit) -> Stmt {
 fn smali_file(class: &str) -> Expr {
     let name = class.trim_start_matches('L').trim_end_matches(';');
     select(&format!("/smali*/{name}.smali"), Scope::default())
-}
-
-/// The metadata an operation that sets some sets.
-fn overrides(operation: &Operation) -> crate::Overrides {
-    operation
-        .overrides()
-        .expect("SetMetadata and explicit imports set metadata")
 }
 
 /// The selection is not empty.

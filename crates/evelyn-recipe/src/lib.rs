@@ -100,7 +100,7 @@ pub enum Operation {
         /// Where it goes, a device path, if not to the same path. A glob keeps its path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<Expr>,
-        #[serde(default, skip_serializing_if = "Metadata::is_copy")]
+        #[serde(default, skip_serializing_if = "Metadata::is_source")]
         metadata: Metadata,
     },
     /// Remove what `pattern` matches from the build. A relative pattern is tried in
@@ -208,29 +208,18 @@ pub enum Operation {
     },
 }
 
-/// What new entries a copy brings get: the firmware's metadata, Android's
-/// defaults for where they are on the device, or those defaults with what
-/// `Explicit` names set instead.
+/// What new entries a copy brings get: their source's metadata, or Android's
+/// defaults for where they are on the device.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Metadata {
     #[default]
-    Copy,
+    Source,
     Default,
-    Explicit {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        uid: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        gid: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        mode: Option<u16>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        selinux: Option<String>,
-    },
 }
 
 impl Metadata {
-    fn is_copy(&self) -> bool {
-        *self == Self::Copy
+    fn is_source(&self) -> bool {
+        *self == Self::Source
     }
 }
 
@@ -249,35 +238,6 @@ pub enum Feature {
         args: Option<String>,
         file: Location,
     },
-}
-
-/// The metadata `SetMetadata` sets; what it leaves unset stays.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Overrides {
-    pub uid: Option<u32>,
-    pub gid: Option<u32>,
-    pub mode: Option<u16>,
-    pub selinux: Option<String>,
-}
-
-impl Overrides {
-    fn validate(&self) -> Result<(), Error> {
-        if *self == Self::default() {
-            return Err(Error::Invalid("metadata that sets nothing".into()));
-        }
-        if self.mode.is_some_and(|mode| mode > 0o7777) {
-            return Err(Error::Invalid(format!("invalid mode {:?}", self.mode)));
-        }
-        match &self.selinux {
-            Some(label)
-                if label.splitn(4, ':').filter(|part| !part.is_empty()).count() != 4
-                    || label.contains(|c: char| c == '\0' || c.is_whitespace()) =>
-            {
-                Err(Error::Invalid(format!("invalid SELinux label {label:?}")))
-            }
-            _ => Ok(()),
-        }
-    }
 }
 
 /// What a stubbed method returns: nothing (`V`), zero/false/null, or one/true.
@@ -333,36 +293,6 @@ impl Operation {
         }
     }
 
-    /// The metadata a `SetMetadata`, or a copy's `Metadata::Explicit`, sets.
-    fn overrides(&self) -> Option<Overrides> {
-        let (Self::SetMetadata {
-            uid,
-            gid,
-            mode,
-            selinux,
-            ..
-        }
-        | Self::Copy {
-            metadata:
-                Metadata::Explicit {
-                    uid,
-                    gid,
-                    mode,
-                    selinux,
-                },
-            ..
-        }) = self
-        else {
-            return None;
-        };
-        Some(Overrides {
-            uid: *uid,
-            gid: *gid,
-            mode: *mode,
-            selinux: selinux.clone(),
-        })
-    }
-
     /// The smali edits, which need a package's classes.
     fn package_only(&self) -> bool {
         matches!(
@@ -394,9 +324,6 @@ impl Operation {
     /// rest on apply. Inside a package, the files an operation names are the
     /// package's, `Package("/…")`; elsewhere the build's, `Build("/…")`.
     fn validate(&self, in_package: bool) -> Result<(), Error> {
-        if let Some(overrides) = self.overrides() {
-            overrides.validate()?;
-        }
         let file = match in_package {
             true => Kind::Package,
             false => Kind::Build,
@@ -452,7 +379,10 @@ impl Operation {
                 }
                 pattern.check(&[file], name)
             }
-            Self::SetMetadata { pattern, .. } => pattern.check(&[Kind::Build], name),
+            Self::SetMetadata { pattern, .. } => {
+                pattern.check(&[Kind::Build], name)?;
+                set(self).validate()
+            }
             Self::StubMethod { class, .. }
             | Self::ReplaceMethod { class, .. }
             | Self::InsertMethod { class, .. }
@@ -588,5 +518,25 @@ impl Recipe {
             ordered.push(step);
         }
         Ok(ordered)
+    }
+}
+
+/// What a `SetMetadata` sets.
+pub(crate) fn set(operation: &Operation) -> tree::Overrides {
+    let Operation::SetMetadata {
+        uid,
+        gid,
+        mode,
+        selinux,
+        ..
+    } = operation
+    else {
+        panic!("only SetMetadata sets metadata")
+    };
+    tree::Overrides {
+        uid: *uid,
+        gid: *gid,
+        mode: *mode,
+        selinux: selinux.clone(),
     }
 }

@@ -234,7 +234,7 @@ impl Composition {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
                 let overrides = match metadata {
-                    Assigned::Defaults => {
+                    Assigned::Default => {
                         for entry in selected {
                             if entry.place != Place::Build {
                                 return Err(Error::Unsupported(

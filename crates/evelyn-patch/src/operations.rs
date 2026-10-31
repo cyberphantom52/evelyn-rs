@@ -2,8 +2,8 @@ use crate::{Error, Target, compose::Context, layout};
 use android_firmware::{AndroidMetadata, Name, RelativePath, Sha256Digest, SourceRef};
 use android_fs::{Entry, EntryKind, PartitionTree, Provenance};
 use recipe::{
-    Overrides, Returns,
-    tree::{Expr, MethodEdit, Transform},
+    Returns,
+    tree::{Expr, MethodEdit, Overrides, Transform},
     value::Value,
 };
 use std::{collections::BTreeSet, path::Path};

@@ -3,7 +3,7 @@
 //! these few statements and expressions, so each primitive has one implementation
 //! however many surface forms use it.
 
-use crate::{Firmware, Hex, Overrides, Returns, XmlEdit, value::Value};
+use crate::{Firmware, Hex, Returns, XmlEdit, value::Value};
 use android_firmware::{DevicePath, Name, RelativePath};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -209,7 +209,7 @@ pub enum Assigned {
     /// Android's defaults for where it is on the device, worked out from the
     /// finished build's own policy as the device would; fields set later apply
     /// over them.
-    Defaults,
+    Default,
     /// These fields; the others stay.
     Fields(Overrides),
 }
@@ -292,5 +292,39 @@ impl TryFrom<String> for Pattern {
 impl From<Pattern> for String {
     fn from(pattern: Pattern) -> Self {
         pattern.0.as_str().to_owned()
+    }
+}
+
+/// The metadata `SetMetadata` sets; what it leaves unset stays.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Overrides {
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
+    pub mode: Option<u16>,
+    pub selinux: Option<String>,
+}
+
+impl Overrides {
+    pub(crate) fn validate(&self) -> Result<(), crate::Error> {
+        if *self == Self::default() {
+            return Err(crate::Error::Invalid("metadata that sets nothing".into()));
+        }
+        if self.mode.is_some_and(|mode| mode > 0o7777) {
+            return Err(crate::Error::Invalid(format!(
+                "invalid mode {:?}",
+                self.mode
+            )));
+        }
+        match &self.selinux {
+            Some(label)
+                if label.splitn(4, ':').filter(|part| !part.is_empty()).count() != 4
+                    || label.contains(|c: char| c == '\0' || c.is_whitespace()) =>
+            {
+                Err(crate::Error::Invalid(format!(
+                    "invalid SELinux label {label:?}"
+                )))
+            }
+            _ => Ok(()),
+        }
     }
 }
