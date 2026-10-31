@@ -9,12 +9,10 @@
 //! entries an operation expects.
 
 mod desugar;
-mod expr;
 pub mod tree;
 pub mod value;
 pub mod visit;
 mod xml;
-pub use expr::Expr;
 pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate, XmlStep, escape_attribute};
 
 use android_firmware::{DevicePath, Firmware, Name, RelativePath, Sha256Digest};
@@ -73,10 +71,10 @@ pub struct Step {
     /// substituted for `{name}` in the step's condition and operations. One that has
     /// no value skips the step.
     #[serde(rename = "let", default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub bindings: BTreeMap<Name, Expr>,
+    pub bindings: BTreeMap<Name, tree::Expr>,
     /// A boolean expression; the step applies only when it holds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub when: Option<Expr>,
+    pub when: Option<tree::Expr>,
     pub operations: Vec<Operation>,
 }
 

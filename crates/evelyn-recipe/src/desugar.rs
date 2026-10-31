@@ -1,8 +1,8 @@
 //! Surface recipes (steps of operations, `let:` and `when:`) into the primitive tree.
 
 use crate::{
-    Data, Error, Expr as Surface, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch,
-    XmlName, XmlPath, XmlPredicate, escape_attribute,
+    Data, Error, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch, XmlName, XmlPath,
+    XmlPredicate, escape_attribute,
     tree::{Assigned, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree},
     value::Value,
 };
@@ -41,7 +41,7 @@ fn step(step: &Step) -> Stmt {
     }
     if let Some(condition) = &step.when {
         body = vec![Stmt::When {
-            condition: expr(condition),
+            condition: condition.clone(),
             body,
             skip: format!(
                 "condition does not hold: {}",
@@ -52,36 +52,13 @@ fn step(step: &Step) -> Stmt {
     for (name, value) in step.bindings.iter().rev() {
         body = vec![Stmt::Let {
             name: name.clone(),
-            value: expr(value),
+            value: value.clone(),
             body,
         }];
     }
     Stmt::Step {
         id: step.id.clone(),
         body,
-    }
-}
-
-pub(crate) fn expr(surface: &Surface) -> Expr {
-    match surface {
-        Surface::Property { key, target } => Expr::Property {
-            key: key.clone(),
-            target: target.clone(),
-        },
-        Surface::Defined(inner) => Expr::Exists(Box::new(expr(inner))),
-        Surface::Eq(inner, value) => Expr::Eq(
-            Box::new(expr(inner)),
-            Box::new(Expr::Literal(Value::Str(value.clone()))),
-        ),
-        Surface::In(inner, values) => Expr::In(
-            Box::new(expr(inner)),
-            Box::new(Expr::Literal(Value::List(values.clone()))),
-        ),
-        Surface::Exists(path) => defined(select(path.as_ref(), Scope::default())),
-        Surface::HasPartition(name) => Expr::HasPartition(name.clone()),
-        Surface::Not(inner) => Expr::Not(Box::new(expr(inner))),
-        Surface::All(all_of) => Expr::All(all_of.iter().map(expr).collect()),
-        Surface::Any(any_of) => Expr::Any(any_of.iter().map(expr).collect()),
     }
 }
 
