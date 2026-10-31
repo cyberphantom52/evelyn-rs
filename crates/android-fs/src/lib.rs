@@ -12,6 +12,14 @@ mod scan;
 mod store;
 mod tree;
 
+/// The file-type bits of an inode's mode.
+pub(crate) mod mode {
+    pub const TYPE: u16 = 0o170000;
+    pub const FILE: u16 = 0o100000;
+    pub const DIRECTORY: u16 = 0o040000;
+    pub const SYMLINK: u16 = 0o120000;
+}
+
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -23,12 +31,16 @@ pub use image::Image;
 pub use region::Region;
 pub use scan::scan;
 pub use store::Store;
-pub use tree::{Content, Entry, EntryKind, PartitionTree, Provenance};
+pub use tree::{Content, Entry, EntryKind, File, PartitionTree, Provenance, SCHEMA};
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("invalid partition tree: {0}")]
     InvalidTree(String),
+    #[error("no entry {0}")]
+    Missing(android_firmware::RelativePath),
+    #[error("{0} is not a regular file")]
+    NotAFile(android_firmware::RelativePath),
     #[error("cannot read {path}: {source}")]
     Read {
         path: PathBuf,

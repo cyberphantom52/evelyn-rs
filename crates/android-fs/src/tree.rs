@@ -61,6 +61,17 @@ pub enum Provenance {
     },
 }
 
+/// The manifest schema this crate reads and writes.
+pub const SCHEMA: u32 = 2;
+
+/// A regular file, at its canonical path: a hardlink's target.
+pub struct File<'a> {
+    pub path: &'a RelativePath,
+    pub content: &'a Content,
+    pub sha256: &'a Sha256Digest,
+    pub size: u64,
+}
+
 /// A partition's entries with their Android metadata. File bytes stay in the source
 /// image until an edit writes a blob into the tree's `content/` directory.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,7 +88,7 @@ pub struct PartitionTree {
 impl PartitionTree {
     pub fn validate(&self) -> Result<(), Error> {
         let invalid = Error::InvalidTree;
-        if self.schema != 2 {
+        if self.schema != SCHEMA {
             return Err(invalid(format!("unsupported schema {}", self.schema)));
         }
         let mut blobs = BTreeSet::new();
@@ -125,6 +136,33 @@ impl PartitionTree {
             }
         }
         Ok(())
+    }
+
+    /// The regular file at `path`, following a hardlink.
+    pub fn file(&self, path: &RelativePath) -> Result<File<'_>, Error> {
+        let (mut path, mut entry) = self
+            .entries
+            .get_key_value(path)
+            .ok_or_else(|| Error::Missing(path.clone()))?;
+        if let EntryKind::Hardlink { target } = &entry.kind {
+            (path, entry) = self
+                .entries
+                .get_key_value(target)
+                .ok_or_else(|| Error::Missing(target.clone()))?;
+        }
+        match &entry.kind {
+            EntryKind::File {
+                content,
+                sha256,
+                size,
+            } => Ok(File {
+                path,
+                content,
+                sha256,
+                size: *size,
+            }),
+            _ => Err(Error::NotAFile(path.clone())),
+        }
     }
 
     pub fn blob_path(blob: &Name) -> RelativePath {

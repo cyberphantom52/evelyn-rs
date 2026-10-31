@@ -36,15 +36,21 @@ impl ImageFormat {
 
     /// Identify an image's format without reading past its header.
     pub fn detect(path: &Path) -> Result<Self, Error> {
-        let mut prefix = Vec::with_capacity(2048);
-        File::open(path)
-            .and_then(|file| file.take(2048).read_to_end(&mut prefix))
+        let prefix = File::open(path)
+            .and_then(|mut file| header(&mut file))
             .map_err(|source| Error::Read {
                 path: path.into(),
                 source,
             })?;
         Ok(Self::of(&prefix))
     }
+}
+
+/// The start of an image, as much of it as holds every format's magic.
+fn header(file: &mut File) -> io::Result<Vec<u8>> {
+    let mut prefix = Vec::with_capacity(2048);
+    file.take(2048).read_to_end(&mut prefix)?;
+    Ok(prefix)
 }
 
 #[derive(Debug, Serialize)]
@@ -64,8 +70,7 @@ impl Artifact {
             if !metadata.is_file() {
                 return Err(io::Error::other("expected a regular file"));
             }
-            let mut prefix = Vec::with_capacity(2048);
-            (&mut file).take(2048).read_to_end(&mut prefix)?;
+            let prefix = header(&mut file)?;
             let format = ImageFormat::of(&prefix);
             let digest = Sha256Digest::reader(prefix.as_slice().chain(file))?;
             Ok((metadata.len(), format, digest))

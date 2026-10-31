@@ -45,22 +45,32 @@ pub struct Entry<'a> {
 /// Every assignment in `text`, in order.
 pub fn entries(text: &str) -> impl Iterator<Item = Entry<'_>> {
     text.split_inclusive('\n').filter_map(|line| {
-        let line = body(line);
-        if line.trim_start().starts_with('#') {
-            return None;
-        }
-        let (left, value) = line.split_once('=')?;
-        let left = left.trim();
-        let (key, optional) = match left.strip_suffix('?') {
-            Some(key) => (key.trim_end(), true),
-            None => (left, false),
-        };
-        (!key.is_empty()).then_some(Entry {
-            key,
-            value: value.trim_start_matches([' ', '\t']),
-            optional,
-        })
+        let (entry, _) = assignment(line)?;
+        Some(entry)
     })
+}
+
+/// The assignment on `line`, if it is one, and the text before its value.
+fn assignment(line: &str) -> Option<(Entry<'_>, &str)> {
+    let line = body(line);
+    if line.trim_start().starts_with('#') {
+        return None;
+    }
+    let (left, right) = line.split_once('=')?;
+    let trimmed = left.trim();
+    let (key, optional) = match trimmed.strip_suffix('?') {
+        Some(key) => (key.trim_end(), true),
+        None => (trimmed, false),
+    };
+    let value = right.trim_start_matches([' ', '\t']);
+    (!key.is_empty()).then_some((
+        Entry {
+            key,
+            value,
+            optional,
+        },
+        &line[..line.len() - value.len()],
+    ))
 }
 
 /// The value `key` ends up with after loading `text`, as init applies it.
@@ -93,18 +103,10 @@ fn newline(text: &str) -> &str {
     }
 }
 
+/// The text before the value of `line`, if it assigns `key`.
 fn prefix<'a>(line: &'a str, key: &str) -> Option<&'a str> {
-    let line = body(line);
-    if line.trim_start().starts_with('#') {
-        return None;
-    }
-    let (left, right) = line.split_once('=')?;
-    let left = left.trim();
-    if left.strip_suffix('?').unwrap_or(left).trim_end() != key {
-        return None;
-    }
-    let whitespace = right.len() - right.trim_start_matches([' ', '\t']).len();
-    Some(&line[..line.len() - right.len() + whitespace])
+    let (entry, prefix) = assignment(line)?;
+    (entry.key == key).then_some(prefix)
 }
 
 fn edit(
