@@ -3,7 +3,11 @@
 //! and in [`crate::scope`], whatever surface operation it came from.
 
 use crate::{
-    Error, Images, Target, defaults::Defaults, operations::Pending, package::Opened, scope::Scope,
+    Error, Images, Target,
+    defaults::Defaults,
+    operations::Pending,
+    package::Opened,
+    scope::{Bound, Scope},
 };
 use android_firmware::{
     DevicePath, Firmware, Mounts, Name, RelativePath, STANDARD_SYSTEM, SourceRef, TargetPath,
@@ -62,8 +66,6 @@ pub struct Composition {
     set: Vec<(Unchanged, bool)>,
     /// The package a `Package` has open.
     package: Option<Opened>,
-    /// What the `Let`s around the statement being run bind, innermost last.
-    bound: Vec<(Name, Value)>,
 }
 
 /// What a composition reports besides the trees.
@@ -82,7 +84,6 @@ impl Composition {
             skipped: Vec::new(),
             set: Vec::new(),
             package: None,
-            bound: Vec::new(),
         }
     }
 
@@ -90,21 +91,27 @@ impl Composition {
     pub fn apply(&mut self, tree: &Tree, context: &Context<'_>) -> Result<(), Error> {
         let unnamed = Name::try_from("recipe".to_owned())?;
         for stmt in &tree.body {
-            self.exec(stmt, &tree.name, &unnamed, context)?;
+            self.exec(stmt, &tree.name, &unnamed, context, None)?;
         }
         Ok(())
     }
 
-    fn eval(&self, expr: &Expr, context: &Context<'_>, step: &Name) -> Result<Value, Error> {
+    /// `expr`'s value, with what the `Let`s around the statement bind.
+    fn eval(
+        &self,
+        expr: &Expr,
+        context: &Context<'_>,
+        step: &Name,
+        bound: Option<&Bound<'_>>,
+    ) -> Result<Value, Error> {
         Scope {
             targets: &self.targets,
             origins: &self.origins,
             context,
             step,
             package: self.package.as_ref(),
-            bound: &self.bound,
         }
-        .eval(expr)
+        .eval(expr, bound)
     }
 
     fn skip(&mut self, recipe: &Name, step: &Name, reason: String) {
@@ -122,6 +129,7 @@ impl Composition {
         recipe: &Name,
         step: &Name,
         context: &Context<'_>,
+        bound: Option<&Bound<'_>>,
     ) -> Result<(), Error> {
         if self.package.is_some() && matches!(stmt, Stmt::SetMetadata { .. } | Stmt::Package { .. })
         {
@@ -132,11 +140,11 @@ impl Composition {
         match stmt {
             Stmt::Step { id, body } => {
                 for stmt in body {
-                    self.exec(stmt, recipe, id, context)?;
+                    self.exec(stmt, recipe, id, context, bound)?;
                 }
             }
             Stmt::Let { name, value, body } => {
-                let value = self.eval(value, context, step)?;
+                let value = self.eval(value, context, step, bound)?;
                 if let Some(text) = value.as_str()?
                     && !android_firmware::is_token(text)
                 {
@@ -145,28 +153,26 @@ impl Composition {
                     ))
                     .into());
                 }
-                self.bound.push((name.clone(), value));
-                let ran = body
-                    .iter()
-                    .try_for_each(|stmt| self.exec(stmt, recipe, step, context));
-                self.bound.pop();
-                ran?;
+                let bound = Bound::new(name, value, bound);
+                for stmt in body {
+                    self.exec(stmt, recipe, step, context, Some(&bound))?;
+                }
             }
             Stmt::When {
                 condition,
                 body,
                 skip,
             } => {
-                if self.eval(condition, context, step)?.as_bool()? {
+                if self.eval(condition, context, step, bound)?.as_bool()? {
                     for stmt in body {
-                        self.exec(stmt, recipe, step, context)?;
+                        self.exec(stmt, recipe, step, context, bound)?;
                     }
                 } else {
                     self.skip(recipe, step, skip.clone());
                 }
             }
             Stmt::Remove { selection } => {
-                let selected = self.eval(selection, context, step)?;
+                let selected = self.eval(selection, context, step, bound)?;
                 let selected = selected.as_selection()?;
                 for entry in selected {
                     match (entry.place, &self.package) {
@@ -186,11 +192,11 @@ impl Composition {
                 }
             }
             Stmt::Copy { selection, to } => {
-                let selected = self.eval(selection, context, step)?;
+                let selected = self.eval(selection, context, step, bound)?;
                 let selected = selected.as_selection()?;
                 let to = match to {
                     Some(to) => {
-                        let to = self.eval(to, context, step)?;
+                        let to = self.eval(to, context, step, bound)?;
                         let to = to
                             .as_str()?
                             .ok_or(Error::Unsupported("a copy's to is a string that is set"))?;
@@ -231,7 +237,7 @@ impl Composition {
                 pattern,
                 metadata,
             } => {
-                let selected = self.eval(selection, context, step)?;
+                let selected = self.eval(selection, context, step, bound)?;
                 let selected = selected.as_selection()?;
                 let overrides = match metadata {
                     Assigned::Default => {
@@ -271,13 +277,13 @@ impl Composition {
                 selection,
                 transform,
             } => {
-                let selected = self.eval(selection, context, step)?;
+                let selected = self.eval(selection, context, step, bound)?;
                 let selected = selected.as_selection()?;
                 // What Write writes and the policy files a policy patch resolves with
                 // are expressions, evaluated before the edit.
                 let transform = &match transform {
                     Transform::Write(text) => {
-                        let text = self.eval(text, context, step)?;
+                        let text = self.eval(text, context, step, bound)?;
                         let text = text
                             .as_str()?
                             .ok_or(Error::Unsupported("Write needs a string that is set"))?;
@@ -288,12 +294,16 @@ impl Composition {
                         resolve_with,
                     } => {
                         let mut texts = Vec::new();
-                        for file in self.eval(resolve_with, context, step)?.as_selection()? {
+                        for file in self
+                            .eval(resolve_with, context, step, bound)?
+                            .as_selection()?
+                        {
                             if selected.contains(file) {
                                 continue;
                             }
                             let file = Expr::Literal(Value::Selection(vec![file.clone()]));
-                            let text = self.eval(&Expr::Read(Box::new(file)), context, step)?;
+                            let text =
+                                self.eval(&Expr::Read(Box::new(file)), context, step, bound)?;
                             texts.extend(text.as_str()?.map(str::to_owned));
                         }
                         Transform::AddPolicy {
@@ -333,7 +343,7 @@ impl Composition {
                 }
             }
             Stmt::Assert { condition, message } => {
-                if !self.eval(condition, context, step)?.as_bool()? {
+                if !self.eval(condition, context, step, bound)?.as_bool()? {
                     return Err(Error::Assertion {
                         step: step.clone(),
                         message: message.clone(),
@@ -347,7 +357,7 @@ impl Composition {
                 self.package = Some(opened);
                 let ran = body
                     .iter()
-                    .try_for_each(|stmt| self.exec(stmt, recipe, step, context));
+                    .try_for_each(|stmt| self.exec(stmt, recipe, step, context, bound));
                 let opened = self.package.take().expect("opened above");
                 ran?;
                 crate::package::close(

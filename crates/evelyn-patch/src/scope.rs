@@ -19,8 +19,6 @@ pub(crate) struct Scope<'a> {
     pub step: &'a Name,
     /// The package a `Package` has open, where `/` is the package's root.
     pub package: Option<&'a Opened>,
-    /// What the statements' `Let`s bind, innermost last.
-    pub bound: &'a [(Name, Value)],
 }
 
 impl Scope<'_> {
@@ -277,16 +275,13 @@ impl Scope<'_> {
         Ok(found)
     }
 
-    /// The one rule for each kind of expression.
-    pub fn eval(&self, expr: &Expr) -> Result<Value, Error> {
-        self.eval_in(expr, None)
-    }
-
-    fn eval_in(&self, expr: &Expr, bound: Option<&Bound<'_>>) -> Result<Value, Error> {
+    /// The one rule for each kind of expression, with what the `Let`s and
+    /// `Filter`s around it, in a statement or an expression, bind.
+    pub fn eval(&self, expr: &Expr, bound: Option<&Bound<'_>>) -> Result<Value, Error> {
         Ok(match expr {
             Expr::Literal(value) => value.clone(),
             Expr::Select { pattern, scope } => {
-                let pattern = self.eval_in(pattern, bound)?;
+                let pattern = self.eval(pattern, bound)?;
                 let pattern = pattern
                     .as_str()?
                     .ok_or(Error::Unsupported("Select needs a pattern that is set"))?;
@@ -300,7 +295,7 @@ impl Scope<'_> {
                 files: Some(files),
             } => {
                 let mut value = Value::Unset;
-                for file in self.eval_in(files, bound)?.as_selection()? {
+                for file in self.eval(files, bound)?.as_selection()? {
                     let text = String::from_utf8_lossy(&self.content(file)?).into_owned();
                     if let Some(assigned) = android_property::get(&text, key) {
                         value = Value::Str(assigned.to_owned());
@@ -320,21 +315,19 @@ impl Scope<'_> {
                     .collect(),
             ),
             Expr::Var(name) => std::iter::successors(bound, |bound| bound.outer)
-                .map(|bound| (bound.name, &bound.value))
-                .chain(self.bound.iter().rev().map(|(name, value)| (name, value)))
-                .find(|(bound, _)| *bound == name)
-                .map(|(_, value)| value.clone())
+                .find(|bound| bound.name == name)
+                .map(|bound| bound.value.clone())
                 .ok_or(Error::Unsupported("a name no Let or Filter binds"))?,
             Expr::Let { name, value, body } => {
-                let value = self.eval_in(value, bound)?;
-                self.eval_in(body, Some(&Bound::new(name, value, bound)))?
+                let value = self.eval(value, bound)?;
+                self.eval(body, Some(&Bound::new(name, value, bound)))?
             }
             Expr::Filter { over, name, keep } => {
                 let holds = |value| {
                     let bound = Bound::new(name, value, bound);
-                    Ok::<_, Error>(self.eval_in(keep, Some(&bound))?.as_bool()?)
+                    Ok::<_, Error>(self.eval(keep, Some(&bound))?.as_bool()?)
                 };
-                match self.eval_in(over, bound)? {
+                match self.eval(over, bound)? {
                     Value::List(items) => {
                         let mut kept = Vec::new();
                         for item in items {
@@ -360,12 +353,12 @@ impl Scope<'_> {
                 condition,
                 then,
                 otherwise,
-            } => match self.eval_in(condition, bound)?.as_bool()? {
-                true => self.eval_in(then, bound)?,
-                false => self.eval_in(otherwise, bound)?,
+            } => match self.eval(condition, bound)?.as_bool()? {
+                true => self.eval(then, bound)?,
+                false => self.eval(otherwise, bound)?,
             },
             Expr::Hash(inner) => {
-                let selection = self.eval_in(inner, bound)?;
+                let selection = self.eval(inner, bound)?;
                 let [entry] = selection.as_selection()? else {
                     return Err(Error::Unsupported("Hash needs exactly one file"));
                 };
@@ -383,7 +376,7 @@ impl Scope<'_> {
             }
             Expr::Below(inner) => {
                 let mut found = Vec::new();
-                for entry in self.eval_in(inner, bound)?.as_selection()? {
+                for entry in self.eval(inner, bound)?.as_selection()? {
                     let tree = match entry.place {
                         Place::Build => {
                             &self
@@ -423,7 +416,7 @@ impl Scope<'_> {
                 Value::Selection(found)
             }
             Expr::Read(inner) => {
-                let selection = self.eval_in(inner, bound)?;
+                let selection = self.eval(inner, bound)?;
                 let [entry] = selection.as_selection()? else {
                     return Err(Error::Unsupported("Read needs exactly one file"));
                 };
@@ -433,16 +426,16 @@ impl Scope<'_> {
                 )
             }
             Expr::Matches { text, pattern } => {
-                let text = self.eval_in(text, bound)?;
+                let text = self.eval(text, bound)?;
                 Value::Bool(text.as_str()?.is_some_and(|text| pattern.is_match(text)))
             }
             Expr::HasPartition(name) => Value::Bool(self.targets.contains_key(name)),
-            Expr::Not(inner) => (!self.eval_in(inner, bound)?)?,
-            Expr::Exists(inner) => self.eval_in(inner, bound)?.defined()?,
+            Expr::Not(inner) => (!self.eval(inner, bound)?)?,
+            Expr::Exists(inner) => self.eval(inner, bound)?.defined()?,
             Expr::Concat(parts) => {
                 let mut text = String::new();
                 for part in parts {
-                    let part = self.eval_in(part, bound)?;
+                    let part = self.eval(part, bound)?;
                     text.push_str(
                         part.as_str()?
                             .ok_or(Error::Unsupported("Concat needs strings that are set"))?,
@@ -450,16 +443,16 @@ impl Scope<'_> {
                 }
                 Value::Str(text)
             }
-            Expr::Trim(inner) => match self.eval_in(inner, bound)? {
+            Expr::Trim(inner) => match self.eval(inner, bound)? {
                 Value::Str(text) => Value::Str(text.trim().to_owned()),
                 other => other.as_str().map(|_| other.clone())?,
             },
-            Expr::Lines(inner) => self.eval_in(inner, bound)?.lines()?,
-            Expr::Join(inner) => self.eval_in(inner, bound)?.join()?,
+            Expr::Lines(inner) => self.eval(inner, bound)?.lines()?,
+            Expr::Join(inner) => self.eval(inner, bound)?.join()?,
             // `All` and `Any` stop at the first condition that decides them.
             Expr::All(conditions) => {
                 for condition in conditions {
-                    if !self.eval_in(condition, bound)?.as_bool()? {
+                    if !self.eval(condition, bound)?.as_bool()? {
                         return Ok(Value::Bool(false));
                     }
                 }
@@ -467,7 +460,7 @@ impl Scope<'_> {
             }
             Expr::Any(conditions) => {
                 for condition in conditions {
-                    if self.eval_in(condition, bound)?.as_bool()? {
+                    if self.eval(condition, bound)?.as_bool()? {
                         return Ok(Value::Bool(true));
                     }
                 }
@@ -476,18 +469,14 @@ impl Scope<'_> {
             Expr::Union(selections) => {
                 let mut union = Vec::new();
                 for selection in selections {
-                    union.extend_from_slice(self.eval_in(selection, bound)?.as_selection()?);
+                    union.extend_from_slice(self.eval(selection, bound)?.as_selection()?);
                 }
                 let mut seen = std::collections::BTreeSet::new();
                 union.retain(|entry| seen.insert(entry.clone()));
                 Value::Selection(union)
             }
-            Expr::Eq(left, right) => self
-                .eval_in(left, bound)?
-                .equals(&self.eval_in(right, bound)?)?,
-            Expr::In(left, right) => self
-                .eval_in(left, bound)?
-                .is_in(&self.eval_in(right, bound)?)?,
+            Expr::Eq(left, right) => self.eval(left, bound)?.equals(&self.eval(right, bound)?)?,
+            Expr::In(left, right) => self.eval(left, bound)?.is_in(&self.eval(right, bound)?)?,
         })
     }
 }
@@ -539,15 +528,16 @@ struct Loaded {
     assignments: Vec<(String, String)>,
 }
 
-/// A value a `Let` or `Filter` binds, and those bound around it.
-struct Bound<'a> {
+/// A value a `Let` (a statement's or an expression's) or a `Filter` binds, and
+/// those bound around it.
+pub(crate) struct Bound<'a> {
     name: &'a Name,
     value: Value,
     outer: Option<&'a Bound<'a>>,
 }
 
 impl<'a> Bound<'a> {
-    fn new(name: &'a Name, value: Value, outer: Option<&'a Bound<'a>>) -> Self {
+    pub(crate) fn new(name: &'a Name, value: Value, outer: Option<&'a Bound<'a>>) -> Self {
         Self { name, value, outer }
     }
 }
