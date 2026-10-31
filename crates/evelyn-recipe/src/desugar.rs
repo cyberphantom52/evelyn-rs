@@ -206,14 +206,14 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             };
         }
         Operation::Remove {
-            from,
-            partition,
             pattern,
+            origin,
+            partition,
         } => {
             let selection = select(
                 pattern,
                 Scope {
-                    origin: *from,
+                    origin: *origin,
                     partition: partition.clone(),
                     ..Scope::default()
                 },
@@ -273,7 +273,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             transform: Transform::Xml(edits.clone()),
         },
         Operation::Package { target, edits } => Stmt::Package {
-            package: target.clone(),
+            package: (**target).clone(),
             body: edits.iter().flat_map(self::operation).collect(),
         },
         Operation::StubMethod {
