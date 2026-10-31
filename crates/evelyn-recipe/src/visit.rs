@@ -196,7 +196,7 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
             Some((_, kind)) => *kind,
             None => {
                 return Err(Error::Invalid(format!(
-                    "{name} is not bound by an enclosing Let or Filter"
+                    "{{{name}}} is not bound by an enclosing let: or Filter"
                 )));
             }
         },

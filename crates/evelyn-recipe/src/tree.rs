@@ -95,8 +95,8 @@ pub enum Transform {
     },
 }
 
-/// Recipes write expressions as they are here, with a string, boolean or list of
-/// strings standing for itself: `Not(Exists(Select(pattern: "/vendor/lib")))`.
+/// The primitive expressions. Recipes write the ones in [`crate::Expr`], which
+/// desugar into these.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum Expr {
