@@ -7,8 +7,8 @@
 //! preserves the text up to the value and the original line ending, and an append
 //! uses the file's own line ending (LF by default).
 
-/// Whether a file at `path` is a property file Android reads (`build.prop`,
-/// `default.prop`, ...).
+/// Whether a file at `path` is named as a property file is, `*.prop`. Init loads
+/// only some of them: `android_firmware::PROPERTY_FILES` and their imports.
 pub fn is_property_file(path: &str) -> bool {
     path.ends_with(".prop")
 }

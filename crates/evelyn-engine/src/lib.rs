@@ -69,12 +69,12 @@ pub enum Error {
     #[error("--stock has no {0}.img, which device.toml sets")]
     MissingStockPartition(Name),
     #[error(
-        "stock {partition} is not the build device.toml pins: expected {expected}, found {found:?}"
+        "stock {partition} is not the build device.toml pins: expected {expected}, found {found}"
     )]
     StockFingerprint {
         partition: Name,
         expected: String,
-        found: Vec<String>,
+        found: String,
     },
     #[error(
         "the system image has neither system/build.prop nor build.prop; set its mount_point in port.toml"
@@ -282,33 +282,55 @@ impl Plan {
     }
 }
 
-/// A stock partition must be the build `device.toml` pins: one of its property files
-/// sets `ro.<partition>.build.fingerprint` to `expected`.
+/// A stock partition must be the build `device.toml` pins: the property files init
+/// loads from it set `ro.<partition>.build.fingerprint` to `expected`.
 fn check_fingerprint(partition: &Name, image: &Path, expected: &str) -> Result<(), Error> {
     let key = format!("ro.{partition}.build.fingerprint");
-    let mut found = Vec::new();
-    for (_, bytes) in
-        android_fs::Image::detect(image)?.read_files(android_property::is_property_file)?
-    {
-        if let Some(value) = std::str::from_utf8(&bytes)
-            .ok()
-            .and_then(|text| android_property::get(text, &key))
-        {
-            if value == expected {
-                return Ok(());
+    // The groups init loads from this partition, as paths in its image; system is
+    // mounted at /, so its files are under system/ in it.
+    let mount = match partition.as_ref() {
+        "system" => "/".to_owned(),
+        other => format!("/{other}/"),
+    };
+    let groups: Vec<Vec<&str>> = android_firmware::PROPERTY_FILES
+        .iter()
+        .map(|group| {
+            group
+                .iter()
+                .filter_map(|path| path.strip_prefix(mount.as_str()))
+                .collect::<Vec<_>>()
+        })
+        .filter(|group| !group.is_empty())
+        .collect();
+    let read: BTreeMap<String, Vec<u8>> = android_fs::Image::detect(image)?
+        .read_files(|path| groups.iter().flatten().any(|file| *file == path))?
+        .into_iter()
+        .collect();
+    let mut value = None;
+    for group in &groups {
+        let (canonical, legacy) = group.split_first().expect("a file");
+        let loaded = match read.get(*canonical) {
+            Some(bytes) => vec![bytes],
+            None => legacy.iter().filter_map(|file| read.get(*file)).collect(),
+        };
+        for bytes in loaded {
+            if let Some(assigned) = android_property::get(&String::from_utf8_lossy(bytes), &key) {
+                value = Some(assigned.to_owned());
             }
-            found.push(value.to_owned());
         }
     }
-    if found.is_empty() {
-        tracing::warn!(%partition, "stock partition sets no {key}; its build cannot be checked");
-        return Ok(());
+    match value {
+        Some(value) if value == expected => Ok(()),
+        Some(value) => Err(Error::StockFingerprint {
+            partition: partition.clone(),
+            expected: expected.into(),
+            found: value,
+        }),
+        None => {
+            tracing::warn!(%partition, "stock partition sets no {key}; its build cannot be checked");
+            Ok(())
+        }
     }
-    Err(Error::StockFingerprint {
-        partition: partition.clone(),
-        expected: expected.into(),
-        found,
-    })
 }
 
 /// The `<partition>.img` files in a firmware directory.
