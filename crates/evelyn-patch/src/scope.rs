@@ -12,7 +12,7 @@ use android_firmware::{DevicePath, Firmware, Name, RelativePath, SourceRef};
 use android_fs::EntryKind;
 use recipe::{
     PropertyTarget,
-    tree::{BinaryOp, Expr, Scope as Range, Source, UnaryOp},
+    tree::{Expr, Scope as Range, Source},
     value::{Located, Place, Value},
 };
 use std::collections::BTreeMap;
@@ -560,11 +560,11 @@ impl Scope<'_> {
             Expr::Read(inner) => {
                 let selection = self.eval_in(inner, bound)?;
                 let [entry] = selection.as_selection()? else {
-                    return Err(Error::Unsupported("Content needs exactly one file"));
+                    return Err(Error::Unsupported("Read needs exactly one file"));
                 };
                 Value::Str(
                     String::from_utf8(self.content(entry)?)
-                        .map_err(|_| Error::Unsupported("Content reads UTF-8 text"))?,
+                        .map_err(|_| Error::Unsupported("Read reads UTF-8 text"))?,
                 )
             }
             Expr::Matches { text, pattern } => {
@@ -572,27 +572,42 @@ impl Scope<'_> {
                 Value::Bool(text.as_str()?.is_some_and(|text| pattern.is_match(text)))
             }
             Expr::HasPartition(name) => Value::Bool(self.targets.contains_key(name)),
-            Expr::Unary { op, expr } => {
-                let value = self.eval_in(expr, bound)?;
-                match op {
-                    UnaryOp::Not => (!value)?,
-                    UnaryOp::Exists => value.defined()?,
-                    UnaryOp::Lines => value.lines()?,
-                    UnaryOp::Join => value.join()?,
+            Expr::Not(inner) => (!self.eval_in(inner, bound)?)?,
+            Expr::Exists(inner) => self.eval_in(inner, bound)?.defined()?,
+            Expr::Lines(inner) => self.eval_in(inner, bound)?.lines()?,
+            Expr::Join(inner) => self.eval_in(inner, bound)?.join()?,
+            // `All` and `Any` stop at the first condition that decides them.
+            Expr::All(conditions) => {
+                for condition in conditions {
+                    if !self.eval_in(condition, bound)?.as_bool()? {
+                        return Ok(Value::Bool(false));
+                    }
                 }
+                Value::Bool(true)
             }
-            Expr::Binary { op, left, right } => {
-                let left = self.eval_in(left, bound)?;
-                match op {
-                    // `All` and `Any` stop at the first value that decides them.
-                    BinaryOp::And if !left.as_bool()? => Value::Bool(false),
-                    BinaryOp::Or if matches!(left, Value::Bool(true)) => Value::Bool(true),
-                    BinaryOp::And => (left & self.eval_in(right, bound)?)?,
-                    BinaryOp::Or => (left | self.eval_in(right, bound)?)?,
-                    BinaryOp::Eq => left.equals(&self.eval_in(right, bound)?)?,
-                    BinaryOp::In => left.is_in(&self.eval_in(right, bound)?)?,
+            Expr::Any(conditions) => {
+                for condition in conditions {
+                    if self.eval_in(condition, bound)?.as_bool()? {
+                        return Ok(Value::Bool(true));
+                    }
                 }
+                Value::Bool(false)
             }
+            Expr::Union(selections) => {
+                let mut union = Vec::new();
+                for selection in selections {
+                    union.extend_from_slice(self.eval_in(selection, bound)?.as_selection()?);
+                }
+                union.sort();
+                union.dedup();
+                Value::Selection(union)
+            }
+            Expr::Eq(left, right) => self
+                .eval_in(left, bound)?
+                .equals(&self.eval_in(right, bound)?)?,
+            Expr::In(left, right) => self
+                .eval_in(left, bound)?
+                .is_in(&self.eval_in(right, bound)?)?,
         })
     }
 }

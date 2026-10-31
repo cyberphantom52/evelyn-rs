@@ -3,10 +3,7 @@
 use crate::{
     Data, Error, Expr as Surface, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch,
     XmlName, XmlPath, XmlPredicate, escape_attribute,
-    tree::{
-        Assigned, BinaryOp, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree,
-        UnaryOp,
-    },
+    tree::{Assigned, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree},
     value::Value,
 };
 use android_firmware::{Firmware, Name, RelativePath};
@@ -37,7 +34,7 @@ fn step(step: &Step) -> Stmt {
         .collect();
     if !assets.is_empty() {
         body = vec![Stmt::When {
-            condition: all(assets),
+            condition: Expr::All(assets),
             body,
             skip: "a templated asset is not there".into(),
         }];
@@ -66,62 +63,26 @@ fn step(step: &Step) -> Stmt {
 }
 
 pub(crate) fn expr(surface: &Surface) -> Expr {
-    let unary = |op, inner: &Surface| Expr::Unary {
-        op,
-        expr: Box::new(expr(inner)),
-    };
-    let binary = |op, left: Expr, right: Expr| Expr::Binary {
-        op,
-        left: Box::new(left),
-        right: Box::new(right),
-    };
     match surface {
         Surface::Property { key, target } => Expr::Property {
             key: key.clone(),
             target: target.clone(),
         },
-        Surface::Defined(inner) => unary(UnaryOp::Exists, inner),
-        Surface::Eq(inner, value) => binary(
-            BinaryOp::Eq,
-            expr(inner),
-            Expr::Literal(Value::Str(value.clone())),
+        Surface::Defined(inner) => Expr::Exists(Box::new(expr(inner))),
+        Surface::Eq(inner, value) => Expr::Eq(
+            Box::new(expr(inner)),
+            Box::new(Expr::Literal(Value::Str(value.clone()))),
         ),
-        Surface::In(inner, values) => binary(
-            BinaryOp::In,
-            expr(inner),
-            Expr::Literal(Value::List(values.clone())),
+        Surface::In(inner, values) => Expr::In(
+            Box::new(expr(inner)),
+            Box::new(Expr::Literal(Value::List(values.clone()))),
         ),
-        Surface::Exists(path) => Expr::Unary {
-            op: UnaryOp::Exists,
-            expr: Box::new(select(path.as_ref(), Scope::default())),
-        },
+        Surface::Exists(path) => defined(select(path.as_ref(), Scope::default())),
         Surface::HasPartition(name) => Expr::HasPartition(name.clone()),
-        Surface::Not(inner) => unary(UnaryOp::Not, inner),
-        Surface::All(all_of) => all(all_of.iter().map(expr).collect()),
-        Surface::Any(any_of) => any(any_of.iter().map(expr).collect()),
+        Surface::Not(inner) => Expr::Not(Box::new(expr(inner))),
+        Surface::All(all_of) => Expr::All(all_of.iter().map(expr).collect()),
+        Surface::Any(any_of) => Expr::Any(any_of.iter().map(expr).collect()),
     }
-}
-
-fn any(exprs: Vec<Expr>) -> Expr {
-    exprs
-        .into_iter()
-        .reduce(|left, right| Expr::Binary {
-            op: BinaryOp::Or,
-            left: Box::new(left),
-            right: Box::new(right),
-        })
-        .unwrap_or(Expr::Literal(Value::Bool(false)))
-}
-
-fn all(exprs: Vec<Expr>) -> Expr {
-    exprs
-        .into_iter()
-        .reduce(|left, right| Expr::Binary {
-            op: BinaryOp::And,
-            left: Box::new(left),
-            right: Box::new(right),
-        })
-        .unwrap_or(Expr::Literal(Value::Bool(true)))
 }
 
 fn select(pattern: &str, scope: Scope) -> Expr {
@@ -332,11 +293,10 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             // not touched, or even parsed. A feature declared nowhere skips the step.
             let file = self::name("file");
             let files = Expr::Filter {
-                over: Box::new(Expr::Binary {
-                    op: BinaryOp::Or,
-                    left: Box::new(select("/*/etc/permissions/*.xml", Scope::default())),
-                    right: Box::new(select("/*/etc/extension/*.xml", Scope::default())),
-                }),
+                over: Box::new(Expr::Union(vec![
+                    select("/*/etc/permissions/*.xml", Scope::default()),
+                    select("/*/etc/extension/*.xml", Scope::default()),
+                ])),
                 name: file.clone(),
                 keep: Box::new(Expr::Matches {
                     text: Box::new(Expr::Read(Box::new(Expr::Var(file)))),
@@ -390,35 +350,28 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                     };
                     let mut keep = vec![has(containing)];
                     if !except.is_empty() {
-                        keep.push(Expr::Unary {
-                            op: UnaryOp::Not,
-                            expr: Box::new(has(except)),
-                        });
+                        keep.push(Expr::Not(Box::new(has(except))));
                     }
-                    let lines = Expr::Unary {
-                        op: UnaryOp::Lines,
-                        expr: Box::new(Expr::Read(Box::new(firmware_file(path.as_ref(), *from)))),
-                    };
-                    Expr::Unary {
-                        op: UnaryOp::Join,
-                        expr: Box::new(Expr::Filter {
-                            over: Box::new(lines),
-                            name: line,
-                            keep: Box::new(all(keep)),
-                        }),
-                    }
+                    let lines = Expr::Lines(Box::new(Expr::Read(Box::new(firmware_file(
+                        path.as_ref(),
+                        *from,
+                    )))));
+                    Expr::Join(Box::new(Expr::Filter {
+                        over: Box::new(lines),
+                        name: line,
+                        keep: Box::new(Expr::All(keep)),
+                    }))
                 }
             }),
         },
         Operation::AssertHash { target, sha256 } => Stmt::Assert {
-            condition: Expr::Binary {
-                op: BinaryOp::Eq,
-                left: Box::new(Expr::Hash(Box::new(select(
+            condition: Expr::Eq(
+                Box::new(Expr::Hash(Box::new(select(
                     target.as_ref(),
                     Scope::default(),
                 )))),
-                right: Box::new(Expr::Literal(Value::Str(sha256.to_string()))),
-            },
+                Box::new(Expr::Literal(Value::Str(sha256.to_string()))),
+            ),
             message: format!("{target} does not have SHA-256 {sha256}"),
         },
     };
@@ -515,10 +468,7 @@ fn overrides(operation: &Operation) -> crate::Overrides {
 
 /// The selection is not empty.
 fn defined(selection: Expr) -> Expr {
-    Expr::Unary {
-        op: UnaryOp::Exists,
-        expr: Box::new(selection),
-    }
+    Expr::Exists(Box::new(selection))
 }
 
 /// `first` if it selects anything, else `otherwise`.

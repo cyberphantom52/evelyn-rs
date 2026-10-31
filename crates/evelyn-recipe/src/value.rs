@@ -158,38 +158,3 @@ impl std::ops::Not for Value {
         ))
     }
 }
-
-impl std::ops::BitAnd for Value {
-    type Output = Result<Value, ValueError>;
-
-    fn bitand(self, other: Value) -> Self::Output {
-        match (&self, &other) {
-            (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a && *b)),
-            (a, b) => Err(Value::undefined(
-                "All",
-                format!("{} and {}", a.kind(), b.kind()),
-            )),
-        }
-    }
-}
-
-impl std::ops::BitOr for Value {
-    type Output = Result<Value, ValueError>;
-
-    fn bitor(self, other: Value) -> Self::Output {
-        match (&self, &other) {
-            (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a || *b)),
-            // Two selections: what either selects.
-            (Value::Selection(a), Value::Selection(b)) => {
-                let mut union: Vec<Located> = a.iter().chain(b).cloned().collect();
-                union.sort();
-                union.dedup();
-                Ok(Value::Selection(union))
-            }
-            (a, b) => Err(Value::undefined(
-                "Any",
-                format!("{} and {}", a.kind(), b.kind()),
-            )),
-        }
-    }
-}
