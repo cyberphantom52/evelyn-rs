@@ -2,7 +2,7 @@
 //! every edit writes a new blob, and blobs are never changed in place.
 
 use android_firmware::{Filesystem, Name, RelativePath, Sha256Digest, Sha256Writer, SourceRef};
-use android_fs::{Content, Entry, EntryKind, PartitionTree, Provenance};
+use android_fs::{Content, Entry, EntryKind, File, PartitionTree, Provenance};
 use android_fs::{Image, Store};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -69,8 +69,8 @@ pub enum Error {
     NoLabel(String),
     #[error("missing target entry {0}")]
     Missing(RelativePath),
-    #[error("content identity mismatch at {0}")]
-    Identity(RelativePath),
+    #[error("the content is not {0}, the SHA-256 the edit expects")]
+    Before(Sha256Digest),
     #[error("unsupported target transformation: {0}")]
     Unsupported(&'static str),
     #[error("{path}: {source}")]
@@ -115,10 +115,7 @@ impl Target {
 
     /// Reads this target's file contents from its blobs and the open source images.
     pub fn store<'a>(&'a self, images: &'a Images) -> Store<'a> {
-        Store {
-            images,
-            root: &self.root,
-        }
+        Store::new(images, &self.root)
     }
 
     /// An on-disk copy of a regular file (or hardlink to one) whose content is `before`,
@@ -129,25 +126,31 @@ impl Target {
         before: Option<&Sha256Digest>,
         images: &Images,
     ) -> Result<PathBuf, Error> {
-        let (canonical, content, sha256, size) = self.file(path)?;
-        if before.is_some_and(|before| sha256 != before) {
-            return Err(Error::Identity(path.clone()));
+        let file = self.file(path)?;
+        if let Some(before) = before
+            && file.sha256 != before
+        {
+            return Err(Error::At {
+                path: path.to_string(),
+                source: Box::new(Error::Before(before.clone())),
+            });
         }
-        if let Content::Image { .. } = content {
-            let (canonical, content, sha256) = (canonical.clone(), content.clone(), sha256.clone());
-            let blob = self.new_blob();
-            let mut file = fs::File::create_new(self.blob_path(&blob))?;
-            io::copy(&mut self.store(images).open(&content, size)?, &mut file)?;
-            if let Some(entry) = self.tree.entries.get_mut(&canonical) {
-                entry.kind = EntryKind::File {
-                    content: Content::Blob(blob.clone()),
-                    sha256,
-                    size,
-                };
-            }
-            return Ok(self.blob_path(&blob));
+        let content = match file.content {
+            Content::Blob(blob) => return Ok(self.blob_path(blob)),
+            content => content.clone(),
+        };
+        let (canonical, sha256, size) = (file.path.clone(), file.sha256.clone(), file.size);
+        let blob = self.new_blob();
+        let mut output = fs::File::create_new(self.blob_path(&blob))?;
+        io::copy(&mut self.store(images).open(&content, size)?, &mut output)?;
+        if let Some(entry) = self.tree.entries.get_mut(&canonical) {
+            entry.kind = EntryKind::File {
+                content: Content::Blob(blob.clone()),
+                sha256,
+                size,
+            };
         }
-        Ok(self.store(images).blob_path(content))
+        Ok(self.blob_path(&blob))
     }
 
     /// Replace a file (and all of its hardlinks) with the contents of `replacement`.
@@ -158,7 +161,7 @@ impl Target {
         step: &Name,
     ) -> Result<(), Error> {
         let kind = self.write_blob(fs::File::open(replacement)?)?;
-        let canonical = self.file(path)?.0.clone();
+        let canonical = self.file(path)?.path.clone();
         self.accept_content(&canonical, kind, step);
         Ok(())
     }
@@ -237,38 +240,13 @@ impl Target {
         }
     }
 
-    /// Resolve a regular file, following a hardlink to its canonical entry.
-    pub(crate) fn file(
-        &self,
-        path: &RelativePath,
-    ) -> Result<(&RelativePath, &Content, &Sha256Digest, u64), Error> {
-        let (mut path, mut entry) = self
-            .tree
-            .entries
-            .get_key_value(path)
-            .ok_or_else(|| Error::Missing(path.clone()))?;
-        if let EntryKind::Hardlink { target } = &entry.kind {
-            (path, entry) = (target, &self.tree.entries[target]);
-        }
-        match &entry.kind {
-            EntryKind::File {
-                content,
-                sha256,
-                size,
-            } => Ok((path, content, sha256, *size)),
-            _ => Err(Error::Unsupported(
-                "content edits require a regular file, not a symlink or directory",
-            )),
-        }
+    /// A regular file, following a hardlink to its canonical entry.
+    pub(crate) fn file(&self, path: &RelativePath) -> Result<File<'_>, Error> {
+        Ok(self.tree.file(path)?)
     }
 
     pub(crate) fn read(&self, path: &RelativePath, images: &Images) -> Result<Vec<u8>, Error> {
-        let (_, content, _, size) = self.file(path)?;
-        let mut bytes = Vec::with_capacity(size as usize);
-        self.store(images)
-            .open(content, size)?
-            .read_to_end(&mut bytes)?;
-        Ok(bytes)
+        Ok(self.store(images).read(&self.file(path)?)?)
     }
 
     /// Write a new blob from `reader`.

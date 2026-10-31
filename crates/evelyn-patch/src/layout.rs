@@ -98,8 +98,20 @@ pub(crate) fn expand(tree: &PartitionTree, pattern: &RelativePath) -> Vec<Relati
     matched
 }
 
+/// The entries `path` names in a tree: every match of a glob, else the entry if
+/// it is there.
+pub(crate) fn matches(tree: &PartitionTree, path: &RelativePath) -> Vec<RelativePath> {
+    if is_glob(path) {
+        expand(tree, path)
+    } else if tree.entries.contains_key(path) {
+        vec![path.clone()]
+    } else {
+        Vec::new()
+    }
+}
+
 /// Whether `path` matches `pattern` component by component.
-pub(crate) fn glob_matches(pattern: &RelativePath, path: &RelativePath) -> bool {
+fn glob_matches(pattern: &RelativePath, path: &RelativePath) -> bool {
     let pattern: Vec<_> = pattern.as_ref().split('/').collect();
     let parts: Vec<_> = path.as_ref().split('/').collect();
     parts.len() == pattern.len()

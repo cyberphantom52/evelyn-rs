@@ -9,7 +9,7 @@
 
 use crate::{Composition, Error, Target, compose::Context, layout, package::Opened};
 use android_firmware::{DevicePath, Firmware, Name, RelativePath, SourceRef};
-use android_fs::{EntryKind, PartitionTree};
+use android_fs::EntryKind;
 use recipe::{
     PropertyTarget,
     tree::{BinaryOp, Expr, Scope as Range, Source, UnaryOp},
@@ -216,7 +216,7 @@ impl Scope<'_> {
                     .sources
                     .get(&source)
                     .ok_or_else(|| Error::UnknownSource(source.clone()))?;
-                for path in matches(tree, &at.path) {
+                for path in layout::matches(tree, &at.path) {
                     found.push(Located {
                         place: Place::Firmware(firmware),
                         partition: at.partition.clone(),
@@ -311,7 +311,7 @@ impl Scope<'_> {
         let mut found = Vec::new();
         for at in paths {
             if let Some(target) = self.targets.get(&at.partition) {
-                for path in matches(&target.tree, &at.path) {
+                for path in layout::matches(&target.tree, &at.path) {
                     found.push(Located {
                         place: Place::Build,
                         partition: at.partition.clone(),
@@ -474,7 +474,7 @@ impl Scope<'_> {
                     .targets
                     .get(&entry.partition)
                     .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?;
-                Value::Str(target.file(&entry.path)?.2.to_string())
+                Value::Str(target.file(&entry.path)?.sha256.to_string())
             }
             Expr::Below(inner) => {
                 let mut found = Vec::new();
@@ -592,26 +592,8 @@ impl Scope<'_> {
                     .sources
                     .get(&source)
                     .ok_or_else(|| Error::UnknownSource(source.clone()))?;
-                let mut found = tree
-                    .entries
-                    .get(&entry.path)
-                    .ok_or_else(|| Error::Missing(entry.path.clone()))?;
-                if let EntryKind::Hardlink { target } = &found.kind {
-                    found = tree
-                        .entries
-                        .get(target)
-                        .ok_or_else(|| Error::Missing(target.clone()))?;
-                }
-                let EntryKind::File { content, size, .. } = &found.kind else {
-                    return Err(Error::Unsupported("only a regular file has content"));
-                };
-                let store = android_fs::Store {
-                    images: self.context.images,
-                    root: std::path::Path::new("/"),
-                };
-                let mut bytes = Vec::new();
-                std::io::Read::read_to_end(&mut store.open(content, *size)?, &mut bytes)?;
-                Ok(bytes)
+                Ok(android_fs::Store::sources(self.context.images)
+                    .read(&tree.file(&entry.path)?)?)
             }
         }
     }
@@ -622,18 +604,6 @@ pub(crate) fn source_of(from: Firmware, partition: &Name) -> SourceRef {
     SourceRef {
         source: from,
         partition: partition.clone(),
-    }
-}
-
-/// The entries `path` names in a tree: every match of a glob, else the entry if
-/// it is there.
-fn matches(tree: &PartitionTree, path: &RelativePath) -> Vec<RelativePath> {
-    if layout::is_glob(path) {
-        layout::expand(tree, path)
-    } else if tree.entries.contains_key(path) {
-        vec![path.clone()]
-    } else {
-        Vec::new()
     }
 }
 
