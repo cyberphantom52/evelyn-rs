@@ -114,6 +114,28 @@ impl Value {
         }
     }
 
+    /// A string's lines; an unset value has none.
+    pub fn lines(&self) -> Result<Self, ValueError> {
+        match self {
+            Self::Str(text) => Ok(Self::List(text.lines().map(str::to_owned).collect())),
+            Self::Unset => Ok(Self::List(Vec::new())),
+            other => Err(Self::undefined("Lines", other.kind())),
+        }
+    }
+
+    /// A list's strings as lines, each ending in a newline.
+    pub fn join(&self) -> Result<Self, ValueError> {
+        match self {
+            Self::List(lines) => Ok(Self::Str(
+                lines
+                    .iter()
+                    .flat_map(|line| [line.as_str(), "\n"])
+                    .collect(),
+            )),
+            other => Err(Self::undefined("Join", other.kind())),
+        }
+    }
+
     /// A string or selection has something in it.
     pub fn defined(&self) -> Result<Self, ValueError> {
         match self {

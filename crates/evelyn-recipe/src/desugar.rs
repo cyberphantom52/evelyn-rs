@@ -3,7 +3,10 @@
 use crate::{
     Data, Error, Expr as Surface, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch,
     XmlName, XmlPath, XmlPredicate, escape_attribute,
-    tree::{Assigned, BinaryOp, Expr, MethodEdit, Scope, Source, Stmt, Transform, Tree, UnaryOp},
+    tree::{
+        Assigned, BinaryOp, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree,
+        UnaryOp,
+    },
     value::Value,
 };
 use android_firmware::{Firmware, Name, RelativePath};
@@ -95,12 +98,19 @@ pub(crate) fn expr(surface: &Surface) -> Expr {
         Surface::Partition(name) => Expr::Partition(name.clone()),
         Surface::Not(inner) => unary(UnaryOp::Not, inner),
         Surface::All(all_of) => all(all_of.iter().map(expr).collect()),
-        Surface::Any(any_of) => any_of
-            .iter()
-            .map(expr)
-            .reduce(|left, right| binary(BinaryOp::Or, left, right))
-            .unwrap_or(Expr::Literal(Value::Bool(false))),
+        Surface::Any(any_of) => any(any_of.iter().map(expr).collect()),
     }
+}
+
+fn any(exprs: Vec<Expr>) -> Expr {
+    exprs
+        .into_iter()
+        .reduce(|left, right| Expr::Binary {
+            op: BinaryOp::Or,
+            left: Box::new(left),
+            right: Box::new(right),
+        })
+        .unwrap_or(Expr::Literal(Value::Bool(false)))
 }
 
 fn all(exprs: Vec<Expr>) -> Expr {
@@ -320,13 +330,18 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 .collect();
             // Only the files that mention the feature: one that cannot hold it is
             // not touched, or even parsed. A feature declared nowhere skips the step.
-            let files = Expr::Containing {
-                selection: Box::new(Expr::Binary {
+            let file = self::name("file");
+            let files = Expr::Filter {
+                over: Box::new(Expr::Binary {
                     op: BinaryOp::Or,
                     left: Box::new(select("/*/etc/permissions/*.xml", Scope::default())),
                     right: Box::new(select("/*/etc/extension/*.xml", Scope::default())),
                 }),
-                text: Box::new(Expr::Literal(Value::Str(name.clone()))),
+                name: file.clone(),
+                keep: Box::new(Expr::Matches {
+                    text: Box::new(Expr::Content(Box::new(Expr::Var(file)))),
+                    pattern: Pattern::literal(name),
+                }),
             };
             Stmt::When {
                 condition: defined(files.clone()),
@@ -354,16 +369,48 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 Data::File { from, path } => {
                     Expr::Content(Box::new(firmware_file(path.as_ref(), *from)))
                 }
+                // The lines that contain any of `containing` and none of `except`.
                 Data::Lines {
                     from,
                     path,
                     containing,
                     except,
-                } => Expr::Lines {
-                    text: Box::new(Expr::Content(Box::new(firmware_file(path.as_ref(), *from)))),
-                    containing: containing.clone(),
-                    except: except.clone(),
-                },
+                } => {
+                    let line = name("line");
+                    let has = |any_of: &[String]| Expr::Matches {
+                        text: Box::new(Expr::Var(line.clone())),
+                        pattern: Pattern::try_from(
+                            any_of
+                                .iter()
+                                .map(|text| regex::escape(text))
+                                .collect::<Vec<_>>()
+                                .join("|"),
+                        )
+                        .expect("escaped alternatives compile"),
+                    };
+                    let mut keep = vec![has(containing)];
+                    if !except.is_empty() {
+                        keep.push(Expr::Unary {
+                            op: UnaryOp::Not,
+                            expr: Box::new(has(except)),
+                        });
+                    }
+                    let lines = Expr::Unary {
+                        op: UnaryOp::Lines,
+                        expr: Box::new(Expr::Content(Box::new(firmware_file(
+                            path.as_ref(),
+                            *from,
+                        )))),
+                    };
+                    Expr::Unary {
+                        op: UnaryOp::Join,
+                        expr: Box::new(Expr::Filter {
+                            over: Box::new(lines),
+                            name: line,
+                            keep: Box::new(all(keep)),
+                        }),
+                    }
+                }
             }),
         },
         Operation::AssertHash { target, sha256 } => Stmt::Assert {
