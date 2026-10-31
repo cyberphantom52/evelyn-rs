@@ -33,7 +33,7 @@ pub struct BuildRequest<'a> {
 #[derive(Debug, Serialize)]
 pub struct Built {
     pub outputs: Vec<PathBuf>,
-    /// Steps whose bindings, condition or templated asset did not apply here.
+    /// Steps whose bindings or condition did not apply here.
     pub skipped: Vec<patch::Skipped>,
     /// `SetMetadata` patterns that set what was already there.
     pub unchanged: Vec<patch::Unchanged>,

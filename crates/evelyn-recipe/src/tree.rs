@@ -21,7 +21,8 @@ pub struct Tree {
 pub enum Stmt {
     /// A named unit: what provenance and skip reports refer to.
     Step { id: Name, body: Vec<Stmt> },
-    /// Bind a string for the body; a value that is unset skips the body.
+    /// Bind `name` to a value for the body's expressions. A string bound here must
+    /// be a token, `[A-Za-z0-9._-]`: it comes from firmware and goes into paths.
     Let {
         name: Name,
         value: Expr,
@@ -41,7 +42,8 @@ pub enum Stmt {
     /// none, get Android's defaults.
     Copy {
         selection: Expr,
-        to: Option<DevicePath>,
+        /// A device path.
+        to: Option<Expr>,
     },
     /// Set metadata on every entry selected (not what is below it; for that,
     /// select with `Below`). `pattern` names the selection in reports.
@@ -106,7 +108,7 @@ pub enum Expr {
     /// What a statement selects. A pattern starting with `/` is a device path; a
     /// relative one is tried in the directory of every partition the scope selects.
     Select {
-        pattern: String,
+        pattern: Box<Expr>,
         #[serde(default)]
         scope: Scope,
     },
@@ -176,12 +178,24 @@ pub enum Expr {
     Eq(Box<Expr>, Box<Expr>),
     /// A string is in a list; an unset value is in none.
     In(Box<Expr>, Box<Expr>),
+    /// The strings, one after another.
+    Concat(Vec<Expr>),
     /// The lines of a string, as a list; an unset value has none.
     Lines(Box<Expr>),
     /// A list's strings, each ending in a newline.
     Join(Box<Expr>),
     #[serde(untagged)]
     Literal(Value),
+}
+
+impl Expr {
+    /// The string a literal is.
+    pub fn literal_str(&self) -> Option<&str> {
+        match self {
+            Self::Literal(Value::Str(text)) => Some(text),
+            _ => None,
+        }
+    }
 }
 
 /// How `Smali` changes a method.

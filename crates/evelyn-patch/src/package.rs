@@ -69,22 +69,25 @@ pub(crate) fn close(
 struct Resources(bool);
 
 impl Resources {
-    fn note(&mut self, path: &str) {
-        self.0 |= path.starts_with("/res/") || path == "/AndroidManifest.xml";
+    /// A path that is computed may be anything.
+    fn note_expr(&mut self, path: &Expr) {
+        self.0 |= path
+            .literal_str()
+            .is_none_or(|path| path.starts_with("/res/") || path == "/AndroidManifest.xml");
     }
 }
 
 impl Visitor for Resources {
     fn stmt(&mut self, stmt: &Stmt, _bound: &[&Name]) -> Result<(), recipe::Error> {
         if let Stmt::Copy { to: Some(to), .. } = stmt {
-            self.note(to.as_ref());
+            self.note_expr(to);
         }
         Ok(())
     }
 
     fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), recipe::Error> {
         if let Expr::Select { pattern, .. } = expr {
-            self.note(pattern);
+            self.note_expr(pattern);
         }
         Ok(())
     }

@@ -3,10 +3,10 @@
 use crate::{
     Data, Error, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch, XmlName, XmlPath,
     XmlPredicate, escape_attribute,
-    tree::{Assigned, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree},
+    tree::{Assigned, Expr, MethodEdit, Pattern, Scope, Stmt, Transform, Tree},
     value::Value,
 };
-use android_firmware::{DevicePath, Firmware, Name};
+use android_firmware::{Firmware, Name};
 
 impl Recipe {
     /// The recipe as primitives, its steps in dependency order.
@@ -18,50 +18,26 @@ impl Recipe {
     }
 }
 
-/// `let:` bindings enclose `when:`, which encloses the operations; a templated
-/// asset that is missing skips the step like an unset binding.
+/// `let:` bindings enclose `when:`, which encloses the operations; a binding with
+/// no value skips the step.
 fn step(step: &Step) -> Stmt {
     let mut body: Vec<Stmt> = step.operations.iter().flat_map(operation).collect();
-    let assets: Vec<Expr> = step
-        .operations
-        .iter()
-        .filter_map(|operation| match operation {
-            Operation::Copy {
-                from: Source::Assets,
-                path,
-                ..
-            } if path.contains('{') => Some(defined(select(
-                path,
-                Scope {
-                    inside: Some(Source::Assets),
-                    ..Scope::default()
-                },
-            ))),
-            _ => None,
-        })
-        .collect();
-    if !assets.is_empty() {
-        body = vec![Stmt::When {
-            condition: Expr::All(assets),
-            body,
-            skip: "a templated asset is not there".into(),
-        }];
-    }
     if let Some(condition) = &step.when {
         body = vec![Stmt::When {
             condition: condition.clone(),
             body,
-            skip: format!(
-                "condition does not hold: {}",
-                ron::to_string(condition).unwrap_or_default()
-            ),
+            skip: format!("condition does not hold: {}", shown(condition)),
         }];
     }
     for (name, value) in step.bindings.iter().rev() {
         body = vec![Stmt::Let {
             name: name.clone(),
             value: value.clone(),
-            body,
+            body: vec![Stmt::When {
+                condition: defined(Expr::Var(name.clone())),
+                body,
+                skip: format!("{name} is not set: {}", shown(value)),
+            }],
         }];
     }
     Stmt::Step {
@@ -70,9 +46,21 @@ fn step(step: &Step) -> Stmt {
     }
 }
 
+/// An expression as reports name it: a string as it is, anything else in RON.
+fn shown(expr: &Expr) -> String {
+    match expr.literal_str() {
+        Some(text) => text.to_owned(),
+        None => ron::to_string(expr).unwrap_or_default(),
+    }
+}
+
 fn select(pattern: &str, scope: Scope) -> Expr {
+    select_expr(Expr::Literal(Value::Str(pattern.to_owned())), scope)
+}
+
+fn select_expr(pattern: Expr, scope: Scope) -> Expr {
     Expr::Select {
-        pattern: pattern.to_owned(),
+        pattern: Box::new(pattern),
         scope,
     }
 }
@@ -85,23 +73,23 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             to,
             metadata,
         } => {
-            let source = select(
-                path,
+            let source = select_expr(
+                path.clone(),
                 Scope {
                     inside: Some(*from),
                     ..Scope::default()
                 },
             );
-            let found = expect(source.clone(), format!("{path} is not in {from}"));
+            let found = expect(source.clone(), format!("{} is not in {from}", shown(path)));
             let copy = Stmt::Copy {
                 selection: source,
                 to: to.clone(),
             };
             // What the copy put in the build, by where it went.
-            let placed = to.as_ref().map_or(path.clone(), DevicePath::to_string);
+            let placed = to.as_ref().unwrap_or(path);
             let defaults = || Stmt::SetMetadata {
-                selection: Expr::Below(Box::new(select(&placed, Scope::default()))),
-                pattern: placed.clone(),
+                selection: Expr::Below(Box::new(select_expr(placed.clone(), Scope::default()))),
+                pattern: shown(placed),
                 metadata: Assigned::Defaults,
             };
             return match metadata {
@@ -112,8 +100,8 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                     copy,
                     defaults(),
                     Stmt::SetMetadata {
-                        selection: select(&placed, Scope::default()),
-                        pattern: placed.clone(),
+                        selection: select_expr(placed.clone(), Scope::default()),
+                        pattern: shown(placed),
                         metadata: Assigned::Fields(overrides(operation)),
                     },
                 ],

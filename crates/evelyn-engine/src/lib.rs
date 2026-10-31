@@ -172,10 +172,6 @@ impl Plan {
             let mut needed = needs::Assets::default();
             tree.walk(&mut needed)?;
             for asset in &needed.0 {
-                // A templated asset is looked up when its step runs.
-                if asset.as_ref().contains('{') {
-                    continue;
-                }
                 let asset = assets.join(asset.as_ref());
                 if !asset.exists() {
                     return Err(Error::MissingAsset(asset));

@@ -67,8 +67,8 @@ pub struct Step {
     pub id: Name,
     #[serde(default)]
     pub after: Vec<Name>,
-    /// String expressions, evaluated against the tree composed so far and
-    /// substituted for `{name}` in the step's condition and operations. One that has
+    /// Names bound to string expressions, evaluated against the tree composed so far,
+    /// for the step's condition and operations to use as `Var("name")`. One that has
     /// no value skips the step.
     #[serde(rename = "let", default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bindings: BTreeMap<Name, tree::Expr>,
@@ -92,10 +92,11 @@ pub enum Operation {
     /// `metadata: Default` Android's defaults. What `path` names must be there.
     Copy {
         from: tree::Source,
-        path: String,
+        /// A string expression, like `to`.
+        path: tree::Expr,
         /// Where it goes, if not to the same path. A glob keeps its path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        to: Option<DevicePath>,
+        to: Option<tree::Expr>,
         #[serde(default, skip_serializing_if = "Metadata::is_copy")]
         metadata: Metadata,
     },
@@ -472,13 +473,24 @@ impl Operation {
             } if containing.is_empty() => Err(Error::Invalid(
                 "Lines needs at least one string a line contains".into(),
             )),
-            Self::Copy { from, path, to, .. } => match from {
-                tree::Source::Assets if to.is_none() => Err(Error::Invalid(format!(
-                    "copying the asset {path} needs a to:"
-                ))),
-                tree::Source::Assets => Ok(RelativePath::try_from(path.clone()).map(|_| ())?),
-                _ => Ok(DevicePath::try_from(path.clone()).map(|_| ())?),
-            },
+            // Paths written out are checked now, computed ones when they are used.
+            Self::Copy { from, path, to, .. } => {
+                if *from == tree::Source::Assets && to.is_none() {
+                    return Err(Error::Invalid("copying an asset needs a to:".into()));
+                }
+                if let Some(path) = path.literal_str() {
+                    match from {
+                        tree::Source::Assets => {
+                            RelativePath::try_from(path.to_owned()).map(drop)?
+                        }
+                        _ => DevicePath::try_from(path.to_owned()).map(drop)?,
+                    }
+                }
+                if let Some(to) = to.as_ref().and_then(tree::Expr::literal_str) {
+                    DevicePath::try_from(to.to_owned())?;
+                }
+                Ok(())
+            }
             Self::Remove {
                 partition, pattern, ..
             } => {
@@ -613,25 +625,4 @@ impl Recipe {
         }
         Ok(ordered)
     }
-}
-
-/// `value` with `{name}` replaced by each binding's value, round-tripped through RON
-/// so the result is validated as if written that way. Bound values are restricted
-/// to `[A-Za-z0-9._-]` because they come from firmware.
-pub fn substitute<T: Serialize + serde::de::DeserializeOwned>(
-    value: &T,
-    bindings: &BTreeMap<Name, String>,
-) -> Result<T, Error> {
-    let mut text = ron_options().to_string(value)?;
-    for (name, bound) in bindings {
-        if !android_firmware::is_token(bound) {
-            return Err(Error::Invalid(format!(
-                "bound value {bound:?} for {name} is not [A-Za-z0-9._-]"
-            )));
-        }
-        text = text.replace(&format!("{{{name}}}"), bound);
-    }
-    ron_options()
-        .from_str(&text)
-        .map_err(|source| Error::Invalid(format!("substituted step does not parse: {source}")))
 }

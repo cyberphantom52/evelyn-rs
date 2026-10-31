@@ -38,6 +38,8 @@ pub(crate) struct Scope<'a> {
     pub step: &'a Name,
     /// The package a `Package` has open, where `/` is the package's root.
     pub package: Option<&'a Opened>,
+    /// What the statements' `Let`s bind, innermost last.
+    pub bound: &'a [(Name, Value)],
 }
 
 impl Scope<'_> {
@@ -445,7 +447,13 @@ impl Scope<'_> {
     fn eval_in(&self, expr: &Expr, bound: Option<&Bound<'_>>) -> Result<Value, Error> {
         Ok(match expr {
             Expr::Literal(value) => value.clone(),
-            Expr::Select { pattern, scope } => Value::Selection(self.select(pattern, scope)?),
+            Expr::Select { pattern, scope } => {
+                let pattern = self.eval_in(pattern, bound)?;
+                let pattern = pattern
+                    .as_str()?
+                    .ok_or(Error::Unsupported("Select needs a pattern that is set"))?;
+                Value::Selection(self.select(pattern, scope)?)
+            }
             Expr::Property { key, target } => self
                 .get(target.as_ref(), key)?
                 .map_or(Value::Unset, Value::Str),
@@ -457,8 +465,10 @@ impl Scope<'_> {
                 Value::Selection(vec![self.new_property_file(target.as_ref())?])
             }
             Expr::Var(name) => std::iter::successors(bound, |bound| bound.outer)
-                .find(|bound| bound.name == name)
-                .map(|bound| bound.value.clone())
+                .map(|bound| (bound.name, &bound.value))
+                .chain(self.bound.iter().rev().map(|(name, value)| (name, value)))
+                .find(|(bound, _)| *bound == name)
+                .map(|(_, value)| value.clone())
                 .ok_or(Error::Unsupported("a name no Let or Filter binds"))?,
             Expr::Let { name, value, body } => {
                 let value = self.eval_in(value, bound)?;
@@ -574,6 +584,17 @@ impl Scope<'_> {
             Expr::HasPartition(name) => Value::Bool(self.targets.contains_key(name)),
             Expr::Not(inner) => (!self.eval_in(inner, bound)?)?,
             Expr::Exists(inner) => self.eval_in(inner, bound)?.defined()?,
+            Expr::Concat(parts) => {
+                let mut text = String::new();
+                for part in parts {
+                    let part = self.eval_in(part, bound)?;
+                    text.push_str(
+                        part.as_str()?
+                            .ok_or(Error::Unsupported("Concat needs strings that are set"))?,
+                    );
+                }
+                Value::Str(text)
+            }
             Expr::Lines(inner) => self.eval_in(inner, bound)?.lines()?,
             Expr::Join(inner) => self.eval_in(inner, bound)?.join()?,
             // `All` and `Any` stop at the first condition that decides them.
