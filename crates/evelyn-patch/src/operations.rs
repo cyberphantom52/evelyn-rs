@@ -201,7 +201,7 @@ impl Target {
     ) -> Result<(), Error> {
         let canonical = self.file(path)?.0.clone();
         let bytes = self.read(path, context.images)?;
-        let changed = transformed(&bytes, transform, context.assets)?;
+        let changed = transformed(&bytes, transform, context)?;
         if changed == bytes {
             return Ok(());
         }
@@ -282,13 +282,13 @@ pub(crate) fn files(root: &Path) -> Result<Vec<(String, std::path::PathBuf)>, Er
 pub(crate) fn transformed(
     bytes: &[u8],
     transform: &Transform,
-    assets: &Path,
+    context: &Context<'_>,
 ) -> Result<Vec<u8>, Error> {
     let text = |bytes: &[u8]| -> Result<String, Error> {
         String::from_utf8(bytes.to_vec())
             .map_err(|_| Error::Unsupported("text edits require UTF-8"))
     };
-    let asset = |path: &RelativePath| text(&std::fs::read(path.resolve(assets))?);
+    let asset = |path: &RelativePath| text(&std::fs::read(path.resolve(context.assets))?);
     Ok(match transform {
         Transform::Bytes { before, edits } => crate::binary::apply(bytes, before, edits)?,
         Transform::Xml { before, edits } => crate::xml::apply(bytes, before.as_ref(), edits)?,
@@ -340,6 +340,15 @@ pub(crate) fn transformed(
                 }
             }
             .into_bytes()
+        }
+        Transform::Sepolicy {
+            policies,
+            resolve_with: Expr::Literal(Value::List(resolve_with)),
+        } => crate::sepolicy::apply(bytes, policies, resolve_with, context)?,
+        Transform::Sepolicy { .. } => {
+            return Err(Error::Unsupported(
+                "SepolicyPatch's policy files are evaluated before the edit",
+            ));
         }
     })
 }

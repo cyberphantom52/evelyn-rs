@@ -26,6 +26,7 @@ impl Visitor for Assets {
         if let Stmt::Edit { transform, .. } = stmt {
             match transform {
                 Transform::TextPatch { patch, .. } => self.0.push(patch.clone()),
+                Transform::Sepolicy { policies, .. } => self.0.extend(policies.iter().cloned()),
                 Transform::Smali {
                     edit: MethodEdit::Replace(body) | MethodEdit::Insert(body),
                     ..

@@ -370,6 +370,13 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 skip: format!("feature {name} is not declared"),
             }
         }
+        Operation::SepolicyPatch { target, policies } => Stmt::Edit {
+            selection: select(target.as_ref(), Scope::default()),
+            transform: Transform::Sepolicy {
+                policies: policies.clone(),
+                resolve_with: Expr::PolicyFiles,
+            },
+        },
         Operation::Append { target, content } => Stmt::Edit {
             selection: select(target.as_ref(), Scope::default()),
             transform: Transform::Append(match content {
@@ -407,7 +414,8 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         | Operation::TextPatch { target, .. }
         | Operation::BinaryPatch { target, .. }
         | Operation::Xml { target, .. }
-        | Operation::Append { target, .. } => named(target.to_string()),
+        | Operation::Append { target, .. }
+        | Operation::SepolicyPatch { target, .. } => named(target.to_string()),
         Operation::EnableFeature(feature) => named(feature_file(feature).to_owned()),
         Operation::StubMethod { class, .. }
         | Operation::ReplaceMethod { class, .. }

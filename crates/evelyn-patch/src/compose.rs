@@ -256,7 +256,8 @@ impl Composition {
             } => {
                 let selected = self.eval(selection, context, step)?;
                 let selected = selected.as_selection()?;
-                // Append's string is an expression, evaluated before the edit.
+                // Append's string and the policy files a policy patch resolves with are
+                // expressions, evaluated before the edit.
                 let transform = &match transform {
                     Transform::Append(text) => {
                         let text = self.eval(text, context, step)?;
@@ -264,6 +265,24 @@ impl Composition {
                             .as_str()?
                             .ok_or(Error::Unsupported("Append needs a string that is set"))?;
                         Transform::Append(Expr::Literal(Value::Str(text.to_owned())))
+                    }
+                    Transform::Sepolicy {
+                        policies,
+                        resolve_with,
+                    } => {
+                        let mut texts = Vec::new();
+                        for file in self.eval(resolve_with, context, step)?.as_selection()? {
+                            if selected.contains(file) {
+                                continue;
+                            }
+                            let file = Expr::Literal(Value::Selection(vec![file.clone()]));
+                            let text = self.eval(&Expr::Content(Box::new(file)), context, step)?;
+                            texts.extend(text.as_str()?.map(str::to_owned));
+                        }
+                        Transform::Sepolicy {
+                            policies: policies.clone(),
+                            resolve_with: Expr::Literal(Value::List(texts)),
+                        }
                     }
                     other => other.clone(),
                 };
@@ -289,7 +308,7 @@ impl Composition {
                             let path = entry.path.resolve(&package.decoded);
                             let bytes = std::fs::read(&path).map_err(crate::package::io(&path))?;
                             let changed =
-                                crate::operations::transformed(&bytes, transform, context.assets)?;
+                                crate::operations::transformed(&bytes, transform, context)?;
                             std::fs::write(&path, changed).map_err(crate::package::io(&path))?;
                         }
                         _ => return Err(Error::Unsupported("only the build can be edited")),

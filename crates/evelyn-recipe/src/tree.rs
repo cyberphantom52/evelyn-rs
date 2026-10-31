@@ -90,6 +90,12 @@ pub enum Transform {
         method: String,
         edit: MethodEdit,
     },
+    /// Patch one of the device's CIL policy files with TE `policies` (assets), checked
+    /// to resolve with the policy files `resolve_with` selects, less the one patched.
+    Sepolicy {
+        policies: Vec<RelativePath>,
+        resolve_with: Expr,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -112,6 +118,9 @@ pub enum Expr {
         key: String,
         target: Option<PropertyTarget>,
     },
+    /// The CIL files init compiles the device's SELinux policy from that the build
+    /// has, for the platform policy version the vendor names.
+    PolicyFiles,
     /// The file a new property goes to: the file, the partition's `build.prop`,
     /// or without a target product's.
     NewPropertyFile(Option<PropertyTarget>),

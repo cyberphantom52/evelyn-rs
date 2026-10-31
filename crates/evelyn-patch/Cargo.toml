@@ -12,6 +12,7 @@ android-property.workspace = true
 toolchain.workspace = true
 recipe.workspace = true
 smali.workspace = true
+sepolicy.workspace = true
 serde.workspace = true
 ron.workspace = true
 thiserror.workspace = true
