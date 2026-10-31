@@ -56,7 +56,7 @@ pub fn capture(
             (
                 vec![Operation::ApplyDiff {
                     target: recipe::Build::Build(target),
-                    patch: asset,
+                    patch: recipe::Asset::Asset(asset),
                 }],
                 Some(patch),
             )
