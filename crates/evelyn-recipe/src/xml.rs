@@ -233,3 +233,10 @@ pub(crate) fn validate(edits: &[XmlEdit]) -> Result<(), Error> {
     }
     Ok(())
 }
+
+/// Text as an XML attribute value.
+pub fn escape_attribute(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('"', "&quot;")
+}
