@@ -194,7 +194,11 @@ pub enum Operation {
     /// permissions and extension XML in the build.
     DisableFeature(String),
     /// Add `content` at the end of a file, on a line of its own.
-    Append { target: DevicePath, content: Data },
+    Append {
+        target: DevicePath,
+        /// A string expression.
+        content: tree::Expr,
+    },
     /// Patch one of the device's CIL policy files with TE `policies` (assets), written
     /// with Android's policy macros. The result must resolve with the device's other
     /// policy files, as init loads them.
@@ -244,25 +248,6 @@ pub enum Feature {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         args: Option<String>,
         file: DevicePath,
-    },
-}
-
-/// What `Append` adds: text, a firmware file's content, or the lines of one that
-/// contain any of `containing` and none of `except`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum Data {
-    Text(String),
-    File {
-        from: Firmware,
-        path: DevicePath,
-    },
-    Lines {
-        from: Firmware,
-        path: DevicePath,
-        containing: Vec<String>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        except: Vec<String>,
     },
 }
 
@@ -461,12 +446,6 @@ impl Operation {
             Self::AddPolicy { policies, .. } if policies.is_empty() => {
                 Err(Error::Invalid("AddPolicy needs at least one policy".into()))
             }
-            Self::Append {
-                content: Data::Lines { containing, .. },
-                ..
-            } if containing.is_empty() => Err(Error::Invalid(
-                "Lines needs at least one string a line contains".into(),
-            )),
             // Paths written out are checked now, computed ones when they are used.
             Self::Copy { from, path, to, .. } => {
                 if *from == tree::Source::Assets && to.is_none() {

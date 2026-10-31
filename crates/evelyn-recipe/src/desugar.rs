@@ -1,12 +1,12 @@
 //! Surface recipes (steps of operations, `let:` and `when:`) into the primitive tree.
 
 use crate::{
-    Data, Error, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch, XmlName, XmlPath,
+    Error, Feature, Metadata, Operation, Recipe, Step, XmlEdit, XmlMatch, XmlName, XmlPath,
     XmlPredicate, escape_attribute,
     tree::{Assigned, Expr, MethodEdit, Pattern, Scope, Stmt, Transform, Tree},
     value::Value,
 };
-use android_firmware::{Firmware, Name};
+use android_firmware::Name;
 
 impl Recipe {
     /// The recipe as primitives, its steps in dependency order.
@@ -253,48 +253,13 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 resolve_with: Expr::PolicyFiles,
             },
         },
-        Operation::Append { target, content } => Stmt::Edit {
-            selection: select(target.as_ref(), Scope::default()),
-            transform: Transform::Append(match content {
-                Data::Text(text) => Expr::Literal(Value::Str(text.clone())),
-                Data::File { from, path } => {
-                    Expr::Read(Box::new(firmware_file(path.as_ref(), *from)))
-                }
-                // The lines that contain any of `containing` and none of `except`.
-                Data::Lines {
-                    from,
-                    path,
-                    containing,
-                    except,
-                } => {
-                    let line = name("line");
-                    let has = |any_of: &[String]| Expr::Matches {
-                        text: Box::new(Expr::Var(line.clone())),
-                        pattern: Pattern::try_from(
-                            any_of
-                                .iter()
-                                .map(|text| regex::escape(text))
-                                .collect::<Vec<_>>()
-                                .join("|"),
-                        )
-                        .expect("escaped alternatives compile"),
-                    };
-                    let mut keep = vec![has(containing)];
-                    if !except.is_empty() {
-                        keep.push(Expr::Not(Box::new(has(except))));
-                    }
-                    let lines = Expr::Lines(Box::new(Expr::Read(Box::new(firmware_file(
-                        path.as_ref(),
-                        *from,
-                    )))));
-                    Expr::Join(Box::new(Expr::Filter {
-                        over: Box::new(lines),
-                        name: line,
-                        keep: Box::new(Expr::All(keep)),
-                    }))
-                }
-            }),
-        },
+        Operation::Append { target, content } => {
+            let file = select(target.as_ref(), Scope::default());
+            Stmt::Edit {
+                transform: Transform::Write(appended(Expr::Read(Box::new(file.clone())), content)),
+                selection: file,
+            }
+        }
         Operation::AssertHash { target, sha256 } => Stmt::Assert {
             condition: Expr::Eq(
                 Box::new(Expr::Hash(Box::new(select(
@@ -368,17 +333,6 @@ fn smali_file(class: &str) -> Expr {
     select(&format!("/smali*/{name}.smali"), Scope::default())
 }
 
-/// What `pattern` (a device path) matches in a firmware, as a selection.
-fn firmware_file(pattern: &str, from: Firmware) -> Expr {
-    select(
-        pattern,
-        Scope {
-            inside: Some(from.into()),
-            ..Scope::default()
-        },
-    )
-}
-
 /// The metadata an operation that sets some sets.
 fn overrides(operation: &Operation) -> crate::Overrides {
     operation
@@ -401,6 +355,44 @@ fn or_else(first: Expr, otherwise: Expr) -> Expr {
             condition: Box::new(defined(Expr::Var(selected.clone()))),
             then: Box::new(Expr::Var(selected)),
             otherwise: Box::new(otherwise),
+        }),
+    }
+}
+
+/// `old` with `added` after it on lines of its own: a newline goes between them if
+/// `old` does not end in one, and after `added` if it does not. Nothing added
+/// leaves `old` as it is.
+fn appended(old: Expr, added: &Expr) -> Expr {
+    let (old_name, added_name) = (name("old"), name("added"));
+    let (old, added) = ((old_name.clone(), old), (added_name.clone(), added.clone()));
+    let var = |name: &Name| Expr::Var(name.clone());
+    let str = |text: &str| Expr::Literal(Value::Str(text.to_owned()));
+    // A newline, unless `text` is empty or already ends in one.
+    let newline = |text: &Name, unless: &str| Expr::If {
+        condition: Box::new(Expr::Matches {
+            text: Box::new(var(text)),
+            pattern: Pattern::try_from(unless.to_owned()).expect("a literal pattern"),
+        }),
+        then: Box::new(str("")),
+        otherwise: Box::new(str("\n")),
+    };
+    let both = Expr::Concat(vec![
+        var(&old_name),
+        newline(&old_name, r"(?:\A|\n)\z"),
+        var(&added_name),
+        newline(&added_name, r"\n\z"),
+    ]);
+    Expr::Let {
+        name: old.0,
+        value: Box::new(old.1),
+        body: Box::new(Expr::Let {
+            name: added.0,
+            value: Box::new(added.1),
+            body: Box::new(Expr::If {
+                condition: Box::new(Expr::Eq(Box::new(var(&added_name)), Box::new(str("")))),
+                then: Box::new(var(&old_name)),
+                otherwise: Box::new(both),
+            }),
         }),
     }
 }

@@ -71,7 +71,7 @@ fn walk_stmt<'a>(
         Stmt::Edit {
             selection,
             transform:
-                Transform::Append(text)
+                Transform::Write(text)
                 | Transform::AddPolicy {
                     resolve_with: text, ..
                 },
@@ -272,7 +272,7 @@ impl Visitor for Check {
             Stmt::Edit {
                 selection,
                 transform:
-                    Transform::Append(text)
+                    Transform::Write(text)
                     | Transform::AddPolicy {
                         resolve_with: text, ..
                     },
@@ -280,9 +280,9 @@ impl Visitor for Check {
                 of(selection, &[Kind::Selection], "a selection")?;
                 match &stmt {
                     Stmt::Edit {
-                        transform: Transform::Append(_),
+                        transform: Transform::Write(_),
                         ..
-                    } => of(text, &[Kind::Str], "Append")?,
+                    } => of(text, &[Kind::Str], "Write")?,
                     _ => of(text, &[Kind::Selection], "AddPolicy")?,
                 }
             }

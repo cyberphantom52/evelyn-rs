@@ -267,20 +267,9 @@ pub(crate) fn transformed(
         }
         // The string is evaluated before the edit, where expressions are. Appending
         // nothing changes nothing.
-        Transform::Append(Expr::Literal(Value::Str(data))) if data.is_empty() => bytes.to_vec(),
-        Transform::Append(Expr::Literal(Value::Str(data))) => {
-            let mut text = text(bytes)?;
-            if !text.is_empty() && !text.ends_with('\n') {
-                text.push('\n');
-            }
-            text.push_str(data);
-            if !data.ends_with('\n') {
-                text.push('\n');
-            }
-            text.into_bytes()
-        }
-        Transform::Append(_) => {
-            return Err(Error::Unsupported("Append's string is evaluated first"));
+        Transform::Write(Expr::Literal(Value::Str(text))) => text.clone().into_bytes(),
+        Transform::Write(_) => {
+            return Err(Error::Unsupported("Write's string is evaluated first"));
         }
         Transform::Smali {
             class,
