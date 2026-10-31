@@ -86,6 +86,31 @@ fn apply_one(xot: &mut Xot, document: Node, index: usize, edit: &XmlEdit) -> Res
             }
             Ok(*expect > 0)
         }
+        XmlEdit::SetAttribute {
+            path,
+            name,
+            value,
+            expect,
+        } => {
+            let nodes = select(xot, document, &path.selectors);
+            if let Some(expect) = expect {
+                count(index, *expect, nodes.len())?;
+            }
+            let namespace = match &name.namespace {
+                Some(uri) => xot.add_namespace(uri),
+                None => xot.no_namespace(),
+            };
+            let id = xot.add_name_ns(&name.local, namespace);
+            let mut changed = false;
+            for node in nodes {
+                let mut attributes = xot.attributes_mut(node);
+                if attributes.get(id) != Some(value) {
+                    attributes.insert(id, value.clone());
+                    changed = true;
+                }
+            }
+            Ok(changed)
+        }
         XmlEdit::Remove { path, expect } => {
             let nodes = select(xot, document, &path.selectors);
             if let Some(expect) = expect {

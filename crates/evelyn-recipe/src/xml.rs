@@ -3,7 +3,10 @@
 use crate::Error;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// An element or attribute name, written as `local` or, with a namespace,
+/// `{uri}local`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
 pub struct XmlName {
     pub namespace: Option<String>,
     pub local: String,
@@ -23,16 +26,7 @@ impl TryFrom<String> for XmlMatch {
     type Error = String;
 
     fn try_from(text: String) -> Result<Self, String> {
-        let local = |name: &str| match name.strip_prefix('{').and_then(|n| n.split_once('}')) {
-            Some((namespace, local)) => XmlName {
-                namespace: Some(namespace.to_owned()),
-                local: local.to_owned(),
-            },
-            None => XmlName {
-                namespace: None,
-                local: name.to_owned(),
-            },
-        };
+        let local = |name: &str| XmlName::from(name.to_owned());
         let Some((name, rest)) = text.split_once('[') else {
             return Ok(Self {
                 name: local(&text),
@@ -76,6 +70,27 @@ impl std::fmt::Display for XmlName {
             Some(namespace) => write!(f, "{{{namespace}}}{}", self.local),
             None => f.write_str(&self.local),
         }
+    }
+}
+
+impl From<String> for XmlName {
+    fn from(name: String) -> Self {
+        match name.strip_prefix('{').and_then(|n| n.split_once('}')) {
+            Some((namespace, local)) => Self {
+                namespace: Some(namespace.to_owned()),
+                local: local.to_owned(),
+            },
+            None => Self {
+                namespace: None,
+                local: name,
+            },
+        }
+    }
+}
+
+impl From<XmlName> for String {
+    fn from(name: XmlName) -> Self {
+        name.to_string()
     }
 }
 
@@ -211,6 +226,16 @@ pub enum XmlEdit {
         #[serde(default = "one", skip_serializing_if = "is_one")]
         expect: usize,
         value: String,
+    },
+    /// Set the attribute `name` of every match to `value`, adding it where it is
+    /// missing; `expect` (default 1) pins how many, and `None` lets there be any
+    /// number.
+    SetAttribute {
+        path: XmlPath,
+        name: XmlName,
+        value: String,
+        #[serde(default = "some_one", skip_serializing_if = "is_some_one")]
+        expect: Option<usize>,
     },
     /// Remove every match; `expect` (default 1) pins how many, and `None` lets
     /// there be any number, none included.
