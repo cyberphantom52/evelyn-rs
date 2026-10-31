@@ -70,7 +70,7 @@ pub enum Stmt {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Transform {
     /// Apply the unified diff the asset holds.
-    Diff(RelativePath),
+    ApplyDiff(RelativePath),
     /// Write bytes at offsets.
     WriteBytes(BTreeMap<u64, Hex>),
     Xml(Vec<XmlEdit>),

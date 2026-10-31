@@ -142,7 +142,7 @@ pub enum Operation {
         target: Option<PropertyTarget>,
     },
     /// Apply a unified diff (an asset) to a file and its hardlinks.
-    Diff {
+    ApplyDiff {
         target: DevicePath,
         patch: RelativePath,
     },
@@ -355,7 +355,7 @@ impl Operation {
             Self::SetMetadata { .. } => "SetMetadata",
             Self::SetProperty { .. } => "SetProperty",
             Self::RemoveProperty { .. } => "RemoveProperty",
-            Self::Diff { .. } => "Diff",
+            Self::ApplyDiff { .. } => "ApplyDiff",
             Self::WriteBytes { .. } => "WriteBytes",
             Self::EditXml { .. } => "EditXml",
             Self::Package { .. } => "Package",
@@ -417,7 +417,7 @@ impl Operation {
                 partition: None,
                 pattern,
             } => pattern.starts_with('/'),
-            Self::Diff { .. }
+            Self::ApplyDiff { .. }
             | Self::WriteBytes { .. }
             | Self::EditXml { .. }
             | Self::Copy {
