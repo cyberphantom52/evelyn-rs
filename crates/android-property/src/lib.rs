@@ -4,7 +4,8 @@
 //! [<filter>]` lines, and `key=value` assignments, the key and value trimmed of
 //! whitespace; an inline `#` is part of the value. A later assignment of a key
 //! overrides an earlier one. Edits keep every other byte as it was: a replacement
-//! preserves the text up to the value and the original line ending.
+//! preserves the text up to the value and the original line ending, and an append
+//! uses the file's own line ending.
 
 /// Whether a file at `path` is named as a property file is, `*.prop`. Init loads
 /// only some of them: `android_firmware::PROPERTY_FILES` and their imports.
@@ -12,9 +13,26 @@ pub fn is_property_file(path: &str) -> bool {
     path.ends_with(".prop")
 }
 
-/// Set every assignment of `key`; with none, the text is as it was.
-pub fn set(input: &str, key: &str, value: &str) -> String {
-    edit(input, key, Some(value))
+/// Set every assignment of `key`; with none, append one with `create`, in the
+/// file's own line ending (LF by default), else leave the text as it was.
+pub fn set(input: &str, key: &str, value: &str, create: bool) -> String {
+    let mut output = edit(input, key, Some(value));
+    if create && !entries(input).any(|entry| entry.key == key) {
+        let eol = newline(input);
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push_str(eol);
+        }
+        output.push_str(&format!("{key}={value}{eol}"));
+    }
+    output
+}
+
+/// The line ending of `text`'s first line, defaulting to LF.
+fn newline(text: &str) -> &str {
+    match text.split_inclusive('\n').next() {
+        Some(line) if line.ends_with("\r\n") => "\r\n",
+        _ => "\n",
+    }
 }
 
 /// Remove every complete assignment line of `key`, including its line ending.

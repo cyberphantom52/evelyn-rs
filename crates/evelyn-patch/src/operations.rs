@@ -301,10 +301,11 @@ pub(crate) fn transformed(
         Transform::Property {
             key,
             value: Some(value),
-        } => android_property::set(&text(bytes)?, key, value).into_bytes(),
-        Transform::Property { key, value: None } => {
-            android_property::remove(&text(bytes)?, key).into_bytes()
-        }
+            create,
+        } => android_property::set(&text(bytes)?, key, value, *create).into_bytes(),
+        Transform::Property {
+            key, value: None, ..
+        } => android_property::remove(&text(bytes)?, key).into_bytes(),
         // The string is evaluated before the edit, where expressions are. Appending
         // nothing changes nothing.
         Transform::Write(Expr::Literal(Value::Str(text))) => text.clone().into_bytes(),
