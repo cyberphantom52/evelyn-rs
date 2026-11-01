@@ -144,71 +144,83 @@ impl Scope<'_> {
     /// path, or a relative pattern tried in the directory of every partition the
     /// range selects.
     pub fn select(&self, pattern: &str, range: &Range) -> Result<Vec<Located>, Error> {
-        if range.inside == Some(Source::Assets) {
-            // An asset (file or directory) by its path in the recipe's directory.
-            let path = RelativePath::try_from(pattern.to_owned())?;
-            return Ok(match path.resolve(self.context.assets).exists() {
-                true => vec![Located {
-                    place: Place::Asset,
-                    partition: Name::try_from("assets".to_owned())?,
-                    path,
-                }],
-                false => Vec::new(),
-            });
+        match range.inside {
+            Some(Source::Assets) => self.select_asset(pattern),
+            Some(Source::Rom) => self.select_firmware(Firmware::Rom, pattern),
+            Some(Source::Stock) => self.select_firmware(Firmware::Stock, pattern),
+            Some(Source::Package) => self.select_package(pattern),
+            None => self.select_build(pattern, range),
         }
-        if let Some(firmware) = range.inside.and_then(Source::firmware) {
-            let mut found = Vec::new();
-            for at in self
-                .context
-                .mounts
-                .resolve(&DevicePath::try_from(pattern.to_owned())?)
-            {
-                let source = source_of(firmware, &at.partition);
-                let tree = self
-                    .context
-                    .sources
-                    .get(&source)
-                    .ok_or_else(|| Error::UnknownSource(source.clone()))?;
-                for path in layout::matches(tree, &at.path) {
-                    found.push(Located {
-                        place: Place::Firmware(firmware),
-                        partition: at.partition.clone(),
-                        path,
-                    });
-                }
-            }
-            return Ok(found);
-        }
-        if range.inside == Some(Source::Package) {
-            let package = self.package.ok_or(Error::Unsupported(
-                "a package's files are selected inside a Package",
-            ))?;
-            let path = pattern.strip_prefix('/').ok_or(Error::Unsupported(
-                "paths inside a package start at its root, /",
-            ))?;
-            let found = layout::walk(
+    }
+
+    /// An asset, a file or directory, by its path in the recipe's directory.
+    fn select_asset(&self, pattern: &str) -> Result<Vec<Located>, Error> {
+        let path = RelativePath::try_from(pattern.to_owned())?;
+        Ok(match path.resolve(self.context.assets).exists() {
+            true => vec![Located {
+                place: Place::Asset,
+                partition: Name::try_from("assets".to_owned())?,
                 path,
-                |dir| {
-                    std::fs::read_dir(package.decoded.join(dir))
-                        .into_iter()
-                        .flatten()
-                        .flatten()
-                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                        .collect()
-                },
-                |path| package.decoded.join(path).exists(),
-            );
-            return found
-                .into_iter()
-                .map(|path| {
-                    Ok(Located {
-                        place: Place::Package,
-                        partition: package.partition.clone(),
-                        path: RelativePath::try_from(path)?,
-                    })
-                })
-                .collect();
+            }],
+            false => Vec::new(),
+        })
+    }
+
+    /// What a device path matches in a firmware.
+    fn select_firmware(&self, firmware: Firmware, pattern: &str) -> Result<Vec<Located>, Error> {
+        let mut found = Vec::new();
+        for at in self
+            .context
+            .mounts
+            .resolve(&DevicePath::try_from(pattern.to_owned())?)
+        {
+            let tree = self.context.source(&source_of(firmware, &at.partition))?;
+            for path in layout::matches(tree, &at.path) {
+                found.push(Located {
+                    place: Place::Firmware(firmware),
+                    partition: at.partition.clone(),
+                    path,
+                });
+            }
         }
+        Ok(found)
+    }
+
+    /// What a path from the open package's root matches in it.
+    fn select_package(&self, pattern: &str) -> Result<Vec<Located>, Error> {
+        let package = self.package.ok_or(Error::Unsupported(
+            "a package's files are selected inside a Package",
+        ))?;
+        let path = pattern.strip_prefix('/').ok_or(Error::Unsupported(
+            "paths inside a package start at its root, /",
+        ))?;
+        let found = layout::walk(
+            path,
+            |dir| {
+                std::fs::read_dir(package.decoded.join(dir))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect()
+            },
+            |path| package.decoded.join(path).exists(),
+        );
+        found
+            .into_iter()
+            .map(|path| {
+                Ok(Located {
+                    place: Place::Package,
+                    partition: package.partition.clone(),
+                    path: RelativePath::try_from(path)?,
+                })
+            })
+            .collect()
+    }
+
+    /// What a device path, or a relative pattern in each partition the range
+    /// selects, matches in the build.
+    fn select_build(&self, pattern: &str, range: &Range) -> Result<Vec<Located>, Error> {
         let paths = if pattern.starts_with('/') {
             Composition::resolve(
                 self.targets,
@@ -376,13 +388,9 @@ impl Scope<'_> {
                                 .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?
                                 .tree
                         }
-                        Place::Firmware(firmware) => {
-                            let source = source_of(firmware, &entry.partition);
-                            self.context
-                                .sources
-                                .get(&source)
-                                .ok_or_else(|| Error::UnknownSource(source.clone()))?
-                        }
+                        Place::Firmware(firmware) => self
+                            .context
+                            .source(&source_of(firmware, &entry.partition))?,
                         Place::Package | Place::Asset => {
                             return Err(Error::Unsupported(
                                 "Below selects in the build or a firmware",
@@ -473,7 +481,7 @@ impl Scope<'_> {
 
 impl Scope<'_> {
     /// The content of a selected file: in the build, a firmware or the open package.
-    fn content(&self, entry: &Located) -> Result<Vec<u8>, Error> {
+    pub(crate) fn content(&self, entry: &Located) -> Result<Vec<u8>, Error> {
         match entry.place {
             Place::Asset => Ok(std::fs::read(entry.path.resolve(self.context.assets))?),
             Place::Build => self
@@ -488,12 +496,9 @@ impl Scope<'_> {
                 Ok(std::fs::read(entry.path.resolve(&package.decoded))?)
             }
             Place::Firmware(firmware) => {
-                let source = source_of(firmware, &entry.partition);
                 let tree = self
                     .context
-                    .sources
-                    .get(&source)
-                    .ok_or_else(|| Error::UnknownSource(source.clone()))?;
+                    .source(&source_of(firmware, &entry.partition))?;
                 Ok(android_fs::Store::sources(self.context.images)
                     .read(&tree.file(&entry.path)?)?)
             }

@@ -43,6 +43,15 @@ pub struct Context<'a> {
     pub mounts: &'a Mounts,
 }
 
+impl Context<'_> {
+    /// The scanned tree of a firmware's partition.
+    pub(crate) fn source(&self, source: &SourceRef) -> Result<&PartitionTree, Error> {
+        self.sources
+            .get(source)
+            .ok_or_else(|| Error::UnknownSource(source.clone()))
+    }
+}
+
 /// A `SetMetadata` that set what was already there.
 #[derive(Clone, Debug, Serialize)]
 pub struct Unchanged {
@@ -97,6 +106,17 @@ impl Composition {
         Ok(())
     }
 
+    /// What the step reads: the build so far, the firmware and the open package.
+    fn scope<'a>(&'a self, context: &'a Context<'a>, step: &'a Name) -> Scope<'a> {
+        Scope {
+            targets: &self.targets,
+            origins: &self.origins,
+            context,
+            step,
+            package: self.package.as_ref(),
+        }
+    }
+
     /// `expr`'s value, with what the `Let`s around the statement bind.
     fn eval(
         &self,
@@ -105,14 +125,7 @@ impl Composition {
         step: &Name,
         bound: Option<&Bound<'_>>,
     ) -> Result<Value, Error> {
-        Scope {
-            targets: &self.targets,
-            origins: &self.origins,
-            context,
-            step,
-            package: self.package.as_ref(),
-        }
-        .eval(expr, bound)
+        self.scope(context, step).eval(expr, bound)
     }
 
     fn skip(&mut self, recipe: &Name, step: &Name, reason: String) {
@@ -322,28 +335,26 @@ impl Composition {
                         .ok_or(Error::Unsupported("a transform's strings are set"))?;
                     Ok::<_, Error>(Expr::Literal(Value::Str(text.to_owned())))
                 })?;
-                let transform = &match transform {
-                    Transform::AddPolicy {
-                        policies,
-                        resolve_with,
-                    } => {
-                        let mut texts = Vec::new();
-                        for file in self
-                            .eval(&resolve_with, context, step, bound)?
-                            .as_selection()?
-                        {
-                            let file = Expr::Literal(Value::Selection(vec![file.clone()]));
-                            let text =
-                                self.eval(&Expr::Read(Box::new(file)), context, step, bound)?;
-                            texts.extend(text.as_str()?.map(str::to_owned));
-                        }
+                let transform =
+                    &match transform {
                         Transform::AddPolicy {
                             policies,
-                            resolve_with: Expr::Literal(Value::List(texts)),
+                            resolve_with,
+                        } => {
+                            let scope = self.scope(context, step);
+                            let mut texts = Vec::new();
+                            for file in scope.eval(&resolve_with, bound)?.as_selection()? {
+                                texts.push(String::from_utf8(scope.content(file)?).map_err(
+                                    |_| Error::Unsupported("a policy file is UTF-8 text"),
+                                )?);
+                            }
+                            Transform::AddPolicy {
+                                policies,
+                                resolve_with: Expr::Literal(Value::List(texts)),
+                            }
                         }
-                    }
-                    other => other,
-                };
+                        other => other,
+                    };
                 for entry in selected {
                     match (entry.place, &self.package) {
                         (Place::Build, _) => self
@@ -425,10 +436,7 @@ impl Composition {
             ));
         }
         let source = crate::scope::source_of(firmware, &entry.partition);
-        let tree = context
-            .sources
-            .get(&source)
-            .ok_or_else(|| Error::UnknownSource(source.clone()))?;
+        let tree = context.source(&source)?;
         let to = match to {
             Some(to) => self.resolve_one(to, context, step)?,
             None => TargetPath {
@@ -454,9 +462,8 @@ impl Composition {
     ) -> Result<(), Error> {
         let source = asset.resolve(context.assets);
         if let Some(package) = &self.package {
-            let path =
-                RelativePath::try_from(to.to_string()[1..].to_owned())?.resolve(&package.decoded);
             let inside = RelativePath::try_from(to.to_string()[1..].to_owned())?;
+            let path = inside.resolve(&package.decoded);
             if path.exists() && !placing.overwrite {
                 return Err(layout::Error::DestinationExists(inside).into());
             }
