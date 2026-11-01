@@ -373,8 +373,10 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
         Operation::AddPolicy { target, policies } => {
             let version = name("version");
             let str = |text: &str| Expr::Literal(Value::Str(text.to_owned()));
+            // The others init compiles the policy with: all but the one patched.
             let files = android_firmware::SEPOLICY_FILES
                 .iter()
+                .filter(|(path, suffix)| suffix.is_some() || *path != target.as_ref())
                 .map(|(path, suffix)| match suffix {
                     None => select(path, Scope::default()),
                     Some(suffix) => select_expr(
