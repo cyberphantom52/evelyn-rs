@@ -4,12 +4,11 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    /// Copy a file, as the last build composed it, out for editing.
+    /// Copy a file, as the last build of the current repository composed it, out
+    /// for editing.
     Prepare {
-        /// The port directory, ports/<name> in a device repository.
-        port: PathBuf,
         #[command(flatten)]
-        firmware: crate::FirmwareArgs,
+        inputs: crate::InputArgs,
         /// The file as the device sees it, such as /vendor/build.prop.
         path: String,
         /// The build workspace to read [default: as for `evelyn build`].
@@ -18,9 +17,10 @@ pub(crate) enum Command {
         /// Where to put the editable copy.
         #[arg(long, default_value = "dev")]
         into: PathBuf,
-        /// Directory populated by tools/manager.py.
-        #[arg(long, default_value = "tools")]
-        tools: PathBuf,
+        /// Directory populated by tools/manager.py [default: tools in the Evelyn
+        /// checkout this was built from].
+        #[arg(long)]
+        tools: Option<PathBuf>,
     },
     /// Capture the edited copy as a new patch directory.
     Capture {
@@ -59,17 +59,15 @@ impl From<CaptureArg> for engine::CaptureKind {
 pub(crate) fn run(command: Command) -> Result<(), Error> {
     match command {
         Command::Prepare {
-            port,
-            firmware,
+            inputs,
             path,
             work_dir,
             into,
             tools,
         } => {
-            let plan =
-                engine::Plan::load(&port, engine::Output::Partitions, &firmware.firmware(), &[])?;
+            let plan = inputs.plan(Some(engine::Output::Partitions), &[])?;
             print(&engine::prepare_file(engine::PrepareRequest {
-                tools: &toolchain::Tools::new(tools),
+                tools: &crate::tools_or_default(tools),
                 work_dir: &crate::resolve_work_dir(work_dir, &plan),
                 plan: &plan,
                 path: path.try_into()?,

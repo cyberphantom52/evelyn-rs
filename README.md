@@ -16,10 +16,17 @@ A device repository ports one ROM to one device:
 
 ```
 evelyn.toml            the ROM, and the device: product IDs, the stock build it is pinned to, its super layout
-ports/<name>/port.toml one ROM version: what it takes from the ROM, and the patches it applies, in order
+ports/<name>/port.toml one ROM version: the ROM builds it is for, what it takes from the ROM, and the patches it applies, in order
 patches/<topic>/<name>/patch.ron  one patch, with its assets beside it
-.evelyn/               scans and composed trees kept between builds
+firmware/stock/        the device's stock firmware: a full OTA package or <partition>.img images
+firmware/rom/          the ROM being ported, likewise
+out/<port>/            what a build writes
+.evelyn/               extracted firmware, scans and composed trees kept between builds
 ```
+
+A build takes the port the ROM matches: each port says which builds it is for
+as globs over properties the ROM sets, such as `"ro.build.version.release" = "17"`
+under `[rom]`. Porting a new OTA is replacing what `firmware/rom` holds.
 
 A patch applies only where a port lists it, so two versions share a patch by
 listing it, and a new version starts with nothing until its patches are
@@ -47,22 +54,22 @@ python3 tools/manager.py fetch
 cargo build --release
 
 # A device repository: fill in the stock fingerprint and product IDs in
-# evelyn.toml, then add ports/<name>/port.toml and patches/.
+# evelyn.toml, add ports/<name>/port.toml and patches/, and put the firmware in
+# firmware/stock and firmware/rom.
 evelyn init pong-oxygenos --device pong --rom OxygenOS
 
-# Partition images, a super image, or a flashable ZIP. --rom and --stock are each
-# a full OTA package (a zip holding payload.bin, or payload.bin) or a directory of
-# <partition>.img images, from the ROM and the device's firmware; for a ZIP, the
-# stock OTA's other partitions, or --stock/firmware/, are the images it also flashes.
-evelyn build <repository>/ports/<name> --rom <rom images> --stock <stock images> \
-    --tools <evelyn>/tools --output super --output-dir out
-
-# An extra patch for this build only, such as a debug build's.
-evelyn build <port> --rom … --stock … --output-dir out --patch <patch directory>
+# Inside the repository: a super image, or partition images for a device without
+# a super layout, in out/<port>.
+evelyn build
 ```
 
-`--work-dir` keeps scans and the composed trees between builds, `.evelyn` in
-the repository unless given, and `--output-dir` is where the results go.
+Everything a build reads has a default, and each can be given instead:
+`--rom` and `--stock` (an OTA package or a directory of images), `--port`,
+`--output partitions|super|zip`, `--output-dir`, `--work-dir`, and `--tools`,
+which is `tools/` in the Evelyn checkout the binary was built from. A ZIP also
+flashes the stock OTA's partitions outside `super`, or the images in
+`firmware/stock/firmware/`. `--patch <directory>` applies an extra patch for one
+build, such as a debug build's. `evelyn plan` shows what a build would do,
 `evelyn inspect` checks images, ports and recipes, and `evelyn patch` turns a
 hand-edited file into a new patch.
 
@@ -84,7 +91,7 @@ hand-edited file into a new patch.
 
 - [ ] Read `.dat` (sdat) firmware images
 - [ ] Flash-test the ZIP output
-- [ ] Install the host tools in a per-user directory, so builds from a device repository need no `--tools`
+- [ ] Install the host tools in a per-user directory, so a binary moved off the machine it was built on needs no `--tools`
 - [ ] Sparse image output
 - [ ] Port system-as-root ROMs to devices with the older `/system` layout (and the reverse)
 - [ ] Patch boot images (`boot`, `vendor_boot`) in Evelyn instead of beforehand, and check the first-stage fstab in `vendor_boot` as well as `vendor/etc`

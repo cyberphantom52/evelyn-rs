@@ -67,7 +67,7 @@ pub enum Error {
     },
     #[error("ZIP output flashes the stock firmware's images from {0}, which does not exist")]
     MissingFirmware(PathBuf),
-    #[error("--stock has no {0}.img, which evelyn.toml sets")]
+    #[error("the stock firmware has no {0}.img, which evelyn.toml sets")]
     MissingStockPartition(Name),
     #[error(
         "stock {partition} is not the build evelyn.toml pins: expected {expected}, found {found}"
@@ -95,6 +95,12 @@ pub enum Error {
     OtaHash { package: PathBuf, image: PathBuf },
     #[error("{0} holds more than one OTA package")]
     AmbiguousFirmware(PathBuf),
+    #[error("the ROM matches no port ({0})")]
+    NoPort(String),
+    #[error("the ROM matches more than one port: {0}")]
+    Ports(String),
+    #[error("the ROM is not one port {0} is for")]
+    PortMismatch(Name),
 }
 
 /// What a build produces: partition images, a super image, or a flashable ZIP.
@@ -133,12 +139,15 @@ pub struct PlannedPartition {
     pub mount_point: Option<String>,
 }
 
-/// Where the port's two firmwares are: each a directory of partition images or an
-/// OTA package, whose images are extracted into `.evelyn/firmware` in the
-/// repository.
-pub struct FirmwareDirs<'a> {
-    pub rom: &'a Path,
-    pub stock: &'a Path,
+/// What a build is of, where it is not the repository's default: each firmware a
+/// directory of partition images or an OTA package, by default `firmware/rom` and
+/// `firmware/stock` in the repository, and the port, by default the one the ROM
+/// matches.
+#[derive(Default)]
+pub struct Inputs<'a> {
+    pub rom: Option<&'a Path>,
+    pub stock: Option<&'a Path>,
+    pub port: Option<&'a Name>,
 }
 
 /// A port with its recipes loaded and the partitions the firmware supplies resolved.
@@ -157,15 +166,41 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Load the port at `path`, its patches and then `extra` patch directories,
-    /// against `firmware`.
+    /// Plan a build of the repository at `root` from `inputs`: the port's patches,
+    /// then `extra` patch directories. Without an output, a device with a `super`
+    /// layout gets a super image, and one without, partition images.
     pub fn load(
-        path: &Path,
-        output: Output,
-        firmware: &FirmwareDirs<'_>,
+        root: &Path,
+        inputs: &Inputs<'_>,
+        output: Option<Output>,
         extra: &[PathBuf],
     ) -> Result<Self, Error> {
-        let profile = Profile::load(path)?;
+        let given = |input: Option<&Path>, default: &str| {
+            input.map_or_else(|| root.join("firmware").join(default), Path::to_path_buf)
+        };
+        let extracted = root.join(".evelyn").join("firmware");
+        let rom_dir = firmware::images(&given(inputs.rom, "rom"), &extracted.join("rom"), false)?;
+        let stock_dir = firmware::images(
+            &given(inputs.stock, "stock"),
+            &extracted.join("stock"),
+            true,
+        )?;
+        let rom = filesystems(images(&rom_dir)?)?;
+        let stock = filesystems(images(&stock_dir)?)?;
+
+        let properties = rom_properties(&rom)?;
+        let name = match inputs.port {
+            Some(port) => port.clone(),
+            None => port_for(root, &properties)?,
+        };
+        let profile = Profile::load(root, &name)?;
+        if !profile.port.matches(&properties) {
+            return Err(Error::PortMismatch(name));
+        }
+        let output = output.unwrap_or(match profile.device.super_layout {
+            Some(_) => Output::Super,
+            None => Output::Partitions,
+        });
         if output != Output::Partitions && profile.device.super_layout.is_none() {
             return Err(Error::MissingLayout);
         }
@@ -197,11 +232,6 @@ impl Plan {
             });
         }
 
-        let extracted = profile.root.join(".evelyn").join("firmware");
-        let rom_dir = firmware::images(firmware.rom, &extracted.join("rom"), false)?;
-        let stock_dir = firmware::images(firmware.stock, &extracted.join("stock"), true)?;
-        let rom = filesystems(images(&rom_dir)?)?;
-        let stock = filesystems(images(&stock_dir)?)?;
         let mut partitions = Vec::new();
         let mut ignored = Vec::new();
         let mut plan_partition = |name: &Name, source: Firmware| -> Result<(), Error> {
@@ -302,6 +332,68 @@ impl Plan {
 /// loads from it set `ro.<partition>.build.fingerprint` to `expected`.
 fn check_fingerprint(partition: &Name, image: &Path, expected: &str) -> Result<(), Error> {
     let key = format!("ro.{partition}.build.fingerprint");
+    match loaded(partition, image)?.remove(&key) {
+        Some(value) if value == expected => Ok(()),
+        Some(value) => Err(Error::StockFingerprint {
+            partition: partition.clone(),
+            expected: expected.into(),
+            found: value,
+        }),
+        None => {
+            tracing::warn!(%partition, "stock partition sets no {key}; its build cannot be checked");
+            Ok(())
+        }
+    }
+}
+
+/// The properties the ROM's standard system side sets, in the order init loads
+/// them, a later assignment of a key winning.
+fn rom_properties(rom: &BTreeMap<Name, PathBuf>) -> Result<BTreeMap<String, String>, Error> {
+    let mut properties = BTreeMap::new();
+    for name in STANDARD_SYSTEM {
+        if let Some((partition, image)) = rom.iter().find(|(key, _)| key.as_ref() == name) {
+            properties.extend(loaded(partition, image)?);
+        }
+    }
+    Ok(properties)
+}
+
+/// The one port of the repository at `root` a ROM setting `properties` matches.
+fn port_for(root: &Path, properties: &BTreeMap<String, String>) -> Result<Name, Error> {
+    let ports = profile::ports(root)?;
+    let matching: Vec<&Name> = ports
+        .iter()
+        .filter(|(_, port)| port.matches(properties))
+        .map(|(name, _)| name)
+        .collect();
+    match matching.as_slice() {
+        [name] => Ok((*name).clone()),
+        [] => {
+            // What the ROM sets of what the ports match on.
+            let keys: BTreeSet<&String> = ports.values().flat_map(|port| port.rom.keys()).collect();
+            let found = keys
+                .into_iter()
+                .map(|key| match properties.get(key) {
+                    Some(value) => format!("{key}={value}"),
+                    None => format!("{key} unset"),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(Error::NoPort(found))
+        }
+        names => Err(Error::Ports(
+            names
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        )),
+    }
+}
+
+/// What the property files init loads from `partition` assign, the last
+/// assignment of a key winning.
+fn loaded(partition: &Name, image: &Path) -> Result<BTreeMap<String, String>, Error> {
     // The groups init loads from this partition, as paths in its image; system is
     // mounted at /, so its files are under system/ in it.
     let mount = match partition.as_ref() {
@@ -322,7 +414,7 @@ fn check_fingerprint(partition: &Name, image: &Path, expected: &str) -> Result<(
         .read_files(|path| groups.iter().flatten().any(|file| *file == path))?
         .into_iter()
         .collect();
-    let mut value = None;
+    let mut assigned = BTreeMap::new();
     for group in &groups {
         let (canonical, legacy) = group.split_first().expect("a file");
         let loaded = match read.get(*canonical) {
@@ -330,23 +422,12 @@ fn check_fingerprint(partition: &Name, image: &Path, expected: &str) -> Result<(
             None => legacy.iter().filter_map(|file| read.get(*file)).collect(),
         };
         for bytes in loaded {
-            if let Some(assigned) = android_property::get(&String::from_utf8_lossy(bytes), &key) {
-                value = Some(assigned.to_owned());
+            for entry in android_property::entries(&String::from_utf8_lossy(bytes)) {
+                assigned.insert(entry.key.to_owned(), entry.value.to_owned());
             }
         }
     }
-    match value {
-        Some(value) if value == expected => Ok(()),
-        Some(value) => Err(Error::StockFingerprint {
-            partition: partition.clone(),
-            expected: expected.into(),
-            found: value,
-        }),
-        None => {
-            tracing::warn!(%partition, "stock partition sets no {key}; its build cannot be checked");
-            Ok(())
-        }
-    }
+    Ok(assigned)
 }
 
 /// The `<partition>.img` files in a firmware directory.
