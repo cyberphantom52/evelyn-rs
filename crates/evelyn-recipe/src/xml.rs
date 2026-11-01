@@ -213,17 +213,30 @@ impl From<XmlPath> for String {
 pub enum XmlEdit {
     /// Replace the text of every match.
     SetText { path: XmlPath, value: String },
-    /// Set the attribute `name` of every match to `value`, adding it where it is
-    /// missing.
+    /// Set the attribute `name` of every match that has it to `value`; with
+    /// `create`, add it to those that do not.
     SetAttribute {
         path: XmlPath,
         name: XmlName,
         value: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        create: bool,
     },
     /// Remove every match.
     Remove { path: XmlPath },
-    /// Add `element`, one element, as the last child of every match of `parent`.
-    AppendChild { parent: XmlPath, element: String },
+    /// Put `element`, one element, in place of the children `key` matches under
+    /// every match of `parent`; with `create`, append it where none match.
+    PutChild {
+        parent: XmlPath,
+        key: XmlMatch,
+        element: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        create: bool,
+    },
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 /// Text as an XML attribute value.

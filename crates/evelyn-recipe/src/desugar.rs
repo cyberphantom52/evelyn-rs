@@ -328,19 +328,14 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
                 format!(" args=\"{}\"", escape_attribute(args))
             });
             // Declared once: one already there is replaced.
-            let declared = feature_match(element, name);
             Stmt::Edit {
                 selection: select(file, Scope::default()),
-                transform: Transform::Xml(vec![
-                    XmlEdit::Remove {
-                        path: XmlPath::try_from(format!("{root}/{}", String::from(declared)))
-                            .expect("a literal XML path"),
-                    },
-                    XmlEdit::AppendChild {
-                        parent: XmlPath::try_from(root.to_owned()).expect("a literal XML path"),
-                        element: format!("<{element} name=\"{}\"{args}/>", escape_attribute(name)),
-                    },
-                ]),
+                transform: Transform::Xml(vec![XmlEdit::PutChild {
+                    parent: XmlPath::try_from(root.to_owned()).expect("a literal XML path"),
+                    key: feature_match(element, name),
+                    element: format!("<{element} name=\"{}\"{args}/>", escape_attribute(name)),
+                    create: true,
+                }]),
             }
         }
         Operation::DisableFeature(name) => {

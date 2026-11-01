@@ -27,8 +27,7 @@ pub enum Error {
     Write(String),
 }
 
-/// Later edits see earlier edits. An `AppendChild` fragment must be exactly one
-/// element.
+/// Later edits see earlier edits. A `PutChild` fragment must be exactly one element.
 pub fn apply(input: &[u8], edits: &[XmlEdit]) -> Result<Vec<u8>, Error> {
     let source = std::str::from_utf8(input).map_err(|_| Error::Utf8)?;
     let mut xot = Xot::new();
@@ -76,7 +75,12 @@ fn apply_one(xot: &mut Xot, document: Node, edit: &XmlEdit) -> Result<bool, Erro
             }
             Ok(changed)
         }
-        XmlEdit::SetAttribute { path, name, value } => {
+        XmlEdit::SetAttribute {
+            path,
+            name,
+            value,
+            create,
+        } => {
             let nodes = select(xot, document, &path.selectors);
             let namespace = match &name.namespace {
                 Some(uri) => xot.add_namespace(uri),
@@ -86,7 +90,8 @@ fn apply_one(xot: &mut Xot, document: Node, edit: &XmlEdit) -> Result<bool, Erro
             let mut changed = false;
             for node in nodes {
                 let mut attributes = xot.attributes_mut(node);
-                if attributes.get(id) != Some(value) {
+                let there = attributes.get(id).is_some();
+                if (there || *create) && attributes.get(id) != Some(value) {
                     attributes.insert(id, value.clone());
                     changed = true;
                 }
@@ -107,13 +112,36 @@ fn apply_one(xot: &mut Xot, document: Node, edit: &XmlEdit) -> Result<bool, Erro
             }
             Ok(!nodes.is_empty())
         }
-        XmlEdit::AppendChild { parent, element } => {
+        XmlEdit::PutChild {
+            parent,
+            key,
+            element,
+            create,
+        } => {
             let parents = select(xot, document, &parent.selectors);
+            let mut changed = false;
             for parent in &parents {
-                let fragment = fragment(xot, *parent, element)?;
-                xot.append(*parent, fragment).map_err(invalid)?;
+                let children: Vec<_> = xot
+                    .children(*parent)
+                    .filter(|node| matches(xot, *node, key))
+                    .collect();
+                match children.split_first() {
+                    Some((first, rest)) => {
+                        let fragment = fragment(xot, *parent, element)?;
+                        xot.replace(*first, fragment).map_err(invalid)?;
+                        for child in rest {
+                            xot.remove(*child).map_err(invalid)?;
+                        }
+                    }
+                    None if *create => {
+                        let fragment = fragment(xot, *parent, element)?;
+                        xot.append(*parent, fragment).map_err(invalid)?;
+                    }
+                    None => continue,
+                }
+                changed = true;
             }
-            Ok(!parents.is_empty())
+            Ok(changed)
         }
     }
 }
