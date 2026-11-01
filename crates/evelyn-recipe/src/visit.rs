@@ -5,7 +5,7 @@
 
 use crate::{
     Error,
-    tree::{Expr, Stmt, Transform, Tree},
+    tree::{Assigned, Expr, Overrides, Stmt, Transform, Tree},
     value::Value,
 };
 use android_firmware::Name;
@@ -89,10 +89,25 @@ fn walk_stmt<'a>(
             walk_expr(selection, visitor, bound)?;
             to.iter().try_for_each(|to| walk_expr(to, visitor, bound))
         }
-        Stmt::Remove { selection, .. } | Stmt::SetMetadata { selection, .. } => {
-            walk_expr(selection, visitor, bound)
+        Stmt::Remove { selection, .. } => walk_expr(selection, visitor, bound),
+        Stmt::SetMetadata {
+            selection,
+            metadata,
+            ..
+        } => {
+            walk_expr(selection, visitor, bound)?;
+            match metadata {
+                Assigned::Fields(Overrides {
+                    selinux: Some(label),
+                    ..
+                }) => walk_expr(label, visitor, bound),
+                _ => Ok(()),
+            }
         }
-        Stmt::Assert { condition, .. } => walk_expr(condition, visitor, bound),
+        Stmt::Assert { condition, message } => {
+            walk_expr(condition, visitor, bound)?;
+            walk_expr(message, visitor, bound)
+        }
     }
 }
 
@@ -135,9 +150,12 @@ fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result
             walk_expr(then, visitor, bound)?;
             walk_expr(otherwise, visitor, bound)
         }
-        Expr::Property { files, .. } => files
-            .iter()
-            .try_for_each(|files| walk_expr(files, visitor, bound)),
+        Expr::Property { key, files } => {
+            walk_expr(key, visitor, bound)?;
+            files
+                .iter()
+                .try_for_each(|files| walk_expr(files, visitor, bound))
+        }
         Expr::Literal(_) | Expr::Var(_) | Expr::PropertyFiles { .. } | Expr::HasPartition(_) => {
             Ok(())
         }
@@ -179,7 +197,8 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
     };
     Ok(match expr {
         Expr::Literal(Value::Str(_) | Value::Unset) => Kind::Str,
-        Expr::Property { files, .. } => {
+        Expr::Property { key, files } => {
+            of(key, &[Kind::Str], "Property")?;
             if let Some(files) = files {
                 of(files, &[Kind::Selection], "Property")?;
             }
@@ -271,8 +290,10 @@ impl Visitor for Check {
             // Its body is checked as it is walked.
             Stmt::Step { .. } => return Ok(()),
             Stmt::Let { value, .. } => of(value, &[Kind::Str], "let:")?,
-            Stmt::When { condition, .. } | Stmt::Assert { condition, .. } => {
-                of(condition, &[Kind::Bool], "a condition")?
+            Stmt::When { condition, .. } => of(condition, &[Kind::Bool], "a condition")?,
+            Stmt::Assert { condition, message } => {
+                of(condition, &[Kind::Bool], "a condition")?;
+                of(message, &[Kind::Str], "a message")?;
             }
             Stmt::Edit {
                 selection,
@@ -292,8 +313,20 @@ impl Visitor for Check {
                     of(to, &[Kind::Str], "a copy's to")?;
                 }
             }
-            Stmt::Remove { selection, .. } | Stmt::SetMetadata { selection, .. } => {
-                of(selection, &[Kind::Selection], "a selection")?
+            Stmt::Remove { selection, .. } => of(selection, &[Kind::Selection], "a selection")?,
+            Stmt::SetMetadata {
+                selection,
+                metadata,
+                ..
+            } => {
+                of(selection, &[Kind::Selection], "a selection")?;
+                if let Assigned::Fields(Overrides {
+                    selinux: Some(label),
+                    ..
+                }) = metadata
+                {
+                    of(label, &[Kind::Str], "a label")?;
+                }
             }
             Stmt::Package { package, .. } => of(package, &[Kind::Str], "Package")?,
         }

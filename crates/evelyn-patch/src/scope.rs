@@ -277,13 +277,14 @@ impl Scope<'_> {
                     .ok_or(Error::Unsupported("Select needs a pattern that is set"))?;
                 Value::Selection(self.select(pattern, scope)?)
             }
-            Expr::Property { key, files: None } => {
-                self.device_property(key)?.map_or(Value::Unset, Value::Str)
-            }
-            Expr::Property {
-                key,
-                files: Some(files),
-            } => {
+            Expr::Property { key, files } => {
+                let key = self.eval(key, bound)?;
+                let key = key.as_str()?.ok_or(Error::Unsupported(
+                    "a property's key is a string that is set",
+                ))?;
+                let Some(files) = files else {
+                    return Ok(self.device_property(key)?.map_or(Value::Unset, Value::Str));
+                };
                 let mut value = Value::Unset;
                 for file in self.eval(files, bound)?.as_selection()? {
                     let text = String::from_utf8_lossy(&self.content(file)?).into_owned();

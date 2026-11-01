@@ -62,7 +62,7 @@ pub enum Stmt {
         transform: Transform,
     },
     /// The condition must hold, or the build fails with `message`.
-    Assert { condition: Expr, message: String },
+    Assert { condition: Expr, message: Expr },
     /// Decode a package (APK or JAR), run the body inside it and rebuild it. In
     /// the body, `/` is the package's root: `/res/values/strings.xml`.
     Package {
@@ -82,16 +82,16 @@ pub enum Transform {
     /// Set every assignment of a property to `value`, or remove them without one.
     /// With `create`, a value is appended where the file assigns none.
     Property {
-        key: String,
-        value: Option<String>,
+        key: Expr,
+        value: Option<Expr>,
         create: bool,
     },
     /// Replace the content with a string.
     Write(Expr),
     /// Change one method of the class a smali file defines.
     Smali {
-        class: String,
-        method: String,
+        class: Expr,
+        method: Expr,
         edit: MethodEdit,
     },
     /// Patch one of the device's CIL policy files with TE `policies` (assets), checked
@@ -109,14 +109,20 @@ impl Transform {
         match self {
             Self::ApplyDiff(patch) => vec![patch],
             Self::Write(text) => vec![text],
+            Self::Property { key, value, .. } => std::iter::once(key).chain(value).collect(),
             Self::Smali {
-                edit: MethodEdit::Replace(body) | MethodEdit::Insert(body),
-                ..
-            } => vec![body],
-            Self::AddPolicy { policies, .. } => policies.iter().collect(),
-            Self::WriteBytes(_) | Self::Xml(_) | Self::Property { .. } | Self::Smali { .. } => {
-                Vec::new()
+                class,
+                method,
+                edit,
+            } => {
+                let mut strings = vec![class, method];
+                if let MethodEdit::Replace(body) | MethodEdit::Insert(body) = edit {
+                    strings.push(body);
+                }
+                strings
             }
+            Self::AddPolicy { policies, .. } => policies.iter().collect(),
+            Self::WriteBytes(_) | Self::Xml(_) => Vec::new(),
         }
     }
 
@@ -128,13 +134,18 @@ impl Transform {
         Ok(match self {
             Self::ApplyDiff(patch) => Self::ApplyDiff(resolve(patch)?),
             Self::Write(text) => Self::Write(resolve(text)?),
+            Self::Property { key, value, create } => Self::Property {
+                key: resolve(key)?,
+                value: value.as_ref().map(&mut resolve).transpose()?,
+                create: *create,
+            },
             Self::Smali {
                 class,
                 method,
                 edit,
             } => Self::Smali {
-                class: class.clone(),
-                method: method.clone(),
+                class: resolve(class)?,
+                method: resolve(method)?,
                 edit: match edit {
                     MethodEdit::Replace(body) => MethodEdit::Replace(resolve(body)?),
                     MethodEdit::Insert(body) => MethodEdit::Insert(resolve(body)?),
@@ -173,7 +184,7 @@ pub enum Expr {
     /// for an `ro.product.*` property init derives, the one it derives. With
     /// `files`, a selection, the last assignment in them, in the selection's order.
     Property {
-        key: String,
+        key: Box<Expr>,
         #[serde(default)]
         files: Option<Box<Expr>>,
     },
@@ -368,18 +379,27 @@ impl From<Pattern> for String {
     }
 }
 
+/// A label as SELinux writes one: `user:role:type:level`, without whitespace.
+pub fn selinux_label(label: &str) -> bool {
+    label.splitn(4, ':').filter(|part| !part.is_empty()).count() == 4
+        && !label.contains(|c: char| c == '\0' || c.is_whitespace())
+}
+
 /// The metadata `SetMetadata` sets; what it leaves unset stays.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Overrides {
     pub uid: Option<u32>,
     pub gid: Option<u32>,
     pub mode: Option<u16>,
-    pub selinux: Option<String>,
+    /// A label, written out or naming a bound value.
+    pub selinux: Option<Expr>,
 }
 
 impl Overrides {
+    /// What it sets is something, and well formed as far as it is written out.
     pub(crate) fn validate(&self) -> Result<(), crate::Error> {
-        if *self == Self::default() {
+        if self.uid.is_none() && self.gid.is_none() && self.mode.is_none() && self.selinux.is_none()
+        {
             return Err(crate::Error::Invalid("metadata that sets nothing".into()));
         }
         if self.mode.is_some_and(|mode| mode > 0o7777) {
@@ -388,15 +408,10 @@ impl Overrides {
                 self.mode
             )));
         }
-        match &self.selinux {
-            Some(label)
-                if label.splitn(4, ':').filter(|part| !part.is_empty()).count() != 4
-                    || label.contains(|c: char| c == '\0' || c.is_whitespace()) =>
-            {
-                Err(crate::Error::Invalid(format!(
-                    "invalid SELinux label {label:?}"
-                )))
-            }
+        match self.selinux.as_ref().and_then(Expr::literal_str) {
+            Some(label) if !selinux_label(label) => Err(crate::Error::Invalid(format!(
+                "invalid SELinux label {label:?}"
+            ))),
             _ => Ok(()),
         }
     }

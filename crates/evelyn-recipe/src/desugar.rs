@@ -72,7 +72,7 @@ fn expr(written: &Written) -> Expr {
         Written::Hash(inner) => Expr::Hash(boxed(inner)),
         Written::Below(inner) => Expr::Below(boxed(inner)),
         Written::Property { key, target } => Expr::Property {
-            key: key.clone(),
+            key: Box::new(text(key)),
             files: target.as_ref().map(|_| Box::new(property_files(target))),
         },
         Written::Not(inner) => Expr::Not(boxed(inner)),
@@ -123,7 +123,7 @@ fn expr(written: &Written) -> Expr {
 
 /// A written string as primitives: its text, and the values the names in it are
 /// bound to, one after another.
-fn text(written: &str) -> Expr {
+pub(crate) fn text(written: &str) -> Expr {
     let mut parts: Vec<Expr> = crate::expr::parts(written)
         .into_iter()
         .map(|part| match part {
@@ -233,16 +233,16 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
                 Stmt::Edit {
                     selection: new,
                     transform: Transform::Property {
-                        key: key.clone(),
-                        value: Some(value.clone()),
+                        key: text(key),
+                        value: Some(text(value)),
                         create: true,
                     },
                 },
                 Stmt::Edit {
                     selection: defining(key, target),
                     transform: Transform::Property {
-                        key: key.clone(),
-                        value: Some(value.clone()),
+                        key: text(key),
+                        value: Some(text(value)),
                         create: false,
                     },
                 },
@@ -254,7 +254,7 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
             body: vec![Stmt::Edit {
                 selection: defining(key, target),
                 transform: Transform::Property {
-                    key: key.clone(),
+                    key: text(key),
                     value: None,
                     create: false,
                 },
@@ -401,7 +401,7 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
         }
         Operation::Assert { condition, message } => Stmt::Assert {
             condition: expr(condition),
-            message: message.clone(),
+            message: text(message),
         },
         Operation::AssertHash { target, sha256 } => {
             let file = match inside {
@@ -501,7 +501,7 @@ fn defining(key: &str, target: &Option<Location>) -> Expr {
         over: Box::new(property_files(target)),
         name: file.clone(),
         keep: Box::new(Expr::Exists(Box::new(Expr::Property {
-            key: key.to_owned(),
+            key: Box::new(text(key)),
             files: Some(Box::new(Expr::Var(file))),
         }))),
     }
@@ -554,8 +554,8 @@ fn smali(class: &str, method: &str, edit: MethodEdit) -> Stmt {
     Stmt::Edit {
         selection: smali_file(class),
         transform: Transform::Smali {
-            class: class.to_owned(),
-            method: method.to_owned(),
+            class: text(class),
+            method: text(method),
             edit,
         },
     }
@@ -640,7 +640,7 @@ fn name(name: &str) -> Name {
 fn expect(selection: Expr, message: String) -> Stmt {
     Stmt::Assert {
         condition: defined(selection),
-        message,
+        message: text(&message),
     }
 }
 
