@@ -231,6 +231,8 @@ pub enum Source {
     Rom,
     Stock,
     Assets,
+    /// The package a `Package` has open, from its root.
+    Package,
 }
 
 impl Source {
@@ -239,7 +241,7 @@ impl Source {
         match self {
             Self::Rom => Some(Firmware::Rom),
             Self::Stock => Some(Firmware::Stock),
-            Self::Assets => None,
+            Self::Assets | Self::Package => None,
         }
     }
 }
@@ -250,6 +252,7 @@ impl std::fmt::Display for Source {
             Self::Rom => "the ROM",
             Self::Stock => "the stock firmware",
             Self::Assets => "the recipe's assets",
+            Self::Package => "the open package",
         })
     }
 }

@@ -21,7 +21,11 @@ impl Recipe {
 /// `let:` bindings enclose `when:`, which encloses the operations; a binding with
 /// no value skips the step.
 fn step(step: &Step) -> Stmt {
-    let mut body: Vec<Stmt> = step.operations.iter().flat_map(operation).collect();
+    let mut body: Vec<Stmt> = step
+        .operations
+        .iter()
+        .flat_map(|op| operation(op, None))
+        .collect();
     if let Some(condition) = &step.when {
         body = vec![Stmt::When {
             condition: expr(condition),
@@ -164,7 +168,8 @@ fn at(location: &Location, scope: Scope) -> Expr {
         Location::Rom(_) => Some(Source::Rom),
         Location::Stock(_) => Some(Source::Stock),
         Location::Asset(_) => Some(Source::Assets),
-        Location::Build(_) | Location::Package(_) => None,
+        Location::Package(_) => Some(Source::Package),
+        Location::Build(_) => None,
         Location::Partition(name) => {
             return Expr::PropertyFiles {
                 partition: Some(name.clone()),
@@ -185,7 +190,13 @@ fn select_expr(pattern: Expr, scope: Scope) -> Expr {
     }
 }
 
-fn operation(operation: &Operation) -> Vec<Stmt> {
+/// An operation as statements; with `inside` the open package, the files it names
+/// are the package's, else the build's.
+fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
+    let here = || Scope {
+        inside,
+        ..Scope::default()
+    };
     let stmt = match operation {
         Operation::Copy { from, to, metadata } => return copy(from, to.as_ref(), *metadata),
         Operation::Import(from) => return copy(from, None, tree::Metadata::Source),
@@ -206,7 +217,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                 Scope {
                     origin: *origin,
                     partition: partition.clone(),
-                    ..Scope::default()
+                    ..here()
                 },
             );
             Stmt::When {
@@ -216,7 +227,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             }
         }
         Operation::SetMetadata { pattern, .. } => Stmt::SetMetadata {
-            selection: select(pattern.as_ref(), Scope::default()),
+            selection: select(pattern.as_ref(), here()),
             pattern: pattern.to_string(),
             metadata: Assigned::Fields(crate::set(operation)),
         },
@@ -248,20 +259,23 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             skip: format!("property {key} is not defined there"),
         },
         Operation::ApplyDiff { target, patch } => Stmt::Edit {
-            selection: select(target.as_ref(), Scope::default()),
+            selection: select(target.as_ref(), here()),
             transform: Transform::ApplyDiff(patch.clone()),
         },
         Operation::WriteBytes { target, edits } => Stmt::Edit {
-            selection: select(target.as_ref(), Scope::default()),
+            selection: select(target.as_ref(), here()),
             transform: Transform::WriteBytes(edits.clone()),
         },
         Operation::EditXml { target, edits } => Stmt::Edit {
-            selection: select(target.as_ref(), Scope::default()),
+            selection: select(target.as_ref(), here()),
             transform: Transform::Xml(edits.clone()),
         },
         Operation::Package { target, edits } => Stmt::Package {
             package: target.clone(),
-            body: edits.iter().flat_map(self::operation).collect(),
+            body: edits
+                .iter()
+                .flat_map(|edit| self::operation(edit, Some(Source::Package)))
+                .collect(),
         },
         Operation::StubMethod {
             class,
@@ -357,7 +371,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                     name: version,
                     value: Expr::Trim(Box::new(Expr::Read(Box::new(named)))),
                     body: vec![Stmt::Edit {
-                        selection: select(target.as_ref(), Scope::default()),
+                        selection: select(target.as_ref(), here()),
                         transform: Transform::AddPolicy {
                             policies: policies.clone(),
                             resolve_with: Expr::Union(files),
@@ -367,7 +381,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             ];
         }
         Operation::Append { target, content } => {
-            let file = select(target.as_ref(), Scope::default());
+            let file = select(target.as_ref(), here());
             Stmt::Edit {
                 transform: Transform::Write(appended(
                     Expr::Read(Box::new(file.clone())),
@@ -378,10 +392,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         }
         Operation::AssertHash { target, sha256 } => Stmt::Assert {
             condition: Expr::Eq(
-                Box::new(Expr::Hash(Box::new(select(
-                    target.as_ref(),
-                    Scope::default(),
-                )))),
+                Box::new(Expr::Hash(Box::new(select(target.as_ref(), here())))),
                 Box::new(Expr::Literal(Value::Str(sha256.to_string()))),
             ),
             message: format!("{target} does not have SHA-256 {sha256}"),
@@ -390,7 +401,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
     // An operation on one named file, or class, needs it there.
     let named = |target: String| {
         let message = format!("{target} is not there");
-        (select(&target, Scope::default()), message)
+        (select(&target, here()), message)
     };
     let (selection, message) = match operation {
         Operation::SetMetadata {
@@ -524,7 +535,13 @@ fn smali(class: &str, method: &str, edit: MethodEdit) -> Stmt {
 /// `smali*/com/example/Name.smali`, whichever dex it is in.
 fn smali_file(class: &str) -> Expr {
     let name = class.trim_start_matches('L').trim_end_matches(';');
-    select(&format!("/smali*/{name}.smali"), Scope::default())
+    select(
+        &format!("/smali*/{name}.smali"),
+        Scope {
+            inside: Some(Source::Package),
+            ..Scope::default()
+        },
+    )
 }
 
 /// The selection is not empty.
