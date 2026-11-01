@@ -26,14 +26,18 @@ impl Visitor for Assets {
 
     fn stmt(&mut self, stmt: &Stmt, _bound: &[&Name]) -> Result<(), Error> {
         if let Stmt::Edit { transform, .. } = stmt {
-            match transform {
-                Transform::ApplyDiff(patch) => self.0.push(patch.clone()),
-                Transform::AddPolicy { policies, .. } => self.0.extend(policies.iter().cloned()),
+            let assets: Vec<&Expr> = match transform {
+                Transform::ApplyDiff(patch) => vec![patch],
+                Transform::AddPolicy { policies, .. } => policies.iter().collect(),
                 Transform::Smali {
                     edit: MethodEdit::Replace(body) | MethodEdit::Insert(body),
                     ..
-                } => self.0.push(body.clone()),
-                _ => {}
+                } => vec![body],
+                _ => Vec::new(),
+            };
+            // One naming a bound value is looked up when its step runs.
+            for asset in assets.into_iter().filter_map(Expr::literal_str) {
+                self.0.push(RelativePath::try_from(asset.to_owned())?);
             }
         }
         Ok(())

@@ -4,7 +4,7 @@
 //! however many surface forms use it.
 
 use crate::{Firmware, Hex, Returns, XmlEdit, value::Value};
-use android_firmware::{Name, RelativePath};
+use android_firmware::Name;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -74,8 +74,8 @@ pub enum Stmt {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Transform {
-    /// Apply the unified diff the asset holds.
-    ApplyDiff(RelativePath),
+    /// Apply the unified diff the asset, a path in the recipe's directory, holds.
+    ApplyDiff(Expr),
     /// Write bytes at offsets.
     WriteBytes(BTreeMap<u64, Hex>),
     Xml(Vec<XmlEdit>),
@@ -97,9 +97,63 @@ pub enum Transform {
     /// Patch one of the device's CIL policy files with TE `policies` (assets), checked
     /// to resolve with the policy files `resolve_with` selects.
     AddPolicy {
-        policies: Vec<RelativePath>,
+        /// Paths in the recipe's directory.
+        policies: Vec<Expr>,
         resolve_with: Expr,
     },
+}
+
+impl Transform {
+    /// The strings it names, as expressions: a value, a path, a name.
+    pub fn strings(&self) -> Vec<&Expr> {
+        match self {
+            Self::ApplyDiff(patch) => vec![patch],
+            Self::Write(text) => vec![text],
+            Self::Smali {
+                edit: MethodEdit::Replace(body) | MethodEdit::Insert(body),
+                ..
+            } => vec![body],
+            Self::AddPolicy { policies, .. } => policies.iter().collect(),
+            Self::WriteBytes(_) | Self::Xml(_) | Self::Property { .. } | Self::Smali { .. } => {
+                Vec::new()
+            }
+        }
+    }
+
+    /// The transform with each of its strings replaced by what `resolve` makes of it.
+    pub fn map_strings<E>(
+        &self,
+        mut resolve: impl FnMut(&Expr) -> Result<Expr, E>,
+    ) -> Result<Self, E> {
+        Ok(match self {
+            Self::ApplyDiff(patch) => Self::ApplyDiff(resolve(patch)?),
+            Self::Write(text) => Self::Write(resolve(text)?),
+            Self::Smali {
+                class,
+                method,
+                edit,
+            } => Self::Smali {
+                class: class.clone(),
+                method: method.clone(),
+                edit: match edit {
+                    MethodEdit::Replace(body) => MethodEdit::Replace(resolve(body)?),
+                    MethodEdit::Insert(body) => MethodEdit::Insert(resolve(body)?),
+                    MethodEdit::Stub(returns) => MethodEdit::Stub(*returns),
+                },
+            },
+            Self::AddPolicy {
+                policies,
+                resolve_with,
+            } => Self::AddPolicy {
+                policies: policies
+                    .iter()
+                    .map(&mut resolve)
+                    .collect::<Result<_, _>>()?,
+                resolve_with: resolve_with.clone(),
+            },
+            other => other.clone(),
+        })
+    }
 }
 
 /// The primitive expressions. Recipes write the ones in [`crate::Expr`], which
@@ -203,9 +257,9 @@ pub enum MethodEdit {
     /// Make it only return this.
     Stub(Returns),
     /// Replace it with the asset `body`, one complete method.
-    Replace(RelativePath),
+    Replace(Expr),
     /// Add the asset `body` as a new method.
-    Insert(RelativePath),
+    Insert(Expr),
 }
 
 /// What a copy gives what it writes.

@@ -291,7 +291,11 @@ pub(crate) fn transformed(
         String::from_utf8(bytes.to_vec())
             .map_err(|_| Error::Unsupported("text edits require UTF-8"))
     };
-    let asset = |path: &RelativePath| text(&std::fs::read(path.resolve(context.assets))?);
+    // Its strings are evaluated before the edit, where expressions are.
+
+    let asset_path =
+        |expr: &Expr| Ok::<_, Error>(RelativePath::try_from(literal(expr)?.to_owned())?);
+    let asset = |expr: &Expr| text(&std::fs::read(asset_path(expr)?.resolve(context.assets))?);
     Ok(match transform {
         Transform::WriteBytes(edits) => crate::binary::apply(bytes, edits)?,
         Transform::Xml(edits) => crate::xml::apply(bytes, edits)?,
@@ -306,12 +310,7 @@ pub(crate) fn transformed(
         Transform::Property {
             key, value: None, ..
         } => android_property::remove(&text(bytes)?, key).into_bytes(),
-        // The string is evaluated before the edit, where expressions are. Appending
-        // nothing changes nothing.
-        Transform::Write(Expr::Literal(Value::Str(text))) => text.clone().into_bytes(),
-        Transform::Write(_) => {
-            return Err(Error::Unsupported("Write's string is evaluated first"));
-        }
+        Transform::Write(text) => literal(text)?.as_bytes().to_vec(),
         Transform::Smali {
             class,
             method,
@@ -339,7 +338,13 @@ pub(crate) fn transformed(
         Transform::AddPolicy {
             policies,
             resolve_with: Expr::Literal(Value::List(resolve_with)),
-        } => crate::sepolicy::apply(bytes, policies, resolve_with, context)?,
+        } => {
+            let policies = policies
+                .iter()
+                .map(asset_path)
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::sepolicy::apply(bytes, &policies, resolve_with, context)?
+        }
         Transform::AddPolicy { .. } => {
             return Err(Error::Unsupported(
                 "AddPolicy's policy files are evaluated before the edit",
@@ -366,4 +371,11 @@ fn set(metadata: &mut AndroidMetadata, overrides: &Overrides) -> bool {
         metadata.set_selinux(label);
     }
     *metadata != before
+}
+
+/// A transform's string, evaluated before the edit, where expressions are.
+fn literal(expr: &Expr) -> Result<&str, Error> {
+    expr.literal_str().ok_or(Error::Unsupported(
+        "a transform's strings are evaluated first",
+    ))
 }

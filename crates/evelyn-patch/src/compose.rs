@@ -299,23 +299,23 @@ impl Composition {
                 if selected.is_empty() {
                     return Ok(());
                 }
-                // What Write writes and the policy files a policy patch resolves with
-                // are expressions, evaluated before the edit.
+                // A transform's strings, and the policy files a policy patch resolves
+                // with, are expressions, evaluated before the edit.
+                let transform = transform.map_strings(|text| {
+                    let text = self.eval(text, context, step, bound)?;
+                    let text = text
+                        .as_str()?
+                        .ok_or(Error::Unsupported("a transform's strings are set"))?;
+                    Ok::<_, Error>(Expr::Literal(Value::Str(text.to_owned())))
+                })?;
                 let transform = &match transform {
-                    Transform::Write(text) => {
-                        let text = self.eval(text, context, step, bound)?;
-                        let text = text
-                            .as_str()?
-                            .ok_or(Error::Unsupported("Write needs a string that is set"))?;
-                        Transform::Write(Expr::Literal(Value::Str(text.to_owned())))
-                    }
                     Transform::AddPolicy {
                         policies,
                         resolve_with,
                     } => {
                         let mut texts = Vec::new();
                         for file in self
-                            .eval(resolve_with, context, step, bound)?
+                            .eval(&resolve_with, context, step, bound)?
                             .as_selection()?
                         {
                             let file = Expr::Literal(Value::Selection(vec![file.clone()]));
@@ -324,11 +324,11 @@ impl Composition {
                             texts.extend(text.as_str()?.map(str::to_owned));
                         }
                         Transform::AddPolicy {
-                            policies: policies.clone(),
+                            policies,
                             resolve_with: Expr::Literal(Value::List(texts)),
                         }
                     }
-                    other => other.clone(),
+                    other => other,
                 };
                 for entry in selected {
                     match (entry.place, &self.package) {
