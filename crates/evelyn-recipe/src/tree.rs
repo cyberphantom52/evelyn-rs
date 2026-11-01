@@ -4,7 +4,7 @@
 //! however many surface forms use it.
 
 use crate::{Firmware, Hex, Returns, XmlEdit, value::Value};
-use android_firmware::{DevicePath, Name, RelativePath};
+use android_firmware::{Name, RelativePath};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -66,7 +66,8 @@ pub enum Stmt {
     /// Decode a package (APK or JAR), run the body inside it and rebuild it. In
     /// the body, `/` is the package's root: `/res/values/strings.xml`.
     Package {
-        package: DevicePath,
+        /// A device path.
+        package: Expr,
         body: Vec<Stmt>,
     },
 }

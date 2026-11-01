@@ -297,7 +297,7 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
             transform: Transform::Xml(edits.clone()),
         },
         Operation::Package { target, edits } => Stmt::Package {
-            package: target.clone(),
+            package: text(target),
             body: edits
                 .iter()
                 .flat_map(|edit| self::operation(edit, Some(Source::Package)))
