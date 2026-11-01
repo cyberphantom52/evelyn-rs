@@ -234,11 +234,26 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
         // Where the key is defined, everywhere in the target's scope; or added
         // where a new one goes.
         Operation::SetProperty { key, value, target } => {
-            let files = or_else(defining(key, target), new_property_file(target));
+            // The file a new key goes to, when no file defines it.
+            let new = Expr::If {
+                condition: Box::new(defined(defining(key, target))),
+                then: Box::new(Expr::Union(Vec::new())),
+                otherwise: Box::new(new_property_file(target)),
+            };
             return vec![
-                expect(files.clone(), format!("no property file to hold {key}")),
+                expect(
+                    or_else(defining(key, target), new_property_file(target)),
+                    format!("no property file to hold {key}"),
+                ),
                 Stmt::Edit {
-                    selection: files,
+                    selection: new.clone(),
+                    transform: Transform::Write(appended(
+                        Expr::Read(Box::new(new)),
+                        &Expr::Literal(Value::Str(format!("{key}={value}"))),
+                    )),
+                },
+                Stmt::Edit {
+                    selection: defining(key, target),
                     transform: Transform::Property {
                         key: key.clone(),
                         value: Some(value.clone()),

@@ -4,8 +4,7 @@
 //! [<filter>]` lines, and `key=value` assignments, the key and value trimmed of
 //! whitespace; an inline `#` is part of the value. A later assignment of a key
 //! overrides an earlier one. Edits keep every other byte as it was: a replacement
-//! preserves the text up to the value and the original line ending, and an append
-//! uses the file's own line ending (LF by default).
+//! preserves the text up to the value and the original line ending.
 
 /// Whether a file at `path` is named as a property file is, `*.prop`. Init loads
 /// only some of them: `android_firmware::PROPERTY_FILES` and their imports.
@@ -13,7 +12,7 @@ pub fn is_property_file(path: &str) -> bool {
     path.ends_with(".prop")
 }
 
-/// Set every assignment of `key`, appending one when there is none.
+/// Set every assignment of `key`; with none, the text is as it was.
 pub fn set(input: &str, key: &str, value: &str) -> String {
     edit(input, key, Some(value))
 }
@@ -107,19 +106,6 @@ fn body(line: &str) -> &str {
         .unwrap_or(line)
 }
 
-/// The line ending of `text`'s first line, defaulting to LF.
-fn newline(text: &str) -> &str {
-    if text
-        .split_inclusive('\n')
-        .next()
-        .is_some_and(|s| s.ends_with("\r\n"))
-    {
-        "\r\n"
-    } else {
-        "\n"
-    }
-}
-
 /// The text before the value of `line`, if it assigns `key`.
 fn prefix<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     let (entry, prefix) = assignment(line)?;
@@ -127,10 +113,6 @@ fn prefix<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 }
 
 fn edit(input: &str, key: &str, value: Option<&str>) -> String {
-    let actual = input
-        .split_inclusive('\n')
-        .filter(|line| prefix(line, key).is_some())
-        .count();
     let mut output = String::with_capacity(input.len());
     for line in input.split_inclusive('\n') {
         match prefix(line, key) {
@@ -143,18 +125,6 @@ fn edit(input: &str, key: &str, value: Option<&str>) -> String {
             }
             None => output.push_str(line),
         }
-    }
-    if actual == 0
-        && let Some(value) = value
-    {
-        let eol = newline(input);
-        if !output.is_empty() && !output.ends_with('\n') {
-            output.push_str(eol);
-        }
-        output.push_str(key);
-        output.push('=');
-        output.push_str(value);
-        output.push_str(eol);
     }
     output
 }

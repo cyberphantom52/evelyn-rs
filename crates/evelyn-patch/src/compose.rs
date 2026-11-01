@@ -288,6 +288,9 @@ impl Composition {
             } => {
                 let selected = self.eval(selection, context, step, bound)?;
                 let selected = selected.as_selection()?;
+                if selected.is_empty() {
+                    return Ok(());
+                }
                 // What Write writes and the policy files a policy patch resolves with
                 // are expressions, evaluated before the edit.
                 let transform = &match transform {
