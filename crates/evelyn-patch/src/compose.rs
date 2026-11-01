@@ -16,7 +16,7 @@ use android_firmware::{
 };
 use android_fs::PartitionTree;
 use recipe::{
-    tree::{Assigned, Expr, Metadata, Stmt, Transform, Tree},
+    tree::{Assigned, Expr, Metadata, Overrides, Stmt, Transform, Tree},
     value::{Located, Place, Value},
 };
 use serde::Serialize;
@@ -268,7 +268,21 @@ impl Composition {
                         }
                         return Ok(());
                     }
-                    Assigned::Fields(overrides) => overrides,
+                    // The label is evaluated before it is set.
+                    Assigned::Fields(overrides) => &Overrides {
+                        selinux: match &overrides.selinux {
+                            Some(label) => {
+                                let label = self.eval(label, context, step, bound)?;
+                                let label = label
+                                    .as_str()?
+                                    .filter(|label| recipe::tree::selinux_label(label))
+                                    .ok_or(Error::Unsupported("a label is a well-formed string"))?;
+                                Some(Expr::Literal(Value::Str(label.to_owned())))
+                            }
+                            None => None,
+                        },
+                        ..overrides.clone()
+                    },
                 };
                 let statement = self.set.len();
                 self.set.push((
@@ -361,9 +375,10 @@ impl Composition {
             }
             Stmt::Assert { condition, message } => {
                 if !self.eval(condition, context, step, bound)?.as_bool()? {
+                    let message = self.eval(message, context, step, bound)?;
                     return Err(Error::Assertion {
                         step: step.clone(),
-                        message: message.clone(),
+                        message: message.as_str()?.unwrap_or_default().to_owned(),
                     });
                 }
             }

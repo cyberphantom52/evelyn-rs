@@ -306,10 +306,18 @@ pub(crate) fn transformed(
             key,
             value: Some(value),
             create,
-        } => android_property::set(&text(bytes)?, key, value, *create).into_bytes(),
+        } => {
+            let (key, value) = (literal(key)?, literal(value)?);
+            if !recipe::property_key(key) || value.contains('\n') {
+                return Err(Error::Unsupported(
+                    "a property key and value are one line each",
+                ));
+            }
+            android_property::set(&text(bytes)?, key, value, *create).into_bytes()
+        }
         Transform::Property {
             key, value: None, ..
-        } => android_property::remove(&text(bytes)?, key).into_bytes(),
+        } => android_property::remove(&text(bytes)?, literal(key)?).into_bytes(),
         Transform::Write(text) => literal(text)?.as_bytes().to_vec(),
         Transform::Smali {
             class,
@@ -317,6 +325,7 @@ pub(crate) fn transformed(
             edit,
         } => {
             let source = text(bytes)?;
+            let (class, method) = (literal(class)?, literal(method)?);
             match edit {
                 MethodEdit::Stub(returns) => {
                     let stub = match returns {
@@ -367,7 +376,8 @@ fn set(metadata: &mut AndroidMetadata, overrides: &Overrides) -> bool {
     metadata.uid = overrides.uid.unwrap_or(metadata.uid);
     metadata.gid = overrides.gid.unwrap_or(metadata.gid);
     metadata.mode = overrides.mode.unwrap_or(metadata.mode);
-    if let Some(label) = &overrides.selinux {
+    // The label is evaluated before it is set.
+    if let Some(label) = overrides.selinux.as_ref().and_then(Expr::literal_str) {
         metadata.set_selinux(label);
     }
     *metadata != before

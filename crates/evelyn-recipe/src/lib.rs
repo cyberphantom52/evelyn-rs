@@ -366,10 +366,13 @@ impl Operation {
             _ => {}
         }
         match self {
-            Self::SetProperty { key, value, .. } if !property_key(key) || value.contains('\n') => {
+            Self::SetProperty { key, value, .. }
+                if !written_or(key, property_key)
+                    || !written_or(value, |value| !value.contains('\n')) =>
+            {
                 Err(Error::Invalid(format!("invalid property {key:?}")))
             }
-            Self::RemoveProperty { key, .. } if !property_key(key) => {
+            Self::RemoveProperty { key, .. } if !written_or(key, property_key) => {
                 Err(Error::Invalid(format!("invalid property key {key:?}")))
             }
             Self::SetProperty { target, .. } | Self::RemoveProperty { target, .. } => target
@@ -441,7 +444,9 @@ impl Operation {
             Self::StubMethod { class, .. }
             | Self::ReplaceMethod { class, .. }
             | Self::InsertMethod { class, .. }
-                if !(class.starts_with('L') && class.ends_with(';') && class.len() > 2) =>
+                if !written_or(class, |class| {
+                    class.starts_with('L') && class.ends_with(';') && class.len() > 2
+                }) =>
             {
                 Err(Error::Invalid(format!(
                     "class {class:?} is not written as Lcom/example/Name;"
@@ -489,7 +494,14 @@ fn ron_options() -> ron::Options {
     ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
 }
 
-fn property_key(key: &str) -> bool {
+/// Whether `written`, written out, is as `valid` wants it; one naming a bound
+/// value is checked when it is used.
+fn written_or(written: &str, valid: impl Fn(&str) -> bool) -> bool {
+    expr::written_out(written).is_none_or(|written| valid(&written))
+}
+
+/// A key a property file can assign.
+pub fn property_key(key: &str) -> bool {
     !key.is_empty() && !key.contains(['=', '\n']) && !key.contains(char::is_whitespace)
 }
 
@@ -579,6 +591,6 @@ pub(crate) fn set(operation: &Operation) -> tree::Overrides {
         uid: *uid,
         gid: *gid,
         mode: *mode,
-        selinux: selinux.clone(),
+        selinux: selinux.as_deref().map(desugar::text),
     }
 }
