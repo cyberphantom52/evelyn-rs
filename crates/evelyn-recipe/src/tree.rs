@@ -79,9 +79,11 @@ pub enum Transform {
     WriteBytes(BTreeMap<u64, Hex>),
     Xml(Vec<XmlEdit>),
     /// Set every assignment of a property to `value`, or remove them without one.
+    /// With `create`, a value is appended where the file assigns none.
     Property {
         key: String,
         value: Option<String>,
+        create: bool,
     },
     /// Replace the content with a string.
     Write(Expr),

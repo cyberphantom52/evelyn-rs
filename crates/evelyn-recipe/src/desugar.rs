@@ -254,17 +254,19 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
                     format!("no property file to hold {key}"),
                 ),
                 Stmt::Edit {
-                    selection: new.clone(),
-                    transform: Transform::Write(appended(
-                        Expr::Read(Box::new(new)),
-                        &Expr::Literal(Value::Str(format!("{key}={value}"))),
-                    )),
+                    selection: new,
+                    transform: Transform::Property {
+                        key: key.clone(),
+                        value: Some(value.clone()),
+                        create: true,
+                    },
                 },
                 Stmt::Edit {
                     selection: defining(key, target),
                     transform: Transform::Property {
                         key: key.clone(),
                         value: Some(value.clone()),
+                        create: false,
                     },
                 },
             ];
@@ -277,6 +279,7 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
                 transform: Transform::Property {
                     key: key.clone(),
                     value: None,
+                    create: false,
                 },
             }],
             skip: format!("property {key} is not defined there"),
