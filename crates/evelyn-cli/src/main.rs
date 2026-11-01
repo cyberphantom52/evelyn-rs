@@ -1,5 +1,6 @@
 mod patch;
 
+use android_firmware::Name;
 use android_fs::Artifact;
 use clap::{Parser, Subcommand, ValueEnum};
 use engine::Output;
@@ -8,7 +9,7 @@ use recipe::Recipe;
 use serde::Serialize;
 use std::{
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitCode,
 };
 use thiserror::Error;
@@ -34,23 +35,24 @@ enum Command {
         #[arg(long)]
         rom: String,
     },
-    /// Build a port into partition images, a super image, or a recovery-flashable ZIP.
+    /// Build the device repository the current directory is in into partition
+    /// images, a super image, or a recovery-flashable ZIP.
     Build {
-        /// The port directory, ports/<name> in a device repository.
-        port: PathBuf,
         #[command(flatten)]
-        firmware: FirmwareArgs,
-        #[arg(long, value_enum, default_value = "partitions")]
-        output: OutputArg,
+        inputs: InputArgs,
+        /// [default: super with a super layout in evelyn.toml, else partitions]
+        #[arg(long, value_enum)]
+        output: Option<OutputArg>,
         /// Reusable scan and composition workspace [default: .evelyn in the repository].
         #[arg(long)]
         work_dir: Option<PathBuf>,
-        /// Where the built images or ZIP are written.
+        /// Where the built images or ZIP are written [default: out/<port> in the repository].
         #[arg(long)]
-        output_dir: PathBuf,
-        /// Directory populated by tools/manager.py.
-        #[arg(long, default_value = "tools")]
-        tools: PathBuf,
+        output_dir: Option<PathBuf>,
+        /// Directory populated by tools/manager.py [default: tools in the Evelyn
+        /// checkout this was built from].
+        #[arg(long)]
+        tools: Option<PathBuf>,
         /// An extra patch directory, applied after the port's.
         #[arg(long = "patch")]
         patches: Vec<PathBuf>,
@@ -65,14 +67,12 @@ enum Command {
         #[command(subcommand)]
         item: Inspect,
     },
-    /// Resolve a port's partitions, sources and recipe order against firmware.
+    /// Resolve the port, partitions, sources and recipe order a build would use.
     Plan {
-        /// The port directory, ports/<name> in a device repository.
-        port: PathBuf,
         #[command(flatten)]
-        firmware: FirmwareArgs,
-        #[arg(long, value_enum, default_value = "partitions")]
-        output: OutputArg,
+        inputs: InputArgs,
+        #[arg(long, value_enum)]
+        output: Option<OutputArg>,
     },
 }
 
@@ -80,8 +80,9 @@ enum Command {
 enum Inspect {
     /// Hash an image and identify its format.
     Image { path: PathBuf },
-    /// Parse and validate a port and its repository, and list the patches it applies.
-    Profile { port: PathBuf },
+    /// Parse and validate the current repository's ports, or one of them, and
+    /// list the patches each applies.
+    Profile { port: Option<String> },
     /// Parse and validate a RON recipe.
     Recipe { path: PathBuf },
     /// List the properties in an image's *.prop files, read without extracting it.
@@ -92,23 +93,37 @@ enum Inspect {
     },
 }
 
-/// The firmware a port is built from, each a directory of `<partition>.img` images.
+/// What a build is of, where it is not the repository's default.
 #[derive(clap::Args)]
-pub(crate) struct FirmwareArgs {
-    /// The ROM being ported, which supplies the system side.
+pub(crate) struct InputArgs {
+    /// The ROM being ported, which supplies the system side: a directory of
+    /// <partition>.img images or an OTA package [default: firmware/rom].
     #[arg(long)]
-    rom: PathBuf,
-    /// The device's own firmware, which supplies the vendor side.
+    rom: Option<PathBuf>,
+    /// The device's own firmware, which supplies the vendor side, likewise
+    /// [default: firmware/stock].
     #[arg(long)]
-    stock: PathBuf,
+    stock: Option<PathBuf>,
+    /// The port to build [default: the one the ROM matches].
+    #[arg(long)]
+    port: Option<String>,
 }
 
-impl FirmwareArgs {
-    pub(crate) fn firmware(&self) -> engine::FirmwareDirs<'_> {
-        engine::FirmwareDirs {
-            rom: &self.rom,
-            stock: &self.stock,
-        }
+impl InputArgs {
+    /// Plan a build of the repository the current directory is in.
+    pub(crate) fn plan(
+        &self,
+        output: Option<Output>,
+        extra: &[PathBuf],
+    ) -> Result<engine::Plan, Error> {
+        let root = engine::profile::find(Path::new("."))?;
+        let port = self.port.clone().map(Name::try_from).transpose()?;
+        let inputs = engine::Inputs {
+            rom: self.rom.as_deref(),
+            stock: self.stock.as_deref(),
+            port: port.as_ref(),
+        };
+        Ok(engine::Plan::load(&root, &inputs, output, extra)?)
     }
 }
 
@@ -147,6 +162,14 @@ enum Error {
     Output(#[from] io::Error),
 }
 
+/// `--tools` as given, else `tools` in the Evelyn checkout this was built from,
+/// where tools/manager.py installs them.
+pub(crate) fn tools_or_default(tools: Option<PathBuf>) -> toolchain::Tools {
+    toolchain::Tools::new(
+        tools.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools")),
+    )
+}
+
 /// `--work-dir` as given, else `.evelyn` in the port's repository.
 fn resolve_work_dir(flag: Option<PathBuf>, plan: &engine::Plan) -> PathBuf {
     flag.unwrap_or_else(|| plan.profile.root.join(".evelyn"))
@@ -167,17 +190,22 @@ fn run(cli: Cli) -> Result<(), Error> {
             &rom.try_into()?,
         )?),
         Command::Build {
-            port,
-            firmware,
+            inputs,
             output,
             work_dir,
             output_dir,
             tools,
             patches,
         } => {
-            let plan = engine::Plan::load(&port, output.into(), &firmware.firmware(), &patches)?;
+            let plan = inputs.plan(output.map(Output::from), &patches)?;
+            let output_dir = output_dir.unwrap_or_else(|| {
+                plan.profile
+                    .root
+                    .join("out")
+                    .join(plan.profile.name.as_ref())
+            });
             print(&engine::build(&engine::BuildRequest {
-                tools: &toolchain::Tools::new(tools),
+                tools: &tools_or_default(tools),
                 work_dir: &resolve_work_dir(work_dir, &plan),
                 output_dir: &output_dir,
                 plan: &plan,
@@ -187,8 +215,19 @@ fn run(cli: Cli) -> Result<(), Error> {
         Command::Inspect { item } => match item {
             Inspect::Image { path } => print(&Artifact::inspect(&path)?),
             Inspect::Profile { port } => {
-                let profile = Profile::load(&port)?;
-                print(&serde_json::json!({ "profile": profile, "patches": profile.patches() }))
+                let root = engine::profile::find(Path::new("."))?;
+                let names = match port {
+                    Some(port) => vec![Name::try_from(port)?],
+                    None => engine::profile::ports(&root)?.into_keys().collect(),
+                };
+                let mut profiles = Vec::new();
+                for name in names {
+                    let profile = Profile::load(&root, &name)?;
+                    profiles.push(
+                        serde_json::json!({ "profile": profile, "patches": profile.patches() }),
+                    );
+                }
+                print(&profiles)
             }
             Inspect::Recipe { path } => print(&Recipe::load(&path)?),
             Inspect::Props { image, key } => {
@@ -207,16 +246,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 print(&found)
             }
         },
-        Command::Plan {
-            port,
-            firmware,
-            output,
-        } => print(&engine::Plan::load(
-            &port,
-            output.into(),
-            &firmware.firmware(),
-            &[],
-        )?),
+        Command::Plan { inputs, output } => print(&inputs.plan(output.map(Output::from), &[])?),
     }
 }
 

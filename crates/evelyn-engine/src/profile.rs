@@ -3,8 +3,9 @@
 //! A device repository ports one ROM to one device. `evelyn.toml` at its root
 //! names the ROM and describes the device: its product IDs, the stock build its
 //! partitions are pinned to and its `super` layout. Each port, one ROM version,
-//! is a directory under `ports/` whose `port.toml` says what it takes from the
-//! ROM and lists, in the order they apply, the patches it applies. A patch is a
+//! is a directory under `ports/` whose `port.toml` says which ROM builds it is
+//! for, what it takes from the ROM and, in the order they apply, the patches it
+//! applies; a build takes the port the ROM it is given matches. A patch is a
 //! directory under `patches/` holding `patch.ron` and its assets; nothing applies
 //! unless a port lists it. Neither file names a firmware build: the firmware is
 //! supplied when building.
@@ -35,6 +36,9 @@ pub const MANIFEST: &str = "evelyn.toml";
 pub const PORT: &str = "port.toml";
 /// A patch's recipe, in its directory.
 pub const PATCH: &str = "patch.ron";
+/// What a repository keeps out of git: the work directory, the firmware and
+/// what builds write.
+const IGNORED: [&str; 3] = ["/.evelyn/", "/firmware/", "/out/"];
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -93,6 +97,10 @@ pub struct Stock {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Port {
+    /// The ROM builds this port is for: properties the ROM sets, each to a value
+    /// its glob matches. A port without any is for every build.
+    #[serde(default)]
+    pub rom: BTreeMap<String, String>,
     /// ROM partitions beyond the standard system side, and settings for any
     /// system-side partition. Keys are names or globs; the most specific wins.
     #[serde(default)]
@@ -100,6 +108,17 @@ pub struct Port {
     /// The patches this port applies, in order: directories under `patches/`.
     #[serde(default)]
     pub patches: Vec<RelativePath>,
+}
+
+impl Port {
+    /// Whether a ROM that sets `properties` is one this port is for.
+    pub fn matches(&self, properties: &BTreeMap<String, String>) -> bool {
+        self.rom.iter().all(|(key, pattern)| {
+            properties
+                .get(key)
+                .is_some_and(|value| glob(pattern, value))
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,40 +142,14 @@ pub struct Profile {
 }
 
 impl Profile {
-    /// Load the port at `path`, its directory or its `port.toml`, and the
-    /// repository it is in.
-    pub fn load(path: &Path) -> Result<Self, Error> {
-        let dir = if path.is_dir() {
-            path
-        } else {
-            path.parent().unwrap_or(Path::new("."))
-        };
-        let dir = fs::canonicalize(dir).map_err(|source| Error::Read {
-            path: dir.into(),
-            source,
-        })?;
-        let not_a_port = || {
-            Error::Invalid(format!(
-                "{} is not a port: ports/<name> in a directory with {MANIFEST}",
-                dir.display()
-            ))
-        };
-        let ports = dir.parent().ok_or_else(not_a_port)?;
-        let root = ports.parent().ok_or_else(not_a_port)?;
-        if ports.file_name().is_none_or(|name| name != "ports") || !root.join(MANIFEST).is_file() {
-            return Err(not_a_port());
-        }
-        let name = dir
-            .file_name()
-            .map(|name| Name::try_from(name.to_string_lossy().into_owned()))
-            .ok_or_else(not_a_port)?
-            .map_err(|error| Error::Invalid(error.to_string()))?;
+    /// Load the port `name` of the repository at `root`.
+    pub fn load(root: &Path, name: &Name) -> Result<Self, Error> {
         let repository: Repository = toml_file(&root.join(MANIFEST))?;
-        let port: Port = toml_file(&dir.join(PORT))?;
+        let port: Port = toml_file(&root.join("ports").join(name.as_ref()).join(PORT))?;
         let profile = Self {
             rom: repository.rom,
             device: repository.device,
-            name,
+            name: name.clone(),
             port,
             root: root.to_path_buf(),
         };
@@ -364,8 +357,8 @@ pub struct Initialized {
 }
 
 /// Set up a device repository at `root` that ports `rom` to `device`: its
-/// manifest, the `ports/` and `patches/` directories, and `.evelyn/`, the work
-/// directory, ignored by git. One already there is left alone.
+/// manifest, the `ports/`, `patches/` and `firmware/` directories, and what git
+/// ignores. One already there is left alone.
 pub fn init(root: &Path, device: &Name, rom: &Name) -> Result<Initialized, Error> {
     let manifest = root.join(MANIFEST);
     if manifest.exists() {
@@ -378,7 +371,8 @@ pub fn init(root: &Path, device: &Name, rom: &Name) -> Result<Initialized, Error
         let path = path.to_path_buf();
         move |source| Error::Write { path, source }
     };
-    for dir in [root.join("ports"), root.join("patches")] {
+    let dirs = ["ports", "patches", "firmware/stock", "firmware/rom"].map(|dir| root.join(dir));
+    for dir in dirs {
         fs::create_dir_all(&dir).map_err(write(&dir))?;
     }
     let text = format!(
@@ -405,13 +399,20 @@ fingerprint = ""
 # group = ""
 
 # A port is ports/<name>/port.toml: the patches it applies, in order, as
-# directories under patches/, each holding a {PATCH}; then any ROM partitions
-# it takes beyond the standard system side.
+# directories under patches/, each holding a {PATCH}; the ROM builds it is for,
+# as globs over properties the ROM sets; and any ROM partitions it takes beyond
+# the standard system side. A build takes the port the ROM matches.
 #
 # patches = ["<topic>/<name>"]
 #
+# [rom]
+# "ro.build.version.release" = "17"
+#
 # [partitions]
 # "my_*" = {{}}
+#
+# The firmware a build reads: the stock firmware in firmware/stock and the ROM
+# in firmware/rom, each a directory of <partition>.img images or an OTA package.
 "#
     );
     fs::write(&manifest, text).map_err(write(&manifest))?;
@@ -426,18 +427,70 @@ fingerprint = ""
             });
         }
     };
-    if !ignored.lines().any(|line| line == "/.evelyn/") {
+    let missing: String = IGNORED
+        .iter()
+        .filter(|entry| !ignored.lines().any(|line| line == **entry))
+        .map(|entry| format!("{entry}\n"))
+        .collect();
+    if !missing.is_empty() {
         let separator = if ignored.is_empty() || ignored.ends_with('\n') {
             ""
         } else {
             "\n"
         };
-        fs::write(&ignore, format!("{ignored}{separator}/.evelyn/\n")).map_err(write(&ignore))?;
+        fs::write(&ignore, format!("{ignored}{separator}{missing}")).map_err(write(&ignore))?;
     }
     Ok(Initialized {
         root: root.to_path_buf(),
         manifest,
     })
+}
+
+/// The repository `start` is in: the nearest directory with `evelyn.toml`,
+/// `start` or one above it.
+pub fn find(start: &Path) -> Result<PathBuf, Error> {
+    let start = fs::canonicalize(start).map_err(|source| Error::Read {
+        path: start.into(),
+        source,
+    })?;
+    start
+        .ancestors()
+        .find(|dir| dir.join(MANIFEST).is_file())
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "{} is not in a device repository: no {MANIFEST} here or above",
+                start.display()
+            ))
+        })
+}
+
+/// The ports of the repository at `root`, by name.
+pub fn ports(root: &Path) -> Result<BTreeMap<Name, Port>, Error> {
+    let dir = root.join("ports");
+    let entries = fs::read_dir(&dir).map_err(|source| Error::Read {
+        path: dir.clone(),
+        source,
+    })?;
+    let mut ports = BTreeMap::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|source| Error::Read {
+                path: dir.clone(),
+                source,
+            })?
+            .path();
+        if !path.join(PORT).is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let name = Name::try_from(name).map_err(|error| Error::Invalid(error.to_string()))?;
+        ports.insert(name, toml_file(&path.join(PORT))?);
+    }
+    Ok(ports)
 }
 
 fn toml_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, Error> {
