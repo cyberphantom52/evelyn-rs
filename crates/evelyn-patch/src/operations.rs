@@ -298,7 +298,17 @@ pub(crate) fn transformed(
     let asset = |expr: &Expr| text(&std::fs::read(asset_path(expr)?.resolve(context.assets))?);
     Ok(match transform {
         Transform::WriteBytes(edits) => crate::binary::apply(bytes, edits)?,
-        Transform::Xml(edits) => crate::xml::apply(bytes, edits)?,
+        Transform::Xml(edits) => {
+            let edits = edits
+                .iter()
+                .map(|edit| {
+                    edit.map(|text| literal(text).map(str::to_owned))?
+                        .parse()
+                        .map_err(|error| Error::from(recipe::Error::Invalid(error)))
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            crate::xml::apply(bytes, &edits)?
+        }
         Transform::ApplyDiff(patch) => {
             crate::text::apply(&text(bytes)?, &asset(patch)?)?.into_bytes()
         }

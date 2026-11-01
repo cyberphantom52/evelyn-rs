@@ -78,7 +78,7 @@ pub enum Transform {
     ApplyDiff(Expr),
     /// Write bytes at offsets.
     WriteBytes(BTreeMap<u64, Hex>),
-    Xml(Vec<XmlEdit>),
+    Xml(Vec<XmlEdit<Expr>>),
     /// Set every assignment of a property to `value`, or remove them without one.
     /// With `create`, a value is appended where the file assigns none.
     Property {
@@ -122,7 +122,8 @@ impl Transform {
                 strings
             }
             Self::AddPolicy { policies, .. } => policies.iter().collect(),
-            Self::WriteBytes(_) | Self::Xml(_) => Vec::new(),
+            Self::Xml(edits) => edits.iter().flat_map(XmlEdit::strings).collect(),
+            Self::WriteBytes(_) => Vec::new(),
         }
     }
 
@@ -134,6 +135,12 @@ impl Transform {
         Ok(match self {
             Self::ApplyDiff(patch) => Self::ApplyDiff(resolve(patch)?),
             Self::Write(text) => Self::Write(resolve(text)?),
+            Self::Xml(edits) => Self::Xml(
+                edits
+                    .iter()
+                    .map(|edit| edit.map(&mut resolve))
+                    .collect::<Result<_, _>>()?,
+            ),
             Self::Property { key, value, create } => Self::Property {
                 key: resolve(key)?,
                 value: value.as_ref().map(&mut resolve).transpose()?,

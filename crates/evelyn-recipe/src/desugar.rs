@@ -2,7 +2,7 @@
 
 use crate::{
     Error, Expr as Written, Feature, Location, Operation, Recipe, Step, XmlEdit, XmlMatch, XmlName,
-    XmlPath, XmlPredicate, escape_attribute,
+    XmlPredicate, escape_attribute,
     tree::{self, Assigned, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree},
     value::Value,
 };
@@ -271,7 +271,7 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
         },
         Operation::EditXml { target, edits } => Stmt::Edit {
             selection: select_expr(text(target), here()),
-            transform: Transform::Xml(edits.clone()),
+            transform: Transform::Xml(edits.iter().map(xml).collect()),
         },
         Operation::Package { target, edits } => Stmt::Package {
             package: text(target),
@@ -310,37 +310,41 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
             // Declared once: one already there is replaced.
             Stmt::Edit {
                 selection: select_expr(text(file), Scope::default()),
-                transform: Transform::Xml(vec![XmlEdit::PutChild {
-                    parent: XmlPath::try_from(root.to_owned()).expect("a literal XML path"),
+                transform: Transform::Xml(vec![xml(&XmlEdit::PutChild {
+                    parent: root.to_owned(),
                     key: feature_match(element, name),
                     element: format!("<{element} name=\"{}\"{args}/>", escape_attribute(name)),
                     create: true,
-                }]),
+                })]),
             }
         }
         Operation::DisableFeature(name) => {
-            let edits: Vec<XmlEdit> = ["feature", "oplus-feature", "app_feature"]
+            let edits = ["feature", "oplus-feature", "app_feature"]
                 .into_iter()
-                .map(|element| XmlEdit::Remove {
-                    path: XmlPath::anywhere(
-                        feature_match(element, name),
-                        format!("//{element}[@name='{name}']"),
-                    ),
+                .map(|element| {
+                    xml(&XmlEdit::Remove {
+                        path: format!("//{}", feature_match(element, name)),
+                    })
                 })
                 .collect();
-            // Only the files that mention the feature: one that cannot hold it is
-            // not touched, or even parsed. A feature declared nowhere skips the step.
+            // Only the files that mention a feature written out: one that cannot
+            // hold it is not touched, or even parsed. A feature declared nowhere
+            // skips the step.
+            let all = Expr::Union(vec![
+                select("/*/etc/permissions/*.xml", Scope::default()),
+                select("/*/etc/extension/*.xml", Scope::default()),
+            ]);
             let file = self::name("file");
-            let files = Expr::Filter {
-                over: Box::new(Expr::Union(vec![
-                    select("/*/etc/permissions/*.xml", Scope::default()),
-                    select("/*/etc/extension/*.xml", Scope::default()),
-                ])),
-                name: file.clone(),
-                keep: Box::new(Expr::Matches {
-                    text: Box::new(Expr::Read(Box::new(Expr::Var(file)))),
-                    pattern: Pattern::literal(name),
-                }),
+            let files = match crate::expr::written_out(name) {
+                Some(name) => Expr::Filter {
+                    over: Box::new(all),
+                    name: file.clone(),
+                    keep: Box::new(Expr::Matches {
+                        text: Box::new(Expr::Read(Box::new(Expr::Var(file)))),
+                        pattern: Pattern::literal(&name),
+                    }),
+                },
+                None => all,
             };
             Stmt::When {
                 condition: defined(files.clone()),
@@ -644,17 +648,25 @@ fn expect(selection: Expr, message: String) -> Stmt {
     }
 }
 
-/// `<element name="name">`, as an XML selector.
-fn feature_match(element: &str, name: &str) -> XmlMatch {
-    let local = |local: &str| XmlName {
-        namespace: None,
-        local: local.to_owned(),
-    };
-    XmlMatch {
-        name: local(element),
+/// `<element name="name">`, as an XML selector written as a string.
+fn feature_match(element: &str, name: &str) -> String {
+    String::from(XmlMatch {
+        name: XmlName {
+            namespace: None,
+            local: element.to_owned(),
+        },
         predicate: Some(XmlPredicate::Attribute {
-            name: local("name"),
+            name: XmlName {
+                namespace: None,
+                local: "name".to_owned(),
+            },
             value: name.to_owned(),
         }),
-    }
+    })
+}
+
+/// An XML edit's strings as expressions.
+fn xml(edit: &XmlEdit) -> XmlEdit<Expr> {
+    edit.map(|written| Ok::<_, std::convert::Infallible>(text(written)))
+        .unwrap_or_else(|never| match never {})
 }

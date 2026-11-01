@@ -148,19 +148,6 @@ pub struct XmlStep {
     pub matches: XmlMatch,
 }
 
-impl XmlPath {
-    /// Every element `matches` selects, at any depth.
-    pub(crate) fn anywhere(matches: XmlMatch, text: String) -> Self {
-        Self {
-            text,
-            selectors: vec![XmlStep {
-                descendant: true,
-                matches,
-            }],
-        }
-    }
-}
-
 impl TryFrom<String> for XmlPath {
     type Error = String;
 
@@ -208,31 +195,147 @@ impl From<XmlPath> for String {
     }
 }
 
+/// An XML edit. A recipe writes its paths, selectors, names and values as strings,
+/// `S` = `String`, in which `{name}` is a bound value; the tree holds them as
+/// expressions. They are parsed when the recipe loads if written out, else when
+/// the edit is applied.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub enum XmlEdit {
+pub enum XmlEdit<S = String> {
     /// Replace the text of every match.
-    SetText { path: XmlPath, value: String },
+    SetText { path: S, value: S },
     /// Set the attribute `name` of every match that has it to `value`; with
     /// `create`, add it to those that do not.
     SetAttribute {
-        path: XmlPath,
-        name: XmlName,
-        value: String,
+        path: S,
+        name: S,
+        value: S,
         #[serde(default, skip_serializing_if = "is_false")]
         create: bool,
     },
     /// Remove every match.
-    Remove { path: XmlPath },
+    Remove { path: S },
     /// Put `element`, one element, in place of the children `key` matches under
     /// every match of `parent`; with `create`, append it where none match.
+    PutChild {
+        parent: S,
+        key: S,
+        element: S,
+        #[serde(default, skip_serializing_if = "is_false")]
+        create: bool,
+    },
+}
+
+impl<S> XmlEdit<S> {
+    /// Its strings, in order.
+    pub fn strings(&self) -> Vec<&S> {
+        match self {
+            Self::SetText { path, value } => vec![path, value],
+            Self::SetAttribute {
+                path, name, value, ..
+            } => vec![path, name, value],
+            Self::Remove { path } => vec![path],
+            Self::PutChild {
+                parent,
+                key,
+                element,
+                ..
+            } => vec![parent, key, element],
+        }
+    }
+
+    /// The edit with each string made into what `f` makes of it.
+    pub fn map<T, E>(&self, mut f: impl FnMut(&S) -> Result<T, E>) -> Result<XmlEdit<T>, E> {
+        Ok(match self {
+            Self::SetText { path, value } => XmlEdit::SetText {
+                path: f(path)?,
+                value: f(value)?,
+            },
+            Self::SetAttribute {
+                path,
+                name,
+                value,
+                create,
+            } => XmlEdit::SetAttribute {
+                path: f(path)?,
+                name: f(name)?,
+                value: f(value)?,
+                create: *create,
+            },
+            Self::Remove { path } => XmlEdit::Remove { path: f(path)? },
+            Self::PutChild {
+                parent,
+                key,
+                element,
+                create,
+            } => XmlEdit::PutChild {
+                parent: f(parent)?,
+                key: f(key)?,
+                element: f(element)?,
+                create: *create,
+            },
+        })
+    }
+}
+
+/// An XML edit with its selectors parsed, as it is applied.
+#[derive(Clone, Debug)]
+pub enum XmlOp {
+    SetText {
+        path: XmlPath,
+        value: String,
+    },
+    SetAttribute {
+        path: XmlPath,
+        name: XmlName,
+        value: String,
+        create: bool,
+    },
+    Remove {
+        path: XmlPath,
+    },
     PutChild {
         parent: XmlPath,
         key: XmlMatch,
         element: String,
-        #[serde(default, skip_serializing_if = "is_false")]
         create: bool,
     },
+}
+
+impl XmlEdit<String> {
+    /// The edit with its selectors parsed.
+    pub fn parse(&self) -> Result<XmlOp, String> {
+        let path = |path: &String| XmlPath::try_from(path.clone());
+        Ok(match self {
+            Self::SetText { path: at, value } => XmlOp::SetText {
+                path: path(at)?,
+                value: value.clone(),
+            },
+            Self::SetAttribute {
+                path: at,
+                name,
+                value,
+                create,
+            } => XmlOp::SetAttribute {
+                path: path(at)?,
+                name: XmlName::from(name.clone()),
+                value: value.clone(),
+                create: *create,
+            },
+            Self::Remove { path: at } => XmlOp::Remove { path: path(at)? },
+            Self::PutChild {
+                parent,
+                key,
+                element,
+                create,
+            } => XmlOp::PutChild {
+                parent: path(parent)?,
+                key: XmlMatch::try_from(key.clone())?,
+                element: element.clone(),
+                create: *create,
+            },
+        })
+    }
 }
 
 fn is_false(value: &bool) -> bool {
