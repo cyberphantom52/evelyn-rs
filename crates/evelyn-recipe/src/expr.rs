@@ -35,7 +35,8 @@ pub enum Expr {
     /// What any of the selections selects, in the order they select it.
     Union(Vec<Expr>),
     Eq(Box<Expr>, Box<Expr>),
-    /// A string is one of these: `In(Property(key: "ro.x"), ["a", "b"])`.
+    /// A string is one of these, each of which can name a bound value:
+    /// `In(Property(key: "ro.x"), ["a", "{v}"])`.
     In(Box<Expr>, Vec<String>),
     If {
         condition: Box<Expr>,
