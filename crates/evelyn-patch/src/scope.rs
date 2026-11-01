@@ -5,7 +5,7 @@ use crate::{Composition, Error, Target, compose::Context, layout, package::Opene
 use android_firmware::{DevicePath, Firmware, Name, RelativePath, SourceRef};
 use android_fs::EntryKind;
 use recipe::{
-    tree::{Expr, Scope as Range, Source},
+    tree::{Binding, Expr, Scope as Range, Source},
     value::{Located, Place, Value},
 };
 use std::collections::BTreeMap;
@@ -521,13 +521,13 @@ struct Loaded {
 /// A value a `Let` (a statement's or an expression's) or a `Filter` binds, and
 /// those bound around it.
 pub(crate) struct Bound<'a> {
-    name: &'a Name,
+    name: &'a Binding,
     value: Value,
     outer: Option<&'a Bound<'a>>,
 }
 
 impl<'a> Bound<'a> {
-    pub(crate) fn new(name: &'a Name, value: Value, outer: Option<&'a Bound<'a>>) -> Self {
+    pub(crate) fn new(name: &'a Binding, value: Value, outer: Option<&'a Bound<'a>>) -> Self {
         Self { name, value, outer }
     }
 }

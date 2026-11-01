@@ -1,7 +1,7 @@
 //! What a recipe needs before it can apply: the assets it reads from its directory
 //! and the firmware partitions it reads, gathered by walking its primitive tree.
 
-use android_firmware::{DevicePath, Firmware, Name, RelativePath};
+use android_firmware::{DevicePath, Firmware, RelativePath};
 use recipe::{
     Error,
     tree::{Expr, MethodEdit, Source, Stmt, Transform},
@@ -13,7 +13,7 @@ use recipe::{
 pub(crate) struct Assets(pub Vec<RelativePath>);
 
 impl Visitor for Assets {
-    fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), Error> {
+    fn expr(&mut self, expr: &Expr, _bound: &[&recipe::tree::Binding]) -> Result<(), Error> {
         // A computed path is looked up when its step runs.
         if let Expr::Select { pattern, scope } = expr
             && scope.inside == Some(Source::Assets)
@@ -24,7 +24,7 @@ impl Visitor for Assets {
         Ok(())
     }
 
-    fn stmt(&mut self, stmt: &Stmt, _bound: &[&Name]) -> Result<(), Error> {
+    fn stmt(&mut self, stmt: &Stmt, _bound: &[&recipe::tree::Binding]) -> Result<(), Error> {
         if let Stmt::Edit { transform, .. } = stmt {
             let assets: Vec<&Expr> = match transform {
                 Transform::ApplyDiff(patch) => vec![patch],
@@ -52,7 +52,7 @@ pub(crate) struct Sources {
 }
 
 impl Visitor for Sources {
-    fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), Error> {
+    fn expr(&mut self, expr: &Expr, _bound: &[&recipe::tree::Binding]) -> Result<(), Error> {
         if let Expr::Select { pattern, scope } = expr
             && let Some(firmware) = scope.inside.and_then(Source::firmware)
             && let Some(pattern) = pattern.literal_str()

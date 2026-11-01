@@ -3,10 +3,11 @@
 use crate::{
     Error, Expr as Written, Feature, Location, Operation, Recipe, Step, XmlEdit, XmlMatch, XmlName,
     XmlPredicate, escape_attribute,
-    tree::{self, Assigned, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree},
+    tree::{
+        self, Assigned, Binding, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree,
+    },
     value::Value,
 };
-use android_firmware::Name;
 
 impl Recipe {
     /// The recipe as primitives, its steps in dependency order.
@@ -34,11 +35,12 @@ fn step(step: &Step) -> Stmt {
         }];
     }
     for (name, value) in step.bindings.iter().rev() {
+        let bound = Binding::Written(name.clone());
         body = vec![Stmt::Let {
-            name: name.clone(),
+            name: bound.clone(),
             value: expr(value),
             body: vec![Stmt::When {
-                condition: defined(Expr::Var(name.clone())),
+                condition: defined(Expr::Var(bound)),
                 body,
                 skip: format!("{name} is not set: {}", shown(value)),
             }],
@@ -82,7 +84,7 @@ fn expr(written: &Written) -> Expr {
         Written::Eq(left, right) => Expr::Eq(boxed(left), boxed(right)),
         // Bound once, compared with each.
         Written::In(inner, values) => {
-            let value = name("value");
+            let value = made("value");
             let str = |text: &String| Box::new(Expr::Literal(Value::Str(text.clone())));
             Expr::Let {
                 name: value.clone(),
@@ -106,7 +108,7 @@ fn expr(written: &Written) -> Expr {
         },
         Written::Filter { over, name, keep } => Expr::Filter {
             over: boxed(over),
-            name: name.clone(),
+            name: Binding::Written(name.clone()),
             keep: boxed(keep),
         },
         Written::Lines(inner) => Expr::Lines(boxed(inner)),
@@ -128,7 +130,7 @@ pub(crate) fn text(written: &str) -> Expr {
         .into_iter()
         .map(|part| match part {
             crate::expr::Part::Text(text) => Expr::Literal(Value::Str(text)),
-            crate::expr::Part::Bound(name) => Expr::Var(name),
+            crate::expr::Part::Bound(name) => Expr::Var(Binding::Written(name)),
         })
         .collect();
     match parts.len() {
@@ -334,7 +336,7 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
                 select("/*/etc/permissions/*.xml", Scope::default()),
                 select("/*/etc/extension/*.xml", Scope::default()),
             ]);
-            let file = self::name("file");
+            let file = made("file");
             let files = match crate::expr::written_out(name) {
                 Some(name) => Expr::Filter {
                     over: Box::new(all),
@@ -358,7 +360,7 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
         // Checked against the files init compiles the policy from, named for the
         // platform policy version the vendor targets: a step's binding, a token.
         Operation::AddPolicy { target, policies } => {
-            let version = name("version");
+            let version = made("version");
             let str = |text: &str| Expr::Literal(Value::Str(text.to_owned()));
             // The others init compiles the policy with: all but the one patched.
             let files = android_firmware::SEPOLICY_FILES
@@ -500,7 +502,7 @@ fn property_files(target: &Option<Location>) -> Expr {
 
 /// The property files in a target's scope that define `key`.
 fn defining(key: &str, target: &Option<Location>) -> Expr {
-    let file = name("file");
+    let file = made("file");
     Expr::Filter {
         over: Box::new(property_files(target)),
         name: file.clone(),
@@ -585,7 +587,7 @@ fn defined(selection: Expr) -> Expr {
 
 /// `first` if it selects anything, else `otherwise`.
 fn or_else(first: Expr, otherwise: Expr) -> Expr {
-    let selected = name("selected");
+    let selected = made("selected");
     Expr::Let {
         name: selected.clone(),
         value: Box::new(first),
@@ -601,12 +603,12 @@ fn or_else(first: Expr, otherwise: Expr) -> Expr {
 /// `old` does not end in one, and after `added` if it does not. Nothing added
 /// leaves `old` as it is.
 fn appended(old: Expr, added: &Expr) -> Expr {
-    let (old_name, added_name) = (name("old"), name("added"));
+    let (old_name, added_name) = (made("old"), made("added"));
     let (old, added) = ((old_name.clone(), old), (added_name.clone(), added.clone()));
-    let var = |name: &Name| Expr::Var(name.clone());
+    let var = |name: &Binding| Expr::Var(name.clone());
     let str = |text: &str| Expr::Literal(Value::Str(text.to_owned()));
     // A newline, unless `text` is empty or already ends in one.
-    let newline = |text: &Name, unless: &str| Expr::If {
+    let newline = |text: &Binding, unless: &str| Expr::If {
         condition: Box::new(Expr::Matches {
             text: Box::new(var(text)),
             pattern: Pattern::try_from(unless.to_owned()).expect("a literal pattern"),
@@ -635,9 +637,9 @@ fn appended(old: Expr, added: &Expr) -> Expr {
     }
 }
 
-/// A name the desugaring binds.
-fn name(name: &str) -> Name {
-    Name::try_from(name.to_owned()).expect("a literal name")
+/// A name the desugaring binds, which no recipe can name.
+fn made(name: &str) -> Binding {
+    Binding::Made(name.to_owned())
 }
 
 /// Fail with `message` unless the selection is not empty.

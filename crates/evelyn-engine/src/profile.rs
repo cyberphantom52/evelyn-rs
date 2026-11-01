@@ -323,7 +323,11 @@ impl Partitions<'_> {
 }
 
 impl Visitor for Partitions<'_> {
-    fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), recipe::Error> {
+    fn expr(
+        &mut self,
+        expr: &Expr,
+        _bound: &[&recipe::tree::Binding],
+    ) -> Result<(), recipe::Error> {
         match expr {
             Expr::HasPartition(name)
             | Expr::PropertyFiles {
