@@ -112,7 +112,10 @@ pub enum Operation {
     Import(Location),
     /// Write a recipe asset, a file or a directory's files, at `to`, with Android's
     /// defaults: `Copy` with `metadata: Default`, `overwrite` and `create_parent`.
-    Install { asset: String, to: Expr },
+    Install {
+        asset: String,
+        to: Expr,
+    },
     /// Remove what `pattern` matches from the build. A relative pattern is tried in
     /// the directory of every build partition the scope selects: those that came
     /// from the ROM or the stock firmware (`origin`), named by `partition` (a name
@@ -129,7 +132,7 @@ pub enum Operation {
     /// Set metadata Android's defaults do not give, on every entry `pattern` (a
     /// device path, globs allowed) matches in the build.
     SetMetadata {
-        pattern: DevicePath,
+        pattern: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         uid: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -157,18 +160,18 @@ pub enum Operation {
     },
     /// Apply a unified diff (an asset) to a file and its hardlinks.
     ApplyDiff {
-        target: DevicePath,
-        patch: RelativePath,
+        target: String,
+        patch: String,
     },
     /// Overwrite bytes at offsets of a file. What is there decides what the bytes
     /// mean, so an `AssertHash` of the file should come first.
     WriteBytes {
-        target: DevicePath,
+        target: String,
         /// Offsets and the bytes written there, as hex: `{487572: "a9008052"}`.
         edits: BTreeMap<u64, Hex>,
     },
     EditXml {
-        target: DevicePath,
+        target: String,
         edits: Vec<XmlEdit>,
     },
     /// Decode an APK or JAR, apply `edits` inside it and rebuild it. The edits are
@@ -183,13 +186,13 @@ pub enum Operation {
     ReplaceMethod {
         class: String,
         method: String,
-        body: RelativePath,
+        body: String,
     },
     /// Inside a `Package`: add the asset `body` as a new smali method.
     InsertMethod {
         class: String,
         method: String,
-        body: RelativePath,
+        body: String,
     },
     /// Inside a `Package`: replace a method's body so it only returns `returns`.
     StubMethod {
@@ -198,11 +201,14 @@ pub enum Operation {
         returns: Returns,
     },
     /// The condition must hold, or the build fails with `message`.
-    Assert { condition: Expr, message: String },
+    Assert {
+        condition: Expr,
+        message: String,
+    },
     /// The file's content must have this SHA-256: an `Assert` that its `Hash`
     /// is.
     AssertHash {
-        target: DevicePath,
+        target: String,
         sha256: Sha256Digest,
     },
     /// Declare a feature, in its kind's file: added there, or replaced if it is.
@@ -212,7 +218,7 @@ pub enum Operation {
     DisableFeature(String),
     /// Add `content` at the end of a file, on a line of its own.
     Append {
-        target: DevicePath,
+        target: String,
         /// A string expression.
         content: Expr,
     },
@@ -220,8 +226,8 @@ pub enum Operation {
     /// with Android's policy macros. The result must resolve with the device's other
     /// policy files, as init loads them.
     AddPolicy {
-        target: DevicePath,
-        policies: Vec<RelativePath>,
+        target: String,
+        policies: Vec<String>,
     },
 }
 
@@ -238,7 +244,7 @@ pub enum Feature {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         args: Option<String>,
-        file: DevicePath,
+        file: String,
     },
 }
 
@@ -332,6 +338,33 @@ impl Operation {
     /// package's, `Package("/…")`; elsewhere the build's, `Build("/…")`.
     fn validate(&self, in_package: bool) -> Result<(), Error> {
         let name = self.name();
+        // Paths written out are checked now; one naming a bound value when it is used.
+        let device = |path: &String| -> Result<(), Error> {
+            Ok(expr::written_out(path)
+                .map_or(Ok(()), |path| DevicePath::try_from(path).map(drop))?)
+        };
+        let asset = |path: &String| -> Result<(), Error> {
+            Ok(expr::written_out(path)
+                .map_or(Ok(()), |path| RelativePath::try_from(path).map(drop))?)
+        };
+        match self {
+            Self::ApplyDiff { target, patch } => {
+                device(target)?;
+                asset(patch)?;
+            }
+            Self::WriteBytes { target, .. }
+            | Self::EditXml { target, .. }
+            | Self::AssertHash { target, .. }
+            | Self::Append { target, .. } => device(target)?,
+            Self::AddPolicy { target, policies } => {
+                device(target)?;
+                policies.iter().try_for_each(asset)?;
+            }
+            Self::SetMetadata { pattern, .. } => device(pattern)?,
+            Self::ReplaceMethod { body, .. } | Self::InsertMethod { body, .. } => asset(body)?,
+            Self::EnableFeature(Feature::App { file, .. }) => device(file)?,
+            _ => {}
+        }
         match self {
             Self::SetProperty { key, value, .. } if !property_key(key) || value.contains('\n') => {
                 Err(Error::Invalid(format!("invalid property {key:?}")))
@@ -383,10 +416,12 @@ impl Operation {
                 {
                     return Err(Error::Invalid(format!("invalid partition {partition:?}")));
                 }
-                if pattern.starts_with('/') {
-                    DevicePath::try_from(pattern.clone())?;
-                } else {
-                    RelativePath::try_from(pattern.clone())?;
+                match expr::written_out(pattern) {
+                    Some(pattern) if pattern.starts_with('/') => {
+                        DevicePath::try_from(pattern).map(drop)?
+                    }
+                    Some(pattern) => RelativePath::try_from(pattern).map(drop)?,
+                    None => {}
                 }
                 Ok(())
             }

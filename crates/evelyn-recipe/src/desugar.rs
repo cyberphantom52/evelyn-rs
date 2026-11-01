@@ -197,8 +197,8 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
             origin,
             partition,
         } => {
-            let selection = select(
-                pattern,
+            let selection = select_expr(
+                text(pattern),
                 Scope {
                     origin: *origin,
                     partition: partition.clone(),
@@ -212,7 +212,7 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
             }
         }
         Operation::SetMetadata { pattern, .. } => Stmt::SetMetadata {
-            selection: select(pattern.as_ref(), here()),
+            selection: select_expr(text(pattern), here()),
             pattern: pattern.to_string(),
             metadata: Assigned::Fields(crate::set(operation)),
         },
@@ -262,15 +262,15 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
             skip: format!("property {key} is not defined there"),
         },
         Operation::ApplyDiff { target, patch } => Stmt::Edit {
-            selection: select(target.as_ref(), here()),
-            transform: Transform::ApplyDiff(patch.clone()),
+            selection: select_expr(text(target), here()),
+            transform: Transform::ApplyDiff(text(patch)),
         },
         Operation::WriteBytes { target, edits } => Stmt::Edit {
-            selection: select(target.as_ref(), here()),
+            selection: select_expr(text(target), here()),
             transform: Transform::WriteBytes(edits.clone()),
         },
         Operation::EditXml { target, edits } => Stmt::Edit {
-            selection: select(target.as_ref(), here()),
+            selection: select_expr(text(target), here()),
             transform: Transform::Xml(edits.clone()),
         },
         Operation::Package { target, edits } => Stmt::Package {
@@ -289,12 +289,12 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
             class,
             method,
             body,
-        } => smali(class, method, MethodEdit::Replace(body.clone())),
+        } => smali(class, method, MethodEdit::Replace(text(body))),
         Operation::InsertMethod {
             class,
             method,
             body,
-        } => smali(class, method, MethodEdit::Insert(body.clone())),
+        } => smali(class, method, MethodEdit::Insert(text(body))),
         Operation::EnableFeature(feature) => {
             let file = feature_file(feature);
             let (root, element, name, args) = match feature {
@@ -309,7 +309,7 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
             });
             // Declared once: one already there is replaced.
             Stmt::Edit {
-                selection: select(file, Scope::default()),
+                selection: select_expr(text(file), Scope::default()),
                 transform: Transform::Xml(vec![XmlEdit::PutChild {
                     parent: XmlPath::try_from(root.to_owned()).expect("a literal XML path"),
                     key: feature_match(element, name),
@@ -359,7 +359,9 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
             // The others init compiles the policy with: all but the one patched.
             let files = android_firmware::SEPOLICY_FILES
                 .iter()
-                .filter(|(path, suffix)| suffix.is_some() || *path != target.as_ref())
+                .filter(|(path, suffix)| {
+                    suffix.is_some() || Some(path.to_string()) != crate::expr::written_out(target)
+                })
                 .map(|(path, suffix)| match suffix {
                     None => select(path, Scope::default()),
                     Some(suffix) => select_expr(
@@ -378,9 +380,9 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
                     name: version,
                     value: Expr::Trim(Box::new(Expr::Read(Box::new(named)))),
                     body: vec![Stmt::Edit {
-                        selection: select(target.as_ref(), here()),
+                        selection: select_expr(text(target), here()),
                         transform: Transform::AddPolicy {
-                            policies: policies.clone(),
+                            policies: policies.iter().map(|policy| text(policy)).collect(),
                             resolve_with: Expr::Union(files),
                         },
                     }],
@@ -388,7 +390,7 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
             ];
         }
         Operation::Append { target, content } => {
-            let file = select(target.as_ref(), here());
+            let file = select_expr(text(target), here());
             Stmt::Edit {
                 transform: Transform::Write(appended(
                     Expr::Read(Box::new(file.clone())),
@@ -421,7 +423,7 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
     // An operation on one named file, or class, needs it there.
     let named = |target: String| {
         let message = format!("{target} is not there");
-        (select(&target, here()), message)
+        (select_expr(text(&target), here()), message)
     };
     let (selection, message) = match operation {
         Operation::SetMetadata {

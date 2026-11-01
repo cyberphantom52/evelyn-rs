@@ -72,22 +72,26 @@ fn walk_stmt<'a>(
         }
         Stmt::Edit {
             selection,
-            transform:
-                Transform::Write(text)
-                | Transform::AddPolicy {
-                    resolve_with: text, ..
-                },
+            transform,
         } => {
             walk_expr(selection, visitor, bound)?;
-            walk_expr(text, visitor, bound)
+            for text in transform.strings() {
+                walk_expr(text, visitor, bound)?;
+            }
+            match transform {
+                Transform::AddPolicy { resolve_with, .. } => {
+                    walk_expr(resolve_with, visitor, bound)
+                }
+                _ => Ok(()),
+            }
         }
         Stmt::Copy { selection, to, .. } => {
             walk_expr(selection, visitor, bound)?;
             to.iter().try_for_each(|to| walk_expr(to, visitor, bound))
         }
-        Stmt::Remove { selection, .. }
-        | Stmt::SetMetadata { selection, .. }
-        | Stmt::Edit { selection, .. } => walk_expr(selection, visitor, bound),
+        Stmt::Remove { selection, .. } | Stmt::SetMetadata { selection, .. } => {
+            walk_expr(selection, visitor, bound)
+        }
         Stmt::Assert { condition, .. } => walk_expr(condition, visitor, bound),
     }
 }
@@ -272,19 +276,14 @@ impl Visitor for Check {
             }
             Stmt::Edit {
                 selection,
-                transform:
-                    Transform::Write(text)
-                    | Transform::AddPolicy {
-                        resolve_with: text, ..
-                    },
+                transform,
             } => {
                 of(selection, &[Kind::Selection], "a selection")?;
-                match &stmt {
-                    Stmt::Edit {
-                        transform: Transform::Write(_),
-                        ..
-                    } => of(text, &[Kind::Str], "Write")?,
-                    _ => of(text, &[Kind::Selection], "AddPolicy")?,
+                for text in transform.strings() {
+                    of(text, &[Kind::Str], "a string")?;
+                }
+                if let Transform::AddPolicy { resolve_with, .. } = transform {
+                    of(resolve_with, &[Kind::Selection], "AddPolicy")?;
                 }
             }
             Stmt::Copy { selection, to, .. } => {
@@ -293,9 +292,9 @@ impl Visitor for Check {
                     of(to, &[Kind::Str], "a copy's to")?;
                 }
             }
-            Stmt::Remove { selection, .. }
-            | Stmt::SetMetadata { selection, .. }
-            | Stmt::Edit { selection, .. } => of(selection, &[Kind::Selection], "a selection")?,
+            Stmt::Remove { selection, .. } | Stmt::SetMetadata { selection, .. } => {
+                of(selection, &[Kind::Selection], "a selection")?
+            }
             Stmt::Package { package, .. } => of(package, &[Kind::Str], "Package")?,
         }
         Ok(())
