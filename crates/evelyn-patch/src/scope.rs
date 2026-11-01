@@ -140,8 +140,9 @@ impl Scope<'_> {
     }
 
     /// What `pattern` selects. Inside a firmware, the pattern is a device path in
-    /// it. In the build, a device path, or a relative pattern tried in the
-    /// directory of every partition the range selects.
+    /// it; inside the open package, a path from its root. In the build, a device
+    /// path, or a relative pattern tried in the directory of every partition the
+    /// range selects.
     pub fn select(&self, pattern: &str, range: &Range) -> Result<Vec<Located>, Error> {
         if range.inside == Some(Source::Assets) {
             // An asset (file or directory) by its path in the recipe's directory.
@@ -178,7 +179,10 @@ impl Scope<'_> {
             }
             return Ok(found);
         }
-        if let Some(package) = self.package {
+        if range.inside == Some(Source::Package) {
+            let package = self.package.ok_or(Error::Unsupported(
+                "a package's files are selected inside a Package",
+            ))?;
             let path = pattern.strip_prefix('/').ok_or(Error::Unsupported(
                 "paths inside a package start at its root, /",
             ))?;
