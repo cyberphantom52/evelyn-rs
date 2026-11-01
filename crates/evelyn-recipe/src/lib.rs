@@ -363,8 +363,9 @@ impl Operation {
                     ));
                 }
                 match to {
-                    Some(Expr::Text(to)) if !to.contains('{') => {
-                        DevicePath::try_from(to.clone()).map(drop)?
+                    Some(Expr::Text(to)) if expr::written_out(to).is_some() => {
+                        DevicePath::try_from(expr::written_out(to).expect("written out"))
+                            .map(drop)?
                     }
                     Some(to) => to.check(in_package)?,
                     None => {}
@@ -393,8 +394,9 @@ impl Operation {
             Self::Install { asset, to } => {
                 Location::Asset(asset.clone()).check(&[Kind::Asset], name)?;
                 match to {
-                    Expr::Text(to) if !to.contains('{') => {
-                        DevicePath::try_from(to.clone()).map(drop)?
+                    Expr::Text(to) if expr::written_out(to).is_some() => {
+                        DevicePath::try_from(expr::written_out(to).expect("written out"))
+                            .map(drop)?
                     }
                     to => to.check(in_package)?,
                 }
@@ -425,8 +427,8 @@ impl Operation {
             Self::Append { content, .. } => content.check(in_package),
             Self::Assert { condition, .. } => condition.check(in_package),
             Self::Package { target, edits } => {
-                if !target.contains('{') {
-                    DevicePath::try_from(target.clone())?;
+                if let Some(target) = expr::written_out(target) {
+                    DevicePath::try_from(target)?;
                 }
                 edits.iter().try_for_each(|edit| {
                     if !edit.in_package() {

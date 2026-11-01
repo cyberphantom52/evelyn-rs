@@ -121,39 +121,16 @@ fn expr(written: &Written) -> Expr {
     }
 }
 
-/// A written string: each `{name}` in it, a name of `[A-Za-z0-9_-]`, is the value
-/// bound to `name`; any other `{` stands for itself.
+/// A written string as primitives: its text, and the values the names in it are
+/// bound to, one after another.
 fn text(written: &str) -> Expr {
-    let mut parts = Vec::new();
-    let mut literal = String::new();
-    let mut rest = written;
-    while let Some(start) = rest.find('{') {
-        let after = &rest[start + 1..];
-        let end = after
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
-            .unwrap_or(after.len());
-        let bound = (end > 0 && after[end..].starts_with('}'))
-            .then(|| Name::try_from(after[..end].to_owned()).ok())
-            .flatten();
-        match bound {
-            Some(bound) => {
-                literal.push_str(&rest[..start]);
-                if !literal.is_empty() {
-                    parts.push(Expr::Literal(Value::Str(std::mem::take(&mut literal))));
-                }
-                parts.push(Expr::Var(bound));
-                rest = &after[end + 1..];
-            }
-            None => {
-                literal.push_str(&rest[..=start]);
-                rest = after;
-            }
-        }
-    }
-    literal.push_str(rest);
-    if !literal.is_empty() || parts.is_empty() {
-        parts.push(Expr::Literal(Value::Str(literal)));
-    }
+    let mut parts: Vec<Expr> = crate::expr::parts(written)
+        .into_iter()
+        .map(|part| match part {
+            crate::expr::Part::Text(text) => Expr::Literal(Value::Str(text)),
+            crate::expr::Part::Bound(name) => Expr::Var(name),
+        })
+        .collect();
     match parts.len() {
         1 => parts.remove(0),
         _ => Expr::Concat(parts),
