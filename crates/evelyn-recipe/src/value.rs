@@ -4,12 +4,9 @@
 
 use crate::Firmware;
 use android_firmware::{Name, RelativePath};
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Written untagged: `"text"`, `true`, `["a", "b"]`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
     Str(String),
     Bool(bool),
@@ -21,7 +18,7 @@ pub enum Value {
 }
 
 /// One entry a selection holds.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Located {
     pub place: Place,
     pub partition: Name,
@@ -29,7 +26,7 @@ pub struct Located {
 }
 
 /// What a selected entry is in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Place {
     /// The build, in `partition`.
     Build,

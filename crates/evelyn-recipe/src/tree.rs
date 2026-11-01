@@ -9,13 +9,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// A recipe as statements, its steps in the order they apply.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Tree {
     pub name: Name,
     pub body: Vec<Stmt>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 /// A statement over an empty selection does nothing; where that would be a
 /// mistake, the surface operation asserts the selection first.
 pub enum Stmt {
@@ -72,7 +72,7 @@ pub enum Stmt {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub enum Transform {
     /// Apply the unified diff the asset, a path in the recipe's directory, holds.
     ApplyDiff(Expr),
@@ -176,7 +176,7 @@ impl Transform {
 
 /// A name a `Let` or `Filter` binds: one a recipe writes, or one the desugaring
 /// makes, which no recipe can write, so no string a recipe writes can name it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Binding {
     Written(Name),
     Made(String),
@@ -193,14 +193,12 @@ impl std::fmt::Display for Binding {
 
 /// The primitive expressions. Recipes write the ones in [`crate::Expr`], which
 /// desugar into these.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug)]
 pub enum Expr {
     /// What a statement selects. A pattern starting with `/` is a device path; a
     /// relative one is tried in the directory of every partition the scope selects.
     Select {
         pattern: Box<Expr>,
-        #[serde(default)]
         scope: Scope,
     },
     /// A property's value, or unset. Without `files`, the value the device ends up
@@ -209,14 +207,12 @@ pub enum Expr {
     /// `files`, a selection, the last assignment in them, in the selection's order.
     Property {
         key: Box<Expr>,
-        #[serde(default)]
         files: Option<Box<Expr>>,
     },
     /// The property files init loads, in the order it loads them, the files their
     /// `import` lines name included; with a partition, those in it. An import whose
     /// path holds a `${property}` is not followed: only the device can expand it.
     PropertyFiles {
-        #[serde(default)]
         partition: Option<Name>,
     },
     /// The value an enclosing `Let` or `Filter` binds to the name.
@@ -272,7 +268,6 @@ pub enum Expr {
     Lines(Box<Expr>),
     /// A list's strings, each ending in a newline.
     Join(Box<Expr>),
-    #[serde(untagged)]
     Literal(Value),
 }
 
@@ -287,7 +282,7 @@ impl Expr {
 }
 
 /// How `Smali` changes a method.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub enum MethodEdit {
     /// Make it only return this.
     Stub(Returns),
@@ -309,7 +304,7 @@ pub enum Metadata {
 }
 
 /// What `SetMetadata` gives an entry.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub enum Assigned {
     /// Android's defaults for where it is on the device, worked out from the
     /// finished build's own policy as the device would; fields set later apply
@@ -321,7 +316,7 @@ pub enum Assigned {
 
 /// Where a selection can look besides the build: a firmware, or the recipe's
 /// directory, where a path is relative to it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Source {
     Rom,
     Stock,
@@ -341,29 +336,8 @@ impl Source {
     }
 }
 
-impl std::fmt::Display for Source {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Rom => "the ROM",
-            Self::Stock => "the stock firmware",
-            Self::Assets => "the recipe's assets",
-            Self::Package => "the open package",
-        })
-    }
-}
-
-impl From<Firmware> for Source {
-    fn from(firmware: Firmware) -> Self {
-        match firmware {
-            Firmware::Rom => Self::Rom,
-            Firmware::Stock => Self::Stock,
-        }
-    }
-}
-
 /// Where a selection looks.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Debug, Default)]
 pub struct Scope {
     /// Look inside a firmware, or the recipe's assets, instead of the build.
     pub inside: Option<Source>,
@@ -410,7 +384,7 @@ pub fn selinux_label(label: &str) -> bool {
 }
 
 /// The metadata `SetMetadata` sets; what it leaves unset stays.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct Overrides {
     pub uid: Option<u32>,
     pub gid: Option<u32>,

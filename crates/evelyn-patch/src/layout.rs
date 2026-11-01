@@ -19,11 +19,6 @@ pub enum Error {
     MissingParent(RelativePath),
     #[error("destination parent is not a directory: {0}")]
     NonDirectoryParent(RelativePath),
-    #[error("cannot relocate {from} into its own subtree at {to}")]
-    OwnSubtree {
-        from: RelativePath,
-        to: RelativePath,
-    },
 }
 
 /// Recursively remove an existing entry.
