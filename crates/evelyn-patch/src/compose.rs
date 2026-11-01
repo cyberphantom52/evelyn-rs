@@ -15,7 +15,7 @@ use android_firmware::{
 };
 use android_fs::PartitionTree;
 use recipe::{
-    tree::{Assigned, Expr, Stmt, Transform, Tree},
+    tree::{Assigned, Expr, Metadata, Stmt, Transform, Tree},
     value::{Located, Place, Value},
 };
 use serde::Serialize;
@@ -191,7 +191,11 @@ impl Composition {
                     }
                 }
             }
-            Stmt::Copy { selection, to } => {
+            Stmt::Copy {
+                selection,
+                to,
+                metadata,
+            } => {
                 let selected = self.eval(selection, context, step, bound)?;
                 let selected = selected.as_selection()?;
                 let to = match to {
@@ -211,20 +215,25 @@ impl Composition {
                 }
                 for entry in selected {
                     match entry.place {
-                        Place::Firmware(firmware) => {
-                            self.copy_firmware(firmware, entry, to.as_ref(), context, step)?
-                        }
+                        Place::Firmware(firmware) => self.copy_firmware(
+                            firmware,
+                            entry,
+                            to.as_ref(),
+                            *metadata,
+                            context,
+                            step,
+                        )?,
                         Place::Asset => {
                             let to = to
                                 .as_ref()
                                 .ok_or(Error::Unsupported("an asset is copied to a path"))?;
-                            self.copy_asset(&entry.path, to, context, step)?;
+                            self.copy_asset(&entry.path, to, *metadata, context, step)?;
                         }
                         Place::Build => {
                             let to = to.as_ref().ok_or(Error::Unsupported(
                                 "a copy within the build needs a path",
                             ))?;
-                            self.copy_build(entry, to, context, step)?;
+                            self.copy_build(entry, to, *metadata, context, step)?;
                         }
                         Place::Package => {
                             return Err(Error::Unsupported("a package's files are not copied"));
@@ -378,6 +387,7 @@ impl Composition {
         firmware: Firmware,
         entry: &Located,
         to: Option<&DevicePath>,
+        metadata: Metadata,
         context: &Context<'_>,
         step: &Name,
     ) -> Result<(), Error> {
@@ -398,16 +408,20 @@ impl Composition {
                 path: entry.path.clone(),
             },
         };
-        self.target(&to.partition)?
-            .import(tree, &source, &entry.path, &to.path, step)
+        let target = self.target(&to.partition)?;
+        let source_metadata = metadata == Metadata::Source;
+        let written = target.import(tree, &source, &entry.path, &to.path, source_metadata, step)?;
+        target.copied(written, metadata, Vec::new());
+        Ok(())
     }
 
     /// Copy a recipe asset (a file, or a directory's files) to `to`, in the build
-    /// or the open package. New files get Android's defaults.
+    /// or the open package. An asset has no metadata of its own.
     fn copy_asset(
         &mut self,
         asset: &RelativePath,
         to: &DevicePath,
+        metadata: Metadata,
         context: &Context<'_>,
         step: &Name,
     ) -> Result<(), Error> {
@@ -450,11 +464,18 @@ impl Composition {
             ))?;
             vec![(to, source, asset.clone())]
         };
+        if metadata == Metadata::Source {
+            return Err(Error::Unsupported(
+                "an asset has no metadata of its own to keep",
+            ));
+        }
         let target = self.target(&partition)?;
+        let mut written = BTreeSet::new();
         for (to, file, asset) in files {
             let changed = target.install(&file, &asset, &to)?;
-            target.accept(changed, step);
+            written.extend(target.accept(changed, step));
         }
+        target.copied(written, metadata, Vec::new());
         Ok(())
     }
 
@@ -464,6 +485,7 @@ impl Composition {
         &mut self,
         entry: &Located,
         to: &DevicePath,
+        metadata: Metadata,
         context: &Context<'_>,
         step: &Name,
     ) -> Result<(), Error> {
@@ -481,15 +503,9 @@ impl Composition {
                 Ok((RelativePath::try_from(copied)?, pending.clone()))
             })
             .collect::<Result<_, Error>>()?;
-        let before: BTreeSet<RelativePath> = self
-            .target(&to.partition)?
-            .derived
-            .keys()
-            .cloned()
-            .collect();
-        if entry.partition == to.partition {
+        let written = if entry.partition == to.partition {
             self.target(&to.partition)?
-                .copy_within(&entry.path, &to.path, step)?;
+                .copy_within(&entry.path, &to.path, step)?
         } else {
             let source = self
                 .targets
@@ -499,12 +515,10 @@ impl Composition {
                 .target(&to.partition)
                 .and_then(|destination| source.copy_into(destination, &entry.path, &to.path, step));
             self.targets.insert(entry.partition.clone(), source);
-            copied?;
-        }
-        // What the copy made is not new: it has its source's metadata.
-        let destination = self.target(&to.partition)?;
-        destination.derived.retain(|path, _| before.contains(path));
-        destination.derived.extend(waiting);
+            copied?
+        };
+        self.target(&to.partition)?
+            .copied(written, metadata, waiting);
         Ok(())
     }
 

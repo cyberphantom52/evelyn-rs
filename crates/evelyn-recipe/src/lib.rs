@@ -91,18 +91,21 @@ pub enum Operation {
     /// Copy what `from` names into the build, at the same path or at `to`,
     /// overwriting what is there: `Rom("/…")` or `Stock("/…")`, a device path in a
     /// firmware, globs allowed; `Build("/…")`; or `Asset("…")`, a file or a
-    /// directory's files, which needs `to`. An overwritten entry keeps the build's
-    /// metadata; a new one has the firmware's, assets having none Android's
-    /// defaults, or with `metadata: Default` Android's defaults. What `from` names
-    /// must be there.
+    /// directory's files, which needs `to`. Everything it writes, and every
+    /// directory it makes, gets `metadata`. What `from` names must be there.
     Copy {
         from: Location,
         /// Where it goes, a device path, if not to the same path. A glob keeps its path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<Expr>,
-        #[serde(default, skip_serializing_if = "Metadata::is_source")]
-        metadata: Metadata,
+        metadata: tree::Metadata,
     },
+    /// Copy what a firmware has, `Rom("/…")` or `Stock("/…")`, to the same path in
+    /// the build, with its metadata: `Copy` with `metadata: Source`.
+    Import(Location),
+    /// Write a recipe asset, a file or a directory's files, at `to`, with Android's
+    /// defaults: `Copy` with `metadata: Default`.
+    Install { asset: String, to: Expr },
     /// Remove what `pattern` matches from the build. A relative pattern is tried in
     /// the directory of every build partition the scope selects: those that came
     /// from the ROM or the stock firmware (`origin`), named by `partition` (a name
@@ -208,21 +211,6 @@ pub enum Operation {
     },
 }
 
-/// What new entries a copy brings get: their source's metadata, or Android's
-/// defaults for where they are on the device.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Metadata {
-    #[default]
-    Source,
-    Default,
-}
-
-impl Metadata {
-    fn is_source(&self) -> bool {
-        *self == Self::Source
-    }
-}
-
 /// A feature `EnableFeature` declares, by the element it is.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -274,6 +262,8 @@ impl Operation {
     fn name(&self) -> &'static str {
         match self {
             Self::Copy { .. } => "Copy",
+            Self::Import(..) => "Import",
+            Self::Install { .. } => "Install",
             Self::Remove { .. } => "Remove",
             Self::SetMetadata { .. } => "SetMetadata",
             Self::SetProperty { .. } => "SetProperty",
@@ -314,6 +304,7 @@ impl Operation {
             | Self::WriteBytes { .. }
             | Self::EditXml { .. }
             | Self::Copy { .. }
+            | Self::Install { .. }
             | Self::Append { .. }
             | Self::AssertHash { .. } => true,
             other => other.package_only(),
@@ -348,7 +339,7 @@ impl Operation {
                     .iter()
                     .try_for_each(|policy| policy.check(&[Kind::Asset], name))
             }
-            Self::Copy { from, to, .. } => {
+            Self::Copy { from, to, metadata } => {
                 let sources: &[Kind] = match in_package {
                     true => &[Kind::Asset],
                     false => &[Kind::Build, Kind::Rom, Kind::Stock, Kind::Asset],
@@ -356,6 +347,12 @@ impl Operation {
                 from.check(sources, name)?;
                 if from.kind() == Kind::Asset && to.is_none() {
                     return Err(Error::Invalid("copying an asset needs a to:".into()));
+                }
+                if from.kind() == Kind::Asset && *metadata == tree::Metadata::Source {
+                    return Err(Error::Invalid(
+                        "an asset has no metadata of its own; copy it with metadata: Default"
+                            .into(),
+                    ));
                 }
                 match to {
                     Some(Expr::Text(to)) if !to.contains('{') => {
@@ -378,6 +375,17 @@ impl Operation {
                     return Err(Error::Invalid(format!("invalid partition {partition:?}")));
                 }
                 pattern.check(&[file], name)
+            }
+            Self::Import(from) => from.check(&[Kind::Rom, Kind::Stock], name),
+            Self::Install { asset, to } => {
+                Location::Asset(asset.clone()).check(&[Kind::Asset], name)?;
+                match to {
+                    Expr::Text(to) if !to.contains('{') => {
+                        DevicePath::try_from(to.clone()).map(drop)?
+                    }
+                    to => to.check(in_package)?,
+                }
+                Ok(())
             }
             Self::SetMetadata { pattern, .. } => {
                 pattern.check(&[Kind::Build], name)?;

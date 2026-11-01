@@ -3,7 +3,7 @@ use android_firmware::{AndroidMetadata, Name, RelativePath, Sha256Digest, Source
 use android_fs::{Entry, EntryKind, PartitionTree, Provenance};
 use recipe::{
     Returns,
-    tree::{Expr, MethodEdit, Overrides, Transform},
+    tree::{Expr, Metadata, MethodEdit, Overrides, Transform},
     value::Value,
 };
 use std::{collections::BTreeSet, path::Path};
@@ -27,16 +27,18 @@ impl Target {
         Ok(true)
     }
 
-    /// Copy `path` from a firmware's `source` tree: overwritten entries keep this
-    /// target's metadata, new ones have the source's.
+    /// Copy `path` from a firmware's `source` tree, with the source's metadata; the
+    /// paths written. With `source_metadata`, a directory made for it must be one
+    /// the source has, whose metadata it takes.
     pub(crate) fn import(
         &mut self,
         source: &PartitionTree,
         from: &SourceRef,
         path: &RelativePath,
         to_path: &RelativePath,
+        source_metadata: bool,
         step: &Name,
-    ) -> Result<(), Error> {
+    ) -> Result<BTreeSet<RelativePath>, Error> {
         // A wildcard import keeps every match at its own path.
         let pairs = if layout::is_glob(path) {
             if to_path != path {
@@ -50,39 +52,27 @@ impl Target {
         } else {
             vec![(path.clone(), to_path.clone())]
         };
+        let mut written = BTreeSet::new();
         for (from_path, to_path) in pairs {
             let selected = layout::select(source, &from_path, &to_path, from)?;
             let mut changed = self.destination(&to_path, true, Some(source))?;
-            changed.entries.extend(self.adopt(None, selected.clone())?);
-            for (path, entry) in changed.entries.iter_mut() {
-                let previous = self.tree.entries.get(path);
-                let brought = selected.contains_key(path);
-                if !brought && previous.is_some() {
-                    continue;
-                }
-                if let Some(previous) = previous {
-                    entry.metadata = previous.metadata.clone();
-                }
+            if source_metadata
+                && let Some(made) = changed.entries.keys().find(|path| {
+                    !self.tree.entries.contains_key(*path)
+                        && !selected.contains_key(*path)
+                        && !source.entries.contains_key(*path)
+                })
+            {
+                return Err(layout::Error::MissingPath(made.clone()).into());
             }
-            let earlier: BTreeSet<RelativePath> = self.derived.keys().cloned().collect();
-            self.accept(changed, step);
-            // What the source has keeps the source's metadata: what it brought, and
-            // the parent directories made like the source's.
-            self.derived.retain(|path, _| {
-                earlier.contains(path)
-                    || !selected.contains_key(path)
-                        && !source
-                            .entries
-                            .get(path)
-                            .is_some_and(|entry| matches!(entry.kind, EntryKind::Directory))
-            });
+            changed.entries.extend(self.adopt(None, selected)?);
+            written.extend(self.accept(changed, step));
         }
-        Ok(())
+        Ok(written)
     }
 
     /// Write `file` at `to`. This replaces the directory entry, not every alias of
-    /// its old inode. An overwritten file keeps its metadata; a new one is
-    /// given Android's defaults once accepted.
+    /// its old inode. The file has no metadata of its own: the copy gives it some.
     pub(crate) fn install(
         &mut self,
         file: &Path,
@@ -224,21 +214,50 @@ impl Target {
         Ok(changed)
     }
 
-    /// Adopt `changed`, recording the step on every new or altered entry.
-    pub(crate) fn accept(&mut self, mut changed: PartitionTree, step: &Name) {
+    /// Adopt `changed`, recording the step on every new or altered entry; those
+    /// paths.
+    pub(crate) fn accept(
+        &mut self,
+        mut changed: PartitionTree,
+        step: &Name,
+    ) -> BTreeSet<RelativePath> {
+        let mut written = BTreeSet::new();
         for (path, entry) in &mut changed.entries {
-            if !self.tree.entries.contains_key(path) {
-                self.derived.entry(path.clone()).or_default();
-            }
             if !self.tree.entries.get(path).is_some_and(|previous| {
                 previous.kind == entry.kind
                     && previous.metadata == entry.metadata
                     && previous.provenance == entry.provenance
             }) {
                 entry.provenance.push(Provenance::Step { id: step.clone() });
+                written.insert(path.clone());
             }
         }
         self.tree = changed;
+        written
+    }
+
+    /// Give what a copy wrote the metadata it states: what the entries came with,
+    /// and for those still waiting for Android's defaults where they came from,
+    /// `waiting`; or Android's defaults.
+    pub(crate) fn copied(
+        &mut self,
+        written: BTreeSet<RelativePath>,
+        metadata: Metadata,
+        waiting: Vec<(RelativePath, Vec<Pending>)>,
+    ) {
+        for path in written {
+            match metadata {
+                Metadata::Source => {
+                    self.derived.remove(&path);
+                }
+                Metadata::Default => {
+                    self.derived.insert(path, Vec::new());
+                }
+            }
+        }
+        if metadata == Metadata::Source {
+            self.derived.extend(waiting);
+        }
     }
 }
 
