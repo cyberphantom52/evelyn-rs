@@ -20,7 +20,7 @@ use location::Kind;
 pub use location::Location;
 pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate, XmlStep, escape_attribute};
 
-use android_firmware::{DevicePath, Firmware, Name, Sha256Digest};
+use android_firmware::{DevicePath, Firmware, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -113,7 +113,7 @@ pub enum Operation {
     /// path, outside any scope. A pattern that matches nothing is reported, not an
     /// error; a scope that selects no partition is an error.
     Remove {
-        pattern: Location,
+        pattern: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<Firmware>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122,7 +122,7 @@ pub enum Operation {
     /// Set metadata Android's defaults do not give, on every entry `pattern` (a
     /// device path, globs allowed) matches in the build.
     SetMetadata {
-        pattern: Location,
+        pattern: DevicePath,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         uid: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -149,36 +149,39 @@ pub enum Operation {
         target: Option<Location>,
     },
     /// Apply a unified diff (an asset) to a file and its hardlinks.
-    ApplyDiff { target: Location, patch: Location },
+    ApplyDiff {
+        target: DevicePath,
+        patch: RelativePath,
+    },
     /// Overwrite bytes at offsets of a file. What is there decides what the bytes
     /// mean, so an `AssertHash` of the file should come first.
     WriteBytes {
-        target: Location,
+        target: DevicePath,
         /// Offsets and the bytes written there, as hex: `{487572: "a9008052"}`.
         edits: BTreeMap<u64, Hex>,
     },
     EditXml {
-        target: Location,
+        target: DevicePath,
         edits: Vec<XmlEdit>,
     },
     /// Decode an APK or JAR, apply `edits` inside it and rebuild it. The edits are
     /// ordinary operations with paths from the package's root
     /// (`/res/values/strings.xml`), plus the smali edits only a package has.
     Package {
-        target: Location,
+        target: DevicePath,
         edits: Vec<Operation>,
     },
     /// Inside a `Package`: replace a smali method with the asset `body`.
     ReplaceMethod {
         class: String,
         method: String,
-        body: Location,
+        body: RelativePath,
     },
     /// Inside a `Package`: add the asset `body` as a new smali method.
     InsertMethod {
         class: String,
         method: String,
-        body: Location,
+        body: RelativePath,
     },
     /// Inside a `Package`: replace a method's body so it only returns `returns`.
     StubMethod {
@@ -188,7 +191,7 @@ pub enum Operation {
     },
     /// The file's content must have this SHA-256.
     AssertHash {
-        target: Location,
+        target: DevicePath,
         sha256: Sha256Digest,
     },
     /// Declare a feature, in its kind's file: added there, or replaced if it is.
@@ -198,7 +201,7 @@ pub enum Operation {
     DisableFeature(String),
     /// Add `content` at the end of a file, on a line of its own.
     Append {
-        target: Location,
+        target: DevicePath,
         /// A string expression.
         content: Expr,
     },
@@ -206,8 +209,8 @@ pub enum Operation {
     /// with Android's policy macros. The result must resolve with the device's other
     /// policy files, as init loads them.
     AddPolicy {
-        target: Location,
-        policies: Vec<Location>,
+        target: DevicePath,
+        policies: Vec<RelativePath>,
     },
 }
 
@@ -224,7 +227,7 @@ pub enum Feature {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         args: Option<String>,
-        file: Location,
+        file: DevicePath,
     },
 }
 
@@ -315,10 +318,6 @@ impl Operation {
     /// rest on apply. Inside a package, the files an operation names are the
     /// package's, `Package("/…")`; elsewhere the build's, `Build("/…")`.
     fn validate(&self, in_package: bool) -> Result<(), Error> {
-        let file = match in_package {
-            true => Kind::Package,
-            false => Kind::Build,
-        };
         let name = self.name();
         match self {
             Self::SetProperty { key, value, .. } if !property_key(key) || value.contains('\n') => {
@@ -332,12 +331,6 @@ impl Operation {
                 .try_for_each(|target| target.check(&[Kind::Build, Kind::Partition], name)),
             Self::AddPolicy { policies, .. } if policies.is_empty() => {
                 Err(Error::Invalid("AddPolicy needs at least one policy".into()))
-            }
-            Self::AddPolicy { target, policies } => {
-                target.check(&[Kind::Build], name)?;
-                policies
-                    .iter()
-                    .try_for_each(|policy| policy.check(&[Kind::Asset], name))
             }
             Self::Copy { from, to, metadata } => {
                 let sources: &[Kind] = match in_package {
@@ -374,7 +367,12 @@ impl Operation {
                 {
                     return Err(Error::Invalid(format!("invalid partition {partition:?}")));
                 }
-                pattern.check(&[file], name)
+                if pattern.starts_with('/') {
+                    DevicePath::try_from(pattern.clone())?;
+                } else {
+                    RelativePath::try_from(pattern.clone())?;
+                }
+                Ok(())
             }
             Self::Import(from) => from.check(&[Kind::Rom, Kind::Stock], name),
             Self::Install { asset, to } => {
@@ -387,10 +385,7 @@ impl Operation {
                 }
                 Ok(())
             }
-            Self::SetMetadata { pattern, .. } => {
-                pattern.check(&[Kind::Build], name)?;
-                set(self).validate()
-            }
+            Self::SetMetadata { .. } => set(self).validate(),
             Self::StubMethod { class, .. }
             | Self::ReplaceMethod { class, .. }
             | Self::InsertMethod { class, .. }
@@ -400,11 +395,7 @@ impl Operation {
                     "class {class:?} is not written as Lcom/example/Name;"
                 )))
             }
-            Self::ReplaceMethod { body, .. } | Self::InsertMethod { body, .. } => {
-                body.check(&[Kind::Asset], name)
-            }
-            Self::WriteBytes { target, edits } => {
-                target.check(&[file], name)?;
+            Self::WriteBytes { edits, .. } => {
                 let mut end = 0;
                 for (offset, bytes) in edits {
                     if *offset < end {
@@ -416,35 +407,16 @@ impl Operation {
                 }
                 Ok(())
             }
-            Self::ApplyDiff { target, patch } => {
-                target.check(&[file], name)?;
-                patch.check(&[Kind::Asset], name)
-            }
-            Self::EditXml { target, .. } | Self::AssertHash { target, .. } => {
-                target.check(&[file], name)
-            }
-            Self::Append { target, content } => {
-                target.check(&[file], name)?;
-                content.check(in_package)
-            }
-            Self::EnableFeature(Feature::App { file, .. }) => file.check(&[Kind::Build], name),
-            Self::Package { target, edits } => {
-                target.check(&[Kind::Build], name)?;
-                if target.path().contains('{') {
-                    return Err(Error::Invalid(
-                        "a Package's target is written out, without {name}".into(),
-                    ));
+            Self::Append { content, .. } => content.check(in_package),
+            Self::Package { edits, .. } => edits.iter().try_for_each(|edit| {
+                if !edit.in_package() {
+                    return Err(Error::Invalid(format!(
+                        "{} does not work inside a Package",
+                        edit.name()
+                    )));
                 }
-                edits.iter().try_for_each(|edit| {
-                    if !edit.in_package() {
-                        return Err(Error::Invalid(format!(
-                            "{} does not work inside a Package",
-                            edit.name()
-                        )));
-                    }
-                    edit.validate(true)
-                })
-            }
+                edit.validate(true)
+            }),
             _ => Ok(()),
         }
     }

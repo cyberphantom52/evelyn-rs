@@ -6,7 +6,7 @@ use crate::{
     tree::{self, Assigned, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree},
     value::Value,
 };
-use android_firmware::{DevicePath, Name, RelativePath};
+use android_firmware::Name;
 
 impl Recipe {
     /// The recipe as primitives, its steps in dependency order.
@@ -201,7 +201,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             origin,
             partition,
         } => {
-            let selection = at(
+            let selection = select(
                 pattern,
                 Scope {
                     origin: *origin,
@@ -216,7 +216,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             }
         }
         Operation::SetMetadata { pattern, .. } => Stmt::SetMetadata {
-            selection: at(pattern, Scope::default()),
+            selection: select(pattern.as_ref(), Scope::default()),
             pattern: pattern.to_string(),
             metadata: Assigned::Fields(crate::set(operation)),
         },
@@ -248,20 +248,19 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             skip: format!("property {key} is not defined there"),
         },
         Operation::ApplyDiff { target, patch } => Stmt::Edit {
-            selection: at(target, Scope::default()),
-            transform: Transform::ApplyDiff(asset(patch)),
+            selection: select(target.as_ref(), Scope::default()),
+            transform: Transform::ApplyDiff(patch.clone()),
         },
         Operation::WriteBytes { target, edits } => Stmt::Edit {
-            selection: at(target, Scope::default()),
+            selection: select(target.as_ref(), Scope::default()),
             transform: Transform::WriteBytes(edits.clone()),
         },
         Operation::EditXml { target, edits } => Stmt::Edit {
-            selection: at(target, Scope::default()),
+            selection: select(target.as_ref(), Scope::default()),
             transform: Transform::Xml(edits.clone()),
         },
         Operation::Package { target, edits } => Stmt::Package {
-            package: DevicePath::try_from(target.path().to_owned())
-                .expect("a Package target is checked to be written out"),
+            package: target.clone(),
             body: edits.iter().flat_map(self::operation).collect(),
         },
         Operation::StubMethod {
@@ -273,12 +272,12 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             class,
             method,
             body,
-        } => smali(class, method, MethodEdit::Replace(asset(body))),
+        } => smali(class, method, MethodEdit::Replace(body.clone())),
         Operation::InsertMethod {
             class,
             method,
             body,
-        } => smali(class, method, MethodEdit::Insert(asset(body))),
+        } => smali(class, method, MethodEdit::Insert(body.clone())),
         Operation::EnableFeature(feature) => {
             let file = feature_file(feature);
             let (root, element, name, args) = match feature {
@@ -358,9 +357,9 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
                     name: version,
                     value: Expr::Trim(Box::new(Expr::Read(Box::new(named)))),
                     body: vec![Stmt::Edit {
-                        selection: at(target, Scope::default()),
+                        selection: select(target.as_ref(), Scope::default()),
                         transform: Transform::AddPolicy {
-                            policies: policies.iter().map(asset).collect(),
+                            policies: policies.clone(),
                             resolve_with: Expr::Union(files),
                         },
                     }],
@@ -368,7 +367,7 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
             ];
         }
         Operation::Append { target, content } => {
-            let file = at(target, Scope::default());
+            let file = select(target.as_ref(), Scope::default());
             Stmt::Edit {
                 transform: Transform::Write(appended(
                     Expr::Read(Box::new(file.clone())),
@@ -379,7 +378,10 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         }
         Operation::AssertHash { target, sha256 } => Stmt::Assert {
             condition: Expr::Eq(
-                Box::new(Expr::Hash(Box::new(at(target, Scope::default())))),
+                Box::new(Expr::Hash(Box::new(select(
+                    target.as_ref(),
+                    Scope::default(),
+                )))),
                 Box::new(Expr::Literal(Value::Str(sha256.to_string()))),
             ),
             message: format!("{target} does not have SHA-256 {sha256}"),
@@ -433,17 +435,12 @@ fn copy(from: &Location, to: Option<&Written>, metadata: tree::Metadata) -> Vec<
     ]
 }
 
-/// An asset's path in the recipe's directory, checked to be written out.
-fn asset(location: &Location) -> RelativePath {
-    RelativePath::try_from(location.path().to_owned()).expect("an asset path is checked")
-}
-
 /// The file a feature of its kind is declared in.
 fn feature_file(feature: &Feature) -> &str {
     match feature {
         Feature::Android(_) => "/my_product/etc/permissions/com.oplus.android-features.xml",
         Feature::Oplus(_) => "/my_product/etc/permissions/oplus.feature.android.xml",
-        Feature::App { file, .. } => file.path(),
+        Feature::App { file, .. } => file.as_ref(),
     }
 }
 
