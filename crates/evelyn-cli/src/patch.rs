@@ -41,7 +41,7 @@ pub(crate) enum CaptureArg {
     Text,
     /// Same-length byte edits; replay edits the file and all its hardlinks.
     Binary,
-    /// Whole-file replacement; replay replaces only this path, keeping its metadata.
+    /// Whole-file replacement; replay installs over this path alone, with Android's defaults.
     Replace,
 }
 

@@ -5,8 +5,8 @@
 //! without firmware (references between steps, which partitions a port can
 //! have, well-formed operation parameters); planning adds asset presence and hashes
 //! and the partitions the firmware supplies. Applying a recipe checks only what
-//! depends on firmware content: conditions, hashes, match counts and the
-//! entries an operation names.
+//! depends on firmware content: conditions, assertions and the entries an
+//! operation names.
 
 mod desugar;
 mod expr;
@@ -74,8 +74,8 @@ pub struct Step {
     #[serde(default)]
     pub after: Vec<Name>,
     /// Names bound to string expressions, evaluated against the tree composed so far,
-    /// for the step's condition and operations to use as `Var("name")`. One that has
-    /// no value skips the step.
+    /// for the step's condition and operations to use as `{name}` in any string. One
+    /// that has no value skips the step.
     #[serde(rename = "let", default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bindings: BTreeMap<Name, Expr>,
     /// A boolean expression; the step applies only when it holds.
@@ -90,8 +90,8 @@ pub struct Step {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum Operation {
-    /// Copy what `from` names into the build, at the same path or at `to`,
-    /// overwriting what is there: `Rom("/…")` or `Stock("/…")`, a device path in a
+    /// Copy what `from` names into the build, at the same path or at `to`:
+    /// `Rom("/…")` or `Stock("/…")`, a device path in a
     /// firmware, globs allowed; `Build("/…")`; or `Asset("…")`, a file or a
     /// directory's files, which needs `to`. Everything it writes, and every
     /// directory it makes, gets `metadata`. What `from` names must be there. It
@@ -114,10 +114,7 @@ pub enum Operation {
     Import(Location),
     /// Write a recipe asset, a file or a directory's files, at `to`, with Android's
     /// defaults: `Copy` with `metadata: Default`, `overwrite` and `create_parent`.
-    Install {
-        asset: String,
-        to: Expr,
-    },
+    Install { asset: String, to: Expr },
     /// Remove what `pattern` matches from the build. A relative pattern is tried in
     /// the directory of every build partition the scope selects: those that came
     /// from the ROM or the stock firmware (`origin`), named by `partition` (a name
@@ -154,17 +151,15 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target: Option<Location>,
     },
-    /// Remove every definition in the same scope as `SetProperty`; one must exist.
+    /// Remove every definition in the same scope as `SetProperty`. Where none is,
+    /// the step is skipped and reported.
     RemoveProperty {
         key: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target: Option<Location>,
     },
     /// Apply a unified diff (an asset) to a file and its hardlinks.
-    ApplyDiff {
-        target: String,
-        patch: String,
-    },
+    ApplyDiff { target: String, patch: String },
     /// Overwrite bytes at offsets of a file. What is there decides what the bytes
     /// mean, so an `AssertHash` of the file should come first.
     WriteBytes {
@@ -172,10 +167,9 @@ pub enum Operation {
         /// Offsets and the bytes written there, as hex: `{487572: "a9008052"}`.
         edits: BTreeMap<u64, Hex>,
     },
-    EditXml {
-        target: String,
-        edits: Vec<XmlEdit>,
-    },
+    /// Edit the XML file `target` with `edits`, in order: set an element's text
+    /// or an attribute, remove elements, or put a child element under a parent.
+    EditXml { target: String, edits: Vec<XmlEdit> },
     /// Decode an APK or JAR, apply `edits` inside it and rebuild it. The edits are
     /// ordinary operations with paths from the package's root
     /// (`/res/values/strings.xml`), plus the smali edits only a package has.
@@ -203,10 +197,7 @@ pub enum Operation {
         returns: Returns,
     },
     /// The condition must hold, or the build fails with `message`.
-    Assert {
-        condition: Expr,
-        message: String,
-    },
+    Assert { condition: Expr, message: String },
     /// The file's content must have this SHA-256: an `Assert` that its `Hash`
     /// is.
     AssertHash {
