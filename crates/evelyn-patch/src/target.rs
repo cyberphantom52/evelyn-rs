@@ -162,8 +162,9 @@ impl Target {
         Ok(self.accept(changed, step))
     }
 
-    /// Copy a subtree into another target, keeping its metadata; file contents the
-    /// source holds are linked or copied into the destination.
+    /// Copy a subtree into another target, with the metadata it has there; file
+    /// contents the source holds are linked or copied into the destination. The
+    /// copy then gives what it wrote the metadata it states.
     pub(crate) fn copy_into(
         &self,
         destination: &mut Self,

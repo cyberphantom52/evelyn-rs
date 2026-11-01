@@ -11,7 +11,7 @@ pub enum CaptureKind {
     Text,
     /// Same-width byte edits, applied to the file and its hardlinks.
     Binary,
-    /// A new file installed over this path alone, keeping its metadata.
+    /// A new file installed over this path alone, with Android's defaults.
     Replace,
 }
 
