@@ -25,14 +25,13 @@ struct Cli {
 enum Command {
     /// Build a port into partition images, a super image, or a recovery-flashable ZIP.
     Build {
-        /// The port directory, devices/<device>/<rom>/<version>.
+        /// The port directory, ports/<name> in a device repository.
         port: PathBuf,
         #[command(flatten)]
         firmware: FirmwareArgs,
         #[arg(long, value_enum, default_value = "partitions")]
         output: OutputArg,
-        /// Reusable scan and composition workspace [default: $EVELYN_WORK_DIR/<device>,
-        /// else ~/.cache/evelyn/<device>].
+        /// Reusable scan and composition workspace [default: .evelyn in the repository].
         #[arg(long)]
         work_dir: Option<PathBuf>,
         /// Where the built images or ZIP are written.
@@ -41,9 +40,9 @@ enum Command {
         /// Directory populated by tools/manager.py.
         #[arg(long, default_value = "tools")]
         tools: PathBuf,
-        /// Extra recipe applied after the port's, such as tools/debug_build/debug.ron.
-        #[arg(long = "recipe")]
-        recipes: Vec<PathBuf>,
+        /// An extra patch directory, applied after the port's.
+        #[arg(long = "patch")]
+        patches: Vec<PathBuf>,
     },
     /// Author and replay recipes against extracted partition trees.
     Patch {
@@ -57,7 +56,7 @@ enum Command {
     },
     /// Resolve a port's partitions, sources and recipe order against firmware.
     Plan {
-        /// The port directory, devices/<device>/<rom>/<version>.
+        /// The port directory, ports/<name> in a device repository.
         port: PathBuf,
         #[command(flatten)]
         firmware: FirmwareArgs,
@@ -70,7 +69,7 @@ enum Command {
 enum Inspect {
     /// Hash an image and identify its format.
     Image { path: PathBuf },
-    /// Parse and validate a port and its device, and list the recipes it applies.
+    /// Parse and validate a port and its repository, and list the patches it applies.
     Profile { port: PathBuf },
     /// Parse and validate a RON recipe.
     Recipe { path: PathBuf },
@@ -135,26 +134,11 @@ enum Error {
     Json(#[from] serde_json::Error),
     #[error("cannot write output: {0}")]
     Output(#[from] io::Error),
-    #[error(
-        "no home directory for the default work directory; pass --work-dir or set EVELYN_WORK_DIR"
-    )]
-    NoWorkDir,
 }
 
-/// `--work-dir` as given, else one directory per device under `EVELYN_WORK_DIR`,
-/// else under the user's cache directory (`~/.cache/evelyn` on Linux).
-fn resolve_work_dir(flag: Option<PathBuf>, plan: &engine::Plan) -> Result<PathBuf, Error> {
-    if let Some(dir) = flag {
-        return Ok(dir);
-    }
-    let root = match std::env::var_os("EVELYN_WORK_DIR") {
-        Some(root) => PathBuf::from(root),
-        None => directories::ProjectDirs::from("", "", "evelyn")
-            .ok_or(Error::NoWorkDir)?
-            .cache_dir()
-            .to_path_buf(),
-    };
-    Ok(root.join(plan.profile.device.device.as_ref()))
+/// `--work-dir` as given, else `.evelyn` in the port's repository.
+fn resolve_work_dir(flag: Option<PathBuf>, plan: &engine::Plan) -> PathBuf {
+    flag.unwrap_or_else(|| plan.profile.root.join(".evelyn"))
 }
 
 fn print(value: &impl Serialize) -> Result<(), Error> {
@@ -173,12 +157,12 @@ fn run(cli: Cli) -> Result<(), Error> {
             work_dir,
             output_dir,
             tools,
-            recipes,
+            patches,
         } => {
-            let plan = engine::Plan::load(&port, output.into(), &firmware.firmware(), &recipes)?;
+            let plan = engine::Plan::load(&port, output.into(), &firmware.firmware(), &patches)?;
             print(&engine::build(&engine::BuildRequest {
                 tools: &toolchain::Tools::new(tools),
-                work_dir: &resolve_work_dir(work_dir, &plan)?,
+                work_dir: &resolve_work_dir(work_dir, &plan),
                 output_dir: &output_dir,
                 plan: &plan,
             })?)
@@ -188,7 +172,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             Inspect::Image { path } => print(&Artifact::inspect(&path)?),
             Inspect::Profile { port } => {
                 let profile = Profile::load(&port)?;
-                print(&serde_json::json!({ "profile": profile, "recipes": profile.recipes()? }))
+                print(&serde_json::json!({ "profile": profile, "patches": profile.patches() }))
             }
             Inspect::Recipe { path } => print(&Recipe::load(&path)?),
             Inspect::Props { image, key } => {

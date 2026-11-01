@@ -24,7 +24,7 @@ pub(crate) fn publish(request: &BuildRequest<'_>, images: Written) -> Result<Vec
         Written::Super(super_image) => {
             let output = request
                 .output_dir
-                .join(format!("{}.zip", profile.device.device));
+                .join(format!("{}.zip", profile.device.name));
             crate::flashable::write(
                 &crate::flashable::Package {
                     template: &request.tools.file("packaging/template")?,

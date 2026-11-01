@@ -6,7 +6,7 @@ use std::path::PathBuf;
 pub(crate) enum Command {
     /// Copy a file, as the last build composed it, out for editing.
     Prepare {
-        /// The port directory, devices/<device>/<rom>/<version>.
+        /// The port directory, ports/<name> in a device repository.
         port: PathBuf,
         #[command(flatten)]
         firmware: crate::FirmwareArgs,
@@ -22,9 +22,10 @@ pub(crate) enum Command {
         #[arg(long, default_value = "tools")]
         tools: PathBuf,
     },
-    /// Capture the edited copy as a new recipe directory.
+    /// Capture the edited copy as a new patch directory.
     Capture {
         workspace: PathBuf,
+        /// The new patch directory, such as patches/<topic>/<name>.
         output: PathBuf,
         #[arg(long)]
         name: String,
@@ -69,7 +70,7 @@ pub(crate) fn run(command: Command) -> Result<(), Error> {
                 engine::Plan::load(&port, engine::Output::Partitions, &firmware.firmware(), &[])?;
             print(&engine::prepare_file(engine::PrepareRequest {
                 tools: &toolchain::Tools::new(tools),
-                work_dir: &crate::resolve_work_dir(work_dir, &plan)?,
+                work_dir: &crate::resolve_work_dir(work_dir, &plan),
                 plan: &plan,
                 path: path.try_into()?,
                 into: &into,

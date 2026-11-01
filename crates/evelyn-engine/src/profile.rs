@@ -1,27 +1,40 @@
-//! Device and port profiles.
+//! Device repositories and their ports.
 //!
-//! A port lives at `devices/<device>/<rom>/<version>/`. `device.toml`, two levels up,
-//! describes the device whatever ROM is ported to it; `port.toml` says what this
-//! port takes from the ROM. Neither names a firmware build: the firmware is supplied
-//! when building.
+//! A device repository ports one ROM to one device. `evelyn.toml` at its root
+//! names the ROM and describes the device: its product IDs, the stock build its
+//! partitions are pinned to and its `super` layout. Each port, one ROM version,
+//! is a directory under `ports/` whose `port.toml` says what it takes from the
+//! ROM and lists, in the order they apply, the patches it applies. A patch is a
+//! directory under `patches/` holding `patch.ron` and its assets; nothing applies
+//! unless a port lists it. Neither file names a firmware build: the firmware is
+//! supplied when building.
 //!
 //! Partitions follow the Treble split. The device's own partitions (the vendor side
 //! the stock firmware supplies) always come from it, pinned by build fingerprint;
 //! the standard system side always comes from the ROM, and any other ROM partition
 //! only when `port.toml` lists it (by name or glob).
 
-use android_firmware::{Filesystem, Name, STANDARD_SYSTEM, SuperLayout, VENDOR_SIDE, glob};
+use android_firmware::{
+    Filesystem, Name, RelativePath, STANDARD_SYSTEM, SuperLayout, VENDOR_SIDE, glob,
+};
 use recipe::{
     tree::{Expr, Tree},
     visit::Visitor,
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     path::{Path, PathBuf},
 };
 use thiserror::Error;
+
+/// The repository's manifest, at its root.
+pub const MANIFEST: &str = "evelyn.toml";
+/// A port's settings, in its directory.
+pub const PORT: &str = "port.toml";
+/// A patch's recipe, in its directory.
+pub const PATCH: &str = "patch.ron";
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -41,10 +54,18 @@ pub enum Error {
     Invalid(String),
 }
 
+/// `evelyn.toml`: the ROM a repository ports and the device it ports it to.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Repository {
+    pub rom: Name,
+    pub device: Device,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Device {
-    pub device: Name,
+    pub name: Name,
     /// `ro.product.device` values the installer accepts.
     pub product_ids: Vec<String>,
     /// The stock firmware build the device's partitions must come from.
@@ -70,9 +91,9 @@ pub struct Port {
     /// system-side partition. Keys are names or globs; the most specific wins.
     #[serde(default)]
     pub partitions: BTreeMap<String, Settings>,
-    /// Discovered recipes this port does not apply, relative to the repository root.
+    /// The patches this port applies, in order: directories under `patches/`.
     #[serde(default)]
-    pub exclude: Vec<PathBuf>,
+    pub patches: Vec<RelativePath>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,18 +107,18 @@ pub struct Settings {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Profile {
+    pub rom: Name,
     pub device: Device,
+    /// The port's name: its directory under `ports/`.
+    pub name: Name,
     pub port: Port,
-    pub rom: String,
-    pub version: String,
-    /// The port directory, `devices/<device>/<rom>/<version>`.
-    pub dir: PathBuf,
-    /// The repository root, four levels above the port directory.
+    /// The repository root, where `evelyn.toml` is.
     pub root: PathBuf,
 }
 
 impl Profile {
-    /// Load the port at `path`, its directory or its `port.toml`.
+    /// Load the port at `path`, its directory or its `port.toml`, and the
+    /// repository it is in.
     pub fn load(path: &Path) -> Result<Self, Error> {
         let dir = if path.is_dir() {
             path
@@ -108,32 +129,30 @@ impl Profile {
             path: dir.into(),
             source,
         })?;
-        let component = |path: &Path| -> Result<String, Error> {
-            path.file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .ok_or_else(|| {
-                    Error::Invalid(format!(
-                        "{} is not a devices/<device>/<rom>/<version> directory",
-                        dir.display()
-                    ))
-                })
+        let not_a_port = || {
+            Error::Invalid(format!(
+                "{} is not a port: ports/<name> in a directory with {MANIFEST}",
+                dir.display()
+            ))
         };
-        let rom_dir = dir.parent().unwrap_or(&dir);
-        let device_dir = rom_dir.parent().unwrap_or(rom_dir);
-        let root = device_dir
-            .parent()
-            .and_then(Path::parent)
-            .unwrap_or(device_dir)
-            .to_path_buf();
-        let device: Device = toml_file(&device_dir.join("device.toml"))?;
-        let port: Port = toml_file(&dir.join("port.toml"))?;
+        let ports = dir.parent().ok_or_else(not_a_port)?;
+        let root = ports.parent().ok_or_else(not_a_port)?;
+        if ports.file_name().is_none_or(|name| name != "ports") || !root.join(MANIFEST).is_file() {
+            return Err(not_a_port());
+        }
+        let name = dir
+            .file_name()
+            .map(|name| Name::try_from(name.to_string_lossy().into_owned()))
+            .ok_or_else(not_a_port)?
+            .map_err(|error| Error::Invalid(error.to_string()))?;
+        let repository: Repository = toml_file(&root.join(MANIFEST))?;
+        let port: Port = toml_file(&dir.join(PORT))?;
         let profile = Self {
-            rom: component(rom_dir)?,
-            version: component(&dir)?,
-            device,
+            rom: repository.rom,
+            device: repository.device,
+            name,
             port,
-            root,
-            dir,
+            root: root.to_path_buf(),
         };
         profile.validate()?;
         Ok(profile)
@@ -174,58 +193,35 @@ impl Profile {
         for pattern in self.port.partitions.keys() {
             if let Some(vendor) = self.vendor_side().find(|vendor| glob(pattern, vendor)) {
                 return Err(Error::Invalid(format!(
-                    "port partition {pattern} matches {vendor}, which comes from the stock firmware; set it in device.toml"
+                    "port partition {pattern} matches {vendor}, which comes from the stock firmware; set it in {MANIFEST}"
                 )));
             }
         }
-        let discovered = self.discovered()?;
-        for excluded in &self.port.exclude {
-            if !discovered.contains(&self.root.join(excluded)) {
+        let mut listed = BTreeSet::new();
+        for patch in &self.port.patches {
+            if !listed.insert(patch) {
+                return Err(Error::Invalid(format!("patch {patch} is listed twice")));
+            }
+            if !self.patch(patch).is_file() {
                 return Err(Error::Invalid(format!(
-                    "excluded recipe {} is not one this port would apply",
-                    excluded.display()
+                    "patch {patch} has no patches/{patch}/{PATCH}"
                 )));
             }
         }
         Ok(())
     }
 
-    /// The recipes this port applies, general to specific: `roms/common`, then
-    /// `roms/<rom>/<version>/common`, then the port directory, each in file name order.
-    pub fn recipes(&self) -> Result<Vec<PathBuf>, Error> {
-        let excluded: Vec<_> = self
-            .port
-            .exclude
+    /// The recipes of the patches this port applies, in the order they apply.
+    pub fn patches(&self) -> Vec<PathBuf> {
+        self.port
+            .patches
             .iter()
-            .map(|path| self.root.join(path))
-            .collect();
-        Ok(self
-            .discovered()?
-            .into_iter()
-            .filter(|path| !excluded.contains(path))
-            .collect())
+            .map(|patch| self.patch(patch))
+            .collect()
     }
 
-    fn discovered(&self) -> Result<Vec<PathBuf>, Error> {
-        let roms = self.root.join("roms");
-        let layers = [
-            roms.join("common"),
-            roms.join(&self.rom).join(&self.version).join("common"),
-            self.dir.clone(),
-        ];
-        let mut recipes = Vec::new();
-        for layer in layers {
-            let Ok(entries) = fs::read_dir(&layer) else {
-                continue;
-            };
-            let mut found: Vec<_> = entries
-                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-                .filter(|path| path.extension().is_some_and(|ext| ext == "ron"))
-                .collect();
-            found.sort();
-            recipes.extend(found);
-        }
-        Ok(recipes)
+    fn patch(&self, patch: &RelativePath) -> PathBuf {
+        self.root.join("patches").join(patch.as_ref()).join(PATCH)
     }
 
     /// Settings for `partition` from its most specific entry: an exact name beats

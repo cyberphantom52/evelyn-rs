@@ -17,7 +17,6 @@ android-firmware.workspace = true
 android-fs.workspace = true
 android-property.workspace = true
 clap.workspace = true
-directories.workspace = true
 engine.workspace = true
 recipe.workspace = true
 serde.workspace = true
