@@ -222,13 +222,8 @@ pub enum XmlEdit {
     },
     /// Remove every match.
     Remove { path: XmlPath },
-    /// Add `element` under every match of `parent`, in place of the children `key`
-    /// matches there, if there are any.
-    PutChild {
-        parent: XmlPath,
-        key: XmlMatch,
-        element: String,
-    },
+    /// Add `element`, one element, as the last child of every match of `parent`.
+    AppendChild { parent: XmlPath, element: String },
 }
 
 /// Text as an XML attribute value.
