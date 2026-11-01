@@ -121,7 +121,7 @@ pub struct CapturedRecipe {
     pub after: Sha256Digest,
 }
 
-/// Turn the edits made to `edited` into a new recipe directory at `output`.
+/// Turn the edits made to `edited` into a new patch directory at `output`.
 pub fn capture_file(request: CaptureRequest<'_>) -> Result<CapturedRecipe, Error> {
     let record: Preparation =
         serde_json::from_slice(&fs::read(request.workspace.join("prepare.json"))?)?;
@@ -156,6 +156,9 @@ pub fn capture_file(request: CaptureRequest<'_>) -> Result<CapturedRecipe, Error
             operations: captured.operations,
         }],
     };
+    if let Some(parent) = request.output.parent() {
+        fs::create_dir_all(parent)?;
+    }
     fs::create_dir(request.output)?;
     let asset = match captured.asset {
         Some(bytes) => {
@@ -165,7 +168,7 @@ pub fn capture_file(request: CaptureRequest<'_>) -> Result<CapturedRecipe, Error
         }
         None => None,
     };
-    let path = request.output.join("recipe.ron");
+    let path = request.output.join(crate::profile::PATCH);
     recipe.write(fs::File::create_new(&path)?)?;
     Ok(CapturedRecipe {
         recipe: path,

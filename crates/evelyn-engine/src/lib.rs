@@ -66,10 +66,10 @@ pub enum Error {
     },
     #[error("ZIP output flashes the stock firmware's images from {0}, which does not exist")]
     MissingFirmware(PathBuf),
-    #[error("--stock has no {0}.img, which device.toml sets")]
+    #[error("--stock has no {0}.img, which evelyn.toml sets")]
     MissingStockPartition(Name),
     #[error(
-        "stock {partition} is not the build device.toml pins: expected {expected}, found {found}"
+        "stock {partition} is not the build evelyn.toml pins: expected {expected}, found {found}"
     )]
     StockFingerprint {
         partition: Name,
@@ -80,7 +80,7 @@ pub enum Error {
         "the system image has neither system/build.prop nor build.prop; set its mount_point in port.toml"
     )]
     SystemLayout,
-    #[error("super and ZIP output need a [super] section in device.toml")]
+    #[error("super and ZIP output need a [device.super] section in evelyn.toml")]
     MissingLayout,
     #[error("missing regular recipe asset: {0}")]
     MissingAsset(PathBuf),
@@ -146,7 +146,8 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Load the port at `path`, its recipes and then `extra` recipes, against `firmware`.
+    /// Load the port at `path`, its patches and then `extra` patch directories,
+    /// against `firmware`.
     pub fn load(
         path: &Path,
         output: Output,
@@ -159,7 +160,8 @@ impl Plan {
         }
         let mut recipes = Vec::new();
         let mut step_ids = BTreeSet::new();
-        for recipe_path in profile.recipes()?.into_iter().chain(extra.iter().cloned()) {
+        let extra = extra.iter().map(|patch| patch.join(profile::PATCH));
+        for recipe_path in profile.patches().into_iter().chain(extra) {
             let recipe = Recipe::load(&recipe_path)?;
             let tree = recipe.tree()?;
             profile.validate_recipe(&tree)?;
@@ -223,7 +225,7 @@ impl Plan {
             }
         }
         // The device's partitions: the vendor side the stock firmware has, and any
-        // other partition device.toml sets.
+        // other partition evelyn.toml sets.
         if let Some(missing) = profile
             .device
             .partitions
@@ -282,7 +284,7 @@ impl Plan {
     }
 }
 
-/// A stock partition must be the build `device.toml` pins: the property files init
+/// A stock partition must be the build `evelyn.toml` pins: the property files init
 /// loads from it set `ro.<partition>.build.fingerprint` to `expected`.
 fn check_fingerprint(partition: &Name, image: &Path, expected: &str) -> Result<(), Error> {
     let key = format!("ro.{partition}.build.fingerprint");

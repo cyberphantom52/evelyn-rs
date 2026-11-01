@@ -113,7 +113,7 @@ impl SuperImage {
         let max_size = metadata_max_size(&self.layout);
         if metadata.len() as u64 > max_size {
             return Err(invalid(format!(
-                "{} bytes of metadata exceed the {max_size} device.toml allows",
+                "{} bytes of metadata exceed the {max_size} evelyn.toml allows",
                 metadata.len()
             )));
         }
