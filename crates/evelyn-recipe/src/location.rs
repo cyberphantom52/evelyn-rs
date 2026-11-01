@@ -2,6 +2,7 @@
 //! bound value as `{name}`, and one that does is checked when it is used.
 
 use crate::Error;
+use crate::expr::{pattern, written};
 use android_firmware::{DevicePath, Name, RelativePath};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -69,22 +70,13 @@ impl Location {
                 self.path()
             )));
         }
-        let Some(path) = crate::expr::written_out(self.path()) else {
-            return Ok(());
-        };
-        let path = path.as_str();
+        let path = self.path();
         match self {
-            Self::Rom(_) | Self::Stock(_) | Self::Package(_) => {
-                DevicePath::try_from(path.to_owned()).map(drop)?
-            }
-            Self::Asset(_) => RelativePath::try_from(path.to_owned()).map(drop)?,
-            Self::Build(_) if path.starts_with('/') => {
-                DevicePath::try_from(path.to_owned()).map(drop)?
-            }
-            Self::Build(_) => RelativePath::try_from(path.to_owned()).map(drop)?,
-            Self::Partition(_) => {}
+            Self::Rom(_) | Self::Stock(_) | Self::Package(_) => written::<DevicePath>(path),
+            Self::Asset(_) => written::<RelativePath>(path),
+            Self::Build(_) => pattern(path),
+            Self::Partition(_) => Ok(()),
         }
-        Ok(())
     }
 }
 

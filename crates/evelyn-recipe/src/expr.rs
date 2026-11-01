@@ -8,7 +8,7 @@ use crate::{
     location::{Kind, Location},
     tree::Pattern,
 };
-use android_firmware::Name;
+use android_firmware::{DevicePath, Name, RelativePath};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -177,4 +177,33 @@ pub(crate) fn written_out(written: &str) -> Option<String> {
         [Part::Text(text)] => Some(text.clone()),
         _ => None,
     }
+}
+
+/// Whether `written`, written out, is a valid `T`; one naming a bound value is
+/// checked when it is used.
+pub(crate) fn written<T>(written: &str) -> Result<(), Error>
+where
+    T: TryFrom<String>,
+    Error: From<T::Error>,
+{
+    match written_out(written) {
+        Some(text) => T::try_from(text).map(drop).map_err(Error::from),
+        None => Ok(()),
+    }
+}
+
+/// Whether `written`, written out, is a build pattern: a device path, or a path
+/// relative to each partition a scope selects.
+pub(crate) fn pattern(written: &str) -> Result<(), Error> {
+    match written_out(written) {
+        Some(path) if path.starts_with('/') => Ok(DevicePath::try_from(path).map(drop)?),
+        Some(path) => Ok(RelativePath::try_from(path).map(drop)?),
+        None => Ok(()),
+    }
+}
+
+/// Whether `written`, written out, is as `valid` wants it; one naming a bound
+/// value is checked when it is used.
+pub(crate) fn written_or(written: &str, valid: impl Fn(&str) -> bool) -> bool {
+    written_out(written).is_none_or(|written| valid(&written))
 }

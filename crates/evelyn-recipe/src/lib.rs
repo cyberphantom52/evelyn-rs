@@ -341,13 +341,12 @@ impl Operation {
     fn validate(&self, in_package: bool) -> Result<(), Error> {
         let name = self.name();
         // Paths written out are checked now; one naming a bound value when it is used.
-        let device = |path: &String| -> Result<(), Error> {
-            Ok(expr::written_out(path)
-                .map_or(Ok(()), |path| DevicePath::try_from(path).map(drop))?)
-        };
-        let asset = |path: &String| -> Result<(), Error> {
-            Ok(expr::written_out(path)
-                .map_or(Ok(()), |path| RelativePath::try_from(path).map(drop))?)
+        let device = |path: &String| expr::written::<DevicePath>(path);
+        let asset = |path: &String| expr::written::<RelativePath>(path);
+        // Where a copy goes: a device path, or what an expression gives.
+        let destination = |to: &Expr| match to {
+            Expr::Text(to) => device(to),
+            to => to.check(in_package),
         };
         match self {
             Self::ApplyDiff { target, patch } => {
@@ -377,12 +376,12 @@ impl Operation {
         }
         match self {
             Self::SetProperty { key, value, .. }
-                if !written_or(key, property_key)
-                    || !written_or(value, |value| !value.contains('\n')) =>
+                if !expr::written_or(key, property_key)
+                    || !expr::written_or(value, |value| !value.contains('\n')) =>
             {
                 Err(Error::Invalid(format!("invalid property {key:?}")))
             }
-            Self::RemoveProperty { key, .. } if !written_or(key, property_key) => {
+            Self::RemoveProperty { key, .. } if !expr::written_or(key, property_key) => {
                 Err(Error::Invalid(format!("invalid property key {key:?}")))
             }
             Self::SetProperty { target, .. } | Self::RemoveProperty { target, .. } => target
@@ -408,15 +407,7 @@ impl Operation {
                             .into(),
                     ));
                 }
-                match to {
-                    Some(Expr::Text(to)) if expr::written_out(to).is_some() => {
-                        DevicePath::try_from(expr::written_out(to).expect("written out"))
-                            .map(drop)?
-                    }
-                    Some(to) => to.check(in_package)?,
-                    None => {}
-                }
-                Ok(())
+                to.iter().try_for_each(destination)
             }
             Self::Remove {
                 partition, pattern, ..
@@ -429,32 +420,18 @@ impl Operation {
                 {
                     return Err(Error::Invalid(format!("invalid partition {partition:?}")));
                 }
-                match expr::written_out(pattern) {
-                    Some(pattern) if pattern.starts_with('/') => {
-                        DevicePath::try_from(pattern).map(drop)?
-                    }
-                    Some(pattern) => RelativePath::try_from(pattern).map(drop)?,
-                    None => {}
-                }
-                Ok(())
+                expr::pattern(pattern)
             }
             Self::Import(from) => from.check(&[Kind::Rom, Kind::Stock], name),
-            Self::Install { asset, to } => {
-                Location::Asset(asset.clone()).check(&[Kind::Asset], name)?;
-                match to {
-                    Expr::Text(to) if expr::written_out(to).is_some() => {
-                        DevicePath::try_from(expr::written_out(to).expect("written out"))
-                            .map(drop)?
-                    }
-                    to => to.check(in_package)?,
-                }
-                Ok(())
+            Self::Install { asset: file, to } => {
+                asset(file)?;
+                destination(to)
             }
             Self::SetMetadata { .. } => set(self).validate(),
             Self::StubMethod { class, .. }
             | Self::ReplaceMethod { class, .. }
             | Self::InsertMethod { class, .. }
-                if !written_or(class, |class| {
+                if !expr::written_or(class, |class| {
                     class.starts_with('L') && class.ends_with(';') && class.len() > 2
                 }) =>
             {
@@ -477,9 +454,7 @@ impl Operation {
             Self::Append { content, .. } => content.check(in_package),
             Self::Assert { condition, .. } => condition.check(in_package),
             Self::Package { target, edits } => {
-                if let Some(target) = expr::written_out(target) {
-                    DevicePath::try_from(target)?;
-                }
+                device(target)?;
                 edits.iter().try_for_each(|edit| {
                     if !edit.in_package() {
                         return Err(Error::Invalid(format!(
@@ -502,12 +477,6 @@ fn is_false(value: &bool) -> bool {
 /// Optional fields are written as plain values, without `Some(...)`.
 fn ron_options() -> ron::Options {
     ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
-}
-
-/// Whether `written`, written out, is as `valid` wants it; one naming a bound
-/// value is checked when it is used.
-fn written_or(written: &str, valid: impl Fn(&str) -> bool) -> bool {
-    expr::written_out(written).is_none_or(|written| valid(&written))
 }
 
 /// A key a property file can assign.
