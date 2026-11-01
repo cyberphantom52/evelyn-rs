@@ -420,13 +420,26 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
                 selection: file,
             }
         }
-        Operation::AssertHash { target, sha256 } => Stmt::Assert {
-            condition: Expr::Eq(
-                Box::new(Expr::Hash(Box::new(select(target.as_ref(), here())))),
-                Box::new(Expr::Literal(Value::Str(sha256.to_string()))),
-            ),
-            message: format!("{target} does not have SHA-256 {sha256}"),
+        Operation::Assert { condition, message } => Stmt::Assert {
+            condition: expr(condition),
+            message: message.clone(),
         },
+        Operation::AssertHash { target, sha256 } => {
+            let file = match inside {
+                Some(Source::Package) => Location::Package(target.to_string()),
+                _ => Location::Build(target.to_string()),
+            };
+            return self::operation(
+                &Operation::Assert {
+                    condition: Written::Eq(
+                        Box::new(Written::Hash(Box::new(Written::At(file)))),
+                        Box::new(Written::Text(sha256.to_string())),
+                    ),
+                    message: format!("{target} does not have SHA-256 {sha256}"),
+                },
+                inside,
+            );
+        }
     };
     // An operation on one named file, or class, needs it there.
     let named = |target: String| {
