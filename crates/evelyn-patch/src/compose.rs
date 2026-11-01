@@ -5,7 +5,8 @@
 use crate::{
     Error, Images, Target,
     defaults::Defaults,
-    operations::Pending,
+    layout,
+    operations::{Pending, Placing},
     package::Opened,
     scope::{Bound, Scope},
 };
@@ -195,7 +196,14 @@ impl Composition {
                 selection,
                 to,
                 metadata,
+                overwrite,
+                create_parent,
             } => {
+                let placing = Placing {
+                    metadata: *metadata,
+                    overwrite: *overwrite,
+                    create_parent: *create_parent,
+                };
                 let selected = self.eval(selection, context, step, bound)?;
                 let selected = selected.as_selection()?;
                 let to = match to {
@@ -219,7 +227,7 @@ impl Composition {
                             firmware,
                             entry,
                             to.as_ref(),
-                            *metadata,
+                            placing,
                             context,
                             step,
                         )?,
@@ -227,13 +235,13 @@ impl Composition {
                             let to = to
                                 .as_ref()
                                 .ok_or(Error::Unsupported("an asset is copied to a path"))?;
-                            self.copy_asset(&entry.path, to, *metadata, context, step)?;
+                            self.copy_asset(&entry.path, to, placing, context, step)?;
                         }
                         Place::Build => {
                             let to = to.as_ref().ok_or(Error::Unsupported(
                                 "a copy within the build needs a path",
                             ))?;
-                            self.copy_build(entry, to, *metadata, context, step)?;
+                            self.copy_build(entry, to, placing, context, step)?;
                         }
                         Place::Package => {
                             return Err(Error::Unsupported("a package's files are not copied"));
@@ -387,7 +395,7 @@ impl Composition {
         firmware: Firmware,
         entry: &Located,
         to: Option<&DevicePath>,
-        metadata: Metadata,
+        placing: Placing,
         context: &Context<'_>,
         step: &Name,
     ) -> Result<(), Error> {
@@ -409,9 +417,8 @@ impl Composition {
             },
         };
         let target = self.target(&to.partition)?;
-        let source_metadata = metadata == Metadata::Source;
-        let written = target.import(tree, &source, &entry.path, &to.path, source_metadata, step)?;
-        target.copied(written, metadata, Vec::new());
+        let written = target.import(tree, &source, &entry.path, &to.path, placing, step)?;
+        target.copied(written, placing.metadata, Vec::new());
         Ok(())
     }
 
@@ -421,7 +428,7 @@ impl Composition {
         &mut self,
         asset: &RelativePath,
         to: &DevicePath,
-        metadata: Metadata,
+        placing: Placing,
         context: &Context<'_>,
         step: &Name,
     ) -> Result<(), Error> {
@@ -429,7 +436,14 @@ impl Composition {
         if let Some(package) = &self.package {
             let path =
                 RelativePath::try_from(to.to_string()[1..].to_owned())?.resolve(&package.decoded);
+            let inside = RelativePath::try_from(to.to_string()[1..].to_owned())?;
+            if path.exists() && !placing.overwrite {
+                return Err(layout::Error::DestinationExists(inside).into());
+            }
             if let Some(parent) = path.parent() {
+                if !parent.exists() && !placing.create_parent {
+                    return Err(layout::Error::MissingParent(inside).into());
+                }
                 std::fs::create_dir_all(parent).map_err(crate::package::io(parent))?;
             }
             std::fs::copy(&source, &path).map_err(crate::package::io(&source))?;
@@ -464,7 +478,7 @@ impl Composition {
             ))?;
             vec![(to, source, asset.clone())]
         };
-        if metadata == Metadata::Source {
+        if placing.metadata == Metadata::Source {
             return Err(Error::Unsupported(
                 "an asset has no metadata of its own to keep",
             ));
@@ -472,10 +486,10 @@ impl Composition {
         let target = self.target(&partition)?;
         let mut written = BTreeSet::new();
         for (to, file, asset) in files {
-            let changed = target.install(&file, &asset, &to)?;
+            let changed = target.install(&file, &asset, &to, placing)?;
             written.extend(target.accept(changed, step));
         }
-        target.copied(written, metadata, Vec::new());
+        target.copied(written, placing.metadata, Vec::new());
         Ok(())
     }
 
@@ -485,7 +499,7 @@ impl Composition {
         &mut self,
         entry: &Located,
         to: &DevicePath,
-        metadata: Metadata,
+        placing: Placing,
         context: &Context<'_>,
         step: &Name,
     ) -> Result<(), Error> {
@@ -505,20 +519,20 @@ impl Composition {
             .collect::<Result<_, Error>>()?;
         let written = if entry.partition == to.partition {
             self.target(&to.partition)?
-                .copy_within(&entry.path, &to.path, step)?
+                .copy_within(&entry.path, &to.path, placing, step)?
         } else {
             let source = self
                 .targets
                 .remove(&entry.partition)
                 .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?;
-            let copied = self
-                .target(&to.partition)
-                .and_then(|destination| source.copy_into(destination, &entry.path, &to.path, step));
+            let copied = self.target(&to.partition).and_then(|destination| {
+                source.copy_into(destination, &entry.path, &to.path, placing, step)
+            });
             self.targets.insert(entry.partition.clone(), source);
             copied?
         };
         self.target(&to.partition)?
-            .copied(written, metadata, waiting);
+            .copied(written, placing.metadata, waiting);
         Ok(())
     }
 

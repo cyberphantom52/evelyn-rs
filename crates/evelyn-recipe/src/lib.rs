@@ -92,19 +92,26 @@ pub enum Operation {
     /// overwriting what is there: `Rom("/…")` or `Stock("/…")`, a device path in a
     /// firmware, globs allowed; `Build("/…")`; or `Asset("…")`, a file or a
     /// directory's files, which needs `to`. Everything it writes, and every
-    /// directory it makes, gets `metadata`. What `from` names must be there.
+    /// directory it makes, gets `metadata`. What `from` names must be there. It
+    /// writes in place of an entry only with `overwrite`, and makes a missing
+    /// parent directory only with `create_parent`.
     Copy {
         from: Location,
         /// Where it goes, a device path, if not to the same path. A glob keeps its path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<Expr>,
         metadata: tree::Metadata,
+        #[serde(default, skip_serializing_if = "is_false")]
+        overwrite: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        create_parent: bool,
     },
     /// Copy what a firmware has, `Rom("/…")` or `Stock("/…")`, to the same path in
-    /// the build, with its metadata: `Copy` with `metadata: Source`.
+    /// the build, with its metadata: `Copy` with `metadata: Source`, `overwrite`
+    /// and `create_parent`.
     Import(Location),
     /// Write a recipe asset, a file or a directory's files, at `to`, with Android's
-    /// defaults: `Copy` with `metadata: Default`.
+    /// defaults: `Copy` with `metadata: Default`, `overwrite` and `create_parent`.
     Install { asset: String, to: Expr },
     /// Remove what `pattern` matches from the build. A relative pattern is tried in
     /// the directory of every build partition the scope selects: those that came
@@ -332,7 +339,9 @@ impl Operation {
             Self::AddPolicy { policies, .. } if policies.is_empty() => {
                 Err(Error::Invalid("AddPolicy needs at least one policy".into()))
             }
-            Self::Copy { from, to, metadata } => {
+            Self::Copy {
+                from, to, metadata, ..
+            } => {
                 let sources: &[Kind] = match in_package {
                     true => &[Kind::Asset],
                     false => &[Kind::Build, Kind::Rom, Kind::Stock, Kind::Asset],
@@ -420,6 +429,10 @@ impl Operation {
             _ => Ok(()),
         }
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 /// Optional fields are written as plain values, without `Some(...)`.
