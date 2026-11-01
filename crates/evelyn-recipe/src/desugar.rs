@@ -85,7 +85,7 @@ fn expr(written: &Written) -> Expr {
         // Bound once, compared with each.
         Written::In(inner, values) => {
             let value = made("value");
-            let str = |text: &String| Box::new(Expr::Literal(Value::Str(text.clone())));
+            let str = |written: &String| Box::new(text(written));
             Expr::Let {
                 name: value.clone(),
                 value: boxed(inner),
