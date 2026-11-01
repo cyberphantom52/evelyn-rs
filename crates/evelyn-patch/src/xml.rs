@@ -2,7 +2,7 @@
 //! again in full, so its formatting may change; its content changes only where
 //! the edits say.
 
-use recipe::{XmlEdit, XmlMatch, XmlName, XmlPredicate, XmlStep};
+use recipe::{XmlMatch, XmlName, XmlOp, XmlPredicate, XmlStep};
 use thiserror::Error;
 use xot::{
     Node, Xot,
@@ -28,7 +28,7 @@ pub enum Error {
 }
 
 /// Later edits see earlier edits. A `PutChild` fragment must be exactly one element.
-pub fn apply(input: &[u8], edits: &[XmlEdit]) -> Result<Vec<u8>, Error> {
+pub fn apply(input: &[u8], edits: &[XmlOp]) -> Result<Vec<u8>, Error> {
     let source = std::str::from_utf8(input).map_err(|_| Error::Utf8)?;
     let mut xot = Xot::new();
     let document = xot
@@ -56,10 +56,10 @@ pub fn apply(input: &[u8], edits: &[XmlEdit]) -> Result<Vec<u8>, Error> {
 }
 
 /// Apply one edit; whether it changed the document.
-fn apply_one(xot: &mut Xot, document: Node, edit: &XmlEdit) -> Result<bool, Error> {
+fn apply_one(xot: &mut Xot, document: Node, edit: &XmlOp) -> Result<bool, Error> {
     let invalid = |_| Error::InvalidXml;
     match edit {
-        XmlEdit::SetText { path, value } => {
+        XmlOp::SetText { path, value } => {
             let nodes = select(xot, document, &path.selectors);
             let changed = !nodes.is_empty();
             for node in nodes {
@@ -75,7 +75,7 @@ fn apply_one(xot: &mut Xot, document: Node, edit: &XmlEdit) -> Result<bool, Erro
             }
             Ok(changed)
         }
-        XmlEdit::SetAttribute {
+        XmlOp::SetAttribute {
             path,
             name,
             value,
@@ -98,7 +98,7 @@ fn apply_one(xot: &mut Xot, document: Node, edit: &XmlEdit) -> Result<bool, Erro
             }
             Ok(changed)
         }
-        XmlEdit::Remove { path } => {
+        XmlOp::Remove { path } => {
             let nodes = select(xot, document, &path.selectors);
             let root = xot.document_element(document).map_err(invalid)?;
             for node in &nodes {
@@ -112,7 +112,7 @@ fn apply_one(xot: &mut Xot, document: Node, edit: &XmlEdit) -> Result<bool, Erro
             }
             Ok(!nodes.is_empty())
         }
-        XmlEdit::PutChild {
+        XmlOp::PutChild {
             parent,
             key,
             element,

@@ -18,7 +18,9 @@ mod xml;
 pub use expr::Expr;
 use location::Kind;
 pub use location::Location;
-pub use xml::{XmlEdit, XmlMatch, XmlName, XmlPath, XmlPredicate, XmlStep, escape_attribute};
+pub use xml::{
+    XmlEdit, XmlMatch, XmlName, XmlOp, XmlPath, XmlPredicate, XmlStep, escape_attribute,
+};
 
 use android_firmware::{DevicePath, Firmware, Name, RelativePath, Sha256Digest};
 use serde::{Deserialize, Serialize};
@@ -353,7 +355,6 @@ impl Operation {
                 asset(patch)?;
             }
             Self::WriteBytes { target, .. }
-            | Self::EditXml { target, .. }
             | Self::AssertHash { target, .. }
             | Self::Append { target, .. } => device(target)?,
             Self::AddPolicy { target, policies } => {
@@ -361,6 +362,15 @@ impl Operation {
                 policies.iter().try_for_each(asset)?;
             }
             Self::SetMetadata { pattern, .. } => device(pattern)?,
+            // An edit written out is parsed now; one naming a bound value when applied.
+            Self::EditXml { target, edits } => {
+                device(target)?;
+                for edit in edits {
+                    if let Ok(edit) = edit.map(|text| expr::written_out(text).ok_or(())) {
+                        edit.parse().map_err(Error::Invalid)?;
+                    }
+                }
+            }
             Self::ReplaceMethod { body, .. } | Self::InsertMethod { body, .. } => asset(body)?,
             Self::EnableFeature(Feature::App { file, .. }) => device(file)?,
             _ => {}
