@@ -50,9 +50,10 @@ cargo build --release
 # evelyn.toml, then add ports/<name>/port.toml and patches/.
 evelyn init pong-oxygenos --device pong --rom OxygenOS
 
-# Partition images, a super image, or a flashable ZIP. --rom and --stock are
-# directories of <partition>.img images from the ROM and the device's firmware;
-# for a ZIP, --stock/firmware/ holds the firmware images it also flashes.
+# Partition images, a super image, or a flashable ZIP. --rom and --stock are each
+# a full OTA package (a zip holding payload.bin, or payload.bin) or a directory of
+# <partition>.img images, from the ROM and the device's firmware; for a ZIP, the
+# stock OTA's other partitions, or --stock/firmware/, are the images it also flashes.
 evelyn build <repository>/ports/<name> --rom <rom images> --stock <stock images> \
     --tools <evelyn>/tools --output super --output-dir out
 
@@ -81,7 +82,7 @@ hand-edited file into a new patch.
 
 ## TODO
 
-- [ ] Read OTA packages directly (`payload.bin` partitions in place, `.dat` images) instead of pre-extracted images
+- [ ] Read `.dat` (sdat) firmware images
 - [ ] Flash-test the ZIP output
 - [ ] Install the host tools in a per-user directory, so builds from a device repository need no `--tools`
 - [ ] Sparse image output

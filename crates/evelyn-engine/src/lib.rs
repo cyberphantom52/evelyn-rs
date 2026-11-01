@@ -2,6 +2,7 @@
 
 mod authoring;
 mod build;
+mod firmware;
 mod flashable;
 mod fstab;
 mod needs;
@@ -86,6 +87,14 @@ pub enum Error {
     MissingAsset(PathBuf),
     #[error("invalid authoring request: {0}")]
     Authoring(&'static str),
+    #[error("OTA package: {0}")]
+    Payload(#[from] payload_dumper::Error),
+    #[error("{0} is an incremental OTA; give a full one")]
+    IncrementalOta(PathBuf),
+    #[error("{image}, extracted from {package}, does not match the hash its manifest records")]
+    OtaHash { package: PathBuf, image: PathBuf },
+    #[error("{0} holds more than one OTA package")]
+    AmbiguousFirmware(PathBuf),
 }
 
 /// What a build produces: partition images, a super image, or a flashable ZIP.
@@ -124,7 +133,9 @@ pub struct PlannedPartition {
     pub mount_point: Option<String>,
 }
 
-/// Where the port's two firmwares are: each a directory of partition images.
+/// Where the port's two firmwares are: each a directory of partition images or an
+/// OTA package, whose images are extracted into `.evelyn/firmware` in the
+/// repository.
 pub struct FirmwareDirs<'a> {
     pub rom: &'a Path,
     pub stock: &'a Path,
@@ -186,8 +197,11 @@ impl Plan {
             });
         }
 
-        let rom = filesystems(images(firmware.rom)?)?;
-        let stock = filesystems(images(firmware.stock)?)?;
+        let extracted = profile.root.join(".evelyn").join("firmware");
+        let rom_dir = firmware::images(firmware.rom, &extracted.join("rom"), false)?;
+        let stock_dir = firmware::images(firmware.stock, &extracted.join("stock"), true)?;
+        let rom = filesystems(images(&rom_dir)?)?;
+        let stock = filesystems(images(&stock_dir)?)?;
         let mut partitions = Vec::new();
         let mut ignored = Vec::new();
         let mut plan_partition = |name: &Name, source: Firmware| -> Result<(), Error> {
@@ -264,7 +278,7 @@ impl Plan {
         }
         // A flashable ZIP also flashes every image in the stock firmware's firmware/.
         let firmware_images = if output == Output::Zip {
-            let directory = firmware.stock.join("firmware");
+            let directory = stock_dir.join("firmware");
             if !directory.is_dir() {
                 return Err(Error::MissingFirmware(directory));
             }
