@@ -196,7 +196,10 @@ pub enum Operation {
         method: String,
         returns: Returns,
     },
-    /// The file's content must have this SHA-256.
+    /// The condition must hold, or the build fails with `message`.
+    Assert { condition: Expr, message: String },
+    /// The file's content must have this SHA-256: an `Assert` that its `Hash`
+    /// is.
     AssertHash {
         target: DevicePath,
         sha256: Sha256Digest,
@@ -285,6 +288,7 @@ impl Operation {
             Self::ReplaceMethod { .. } => "ReplaceMethod",
             Self::InsertMethod { .. } => "InsertMethod",
             Self::StubMethod { .. } => "StubMethod",
+            Self::Assert { .. } => "Assert",
             Self::AssertHash { .. } => "AssertHash",
             Self::EnableFeature(..) => "EnableFeature",
             Self::DisableFeature(..) => "DisableFeature",
@@ -316,6 +320,7 @@ impl Operation {
             | Self::Copy { .. }
             | Self::Install { .. }
             | Self::Append { .. }
+            | Self::Assert { .. }
             | Self::AssertHash { .. } => true,
             other => other.package_only(),
         }
@@ -417,6 +422,7 @@ impl Operation {
                 Ok(())
             }
             Self::Append { content, .. } => content.check(in_package),
+            Self::Assert { condition, .. } => condition.check(in_package),
             Self::Package { edits, .. } => edits.iter().try_for_each(|edit| {
                 if !edit.in_package() {
                     return Err(Error::Invalid(format!(
