@@ -5,19 +5,18 @@
 
 use crate::{
     Error,
-    tree::{Assigned, Expr, Overrides, Stmt, Transform, Tree},
+    tree::{Assigned, Binding, Expr, Overrides, Stmt, Transform, Tree},
     value::Value,
 };
-use android_firmware::Name;
 
 pub trait Visitor {
     /// Called for every statement, with the names enclosing `Let`s bind.
-    fn stmt(&mut self, _stmt: &Stmt, _bound: &[&Name]) -> Result<(), Error> {
+    fn stmt(&mut self, _stmt: &Stmt, _bound: &[&Binding]) -> Result<(), Error> {
         Ok(())
     }
 
     /// Called for every expression, nested ones included.
-    fn expr(&mut self, _expr: &Expr, _bound: &[&Name]) -> Result<(), Error> {
+    fn expr(&mut self, _expr: &Expr, _bound: &[&Binding]) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -38,7 +37,7 @@ pub fn walk(body: &[Stmt], visitor: &mut impl Visitor) -> Result<(), Error> {
 fn walk_stmt<'a>(
     stmt: &'a Stmt,
     visitor: &mut impl Visitor,
-    bound: &mut Vec<&'a Name>,
+    bound: &mut Vec<&'a Binding>,
 ) -> Result<(), Error> {
     visitor.stmt(stmt, bound)?;
     match stmt {
@@ -111,7 +110,7 @@ fn walk_stmt<'a>(
     }
 }
 
-fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Name]) -> Result<(), Error> {
+fn walk_expr(expr: &Expr, visitor: &mut impl Visitor, bound: &[&Binding]) -> Result<(), Error> {
     visitor.expr(expr, bound)?;
     match expr {
         Expr::Hash(inner)
@@ -186,7 +185,7 @@ fn expect(found: Kind, allowed: &[Kind], what: &str) -> Result<(), Error> {
 }
 
 /// The names bound around an expression, innermost last, with their kinds.
-type Bound<'a> = Vec<(&'a Name, Kind)>;
+type Bound<'a> = Vec<(&'a Binding, Kind)>;
 
 /// The kind `expr` produces, once its operands are checked to be of the kinds its
 /// operator takes.
@@ -274,14 +273,14 @@ fn kind<'a>(expr: &'a Expr, bound: &Bound<'a>) -> Result<Kind, Error> {
 }
 
 /// `bound`, and `name` bound to a value of kind `kind`.
-fn binding<'a>(bound: &Bound<'a>, name: &'a Name, kind: Kind) -> Bound<'a> {
+fn binding<'a>(bound: &Bound<'a>, name: &'a Binding, kind: Kind) -> Bound<'a> {
     let mut bound = bound.clone();
     bound.push((name, kind));
     bound
 }
 
 impl Visitor for Check {
-    fn stmt(&mut self, stmt: &Stmt, bound: &[&Name]) -> Result<(), Error> {
+    fn stmt(&mut self, stmt: &Stmt, bound: &[&Binding]) -> Result<(), Error> {
         // A step's `let:` binds strings.
         let bound: Bound = bound.iter().map(|name| (*name, Kind::Str)).collect();
         let of =

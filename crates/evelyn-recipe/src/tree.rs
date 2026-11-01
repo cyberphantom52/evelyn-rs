@@ -24,7 +24,7 @@ pub enum Stmt {
     /// Bind `name` to a value for the body's expressions. A string bound here must
     /// be a token, `[A-Za-z0-9._-]`: it comes from firmware and goes into paths.
     Let {
-        name: Name,
+        name: Binding,
         value: Expr,
         body: Vec<Stmt>,
     },
@@ -174,6 +174,23 @@ impl Transform {
     }
 }
 
+/// A name a `Let` or `Filter` binds: one a recipe writes, or one the desugaring
+/// makes, which no recipe can write, so no string a recipe writes can name it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Binding {
+    Written(Name),
+    Made(String),
+}
+
+impl std::fmt::Display for Binding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Written(name) => f.write_str(name.as_ref()),
+            Self::Made(name) => write!(f, "({name})"),
+        }
+    }
+}
+
 /// The primitive expressions. Recipes write the ones in [`crate::Expr`], which
 /// desugar into these.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -203,10 +220,10 @@ pub enum Expr {
         partition: Option<Name>,
     },
     /// The value an enclosing `Let` or `Filter` binds to the name.
-    Var(Name),
+    Var(Binding),
     /// `body`, with `name` bound to `value`.
     Let {
-        name: Name,
+        name: Binding,
         value: Box<Expr>,
         body: Box<Expr>,
     },
@@ -214,7 +231,7 @@ pub enum Expr {
     /// holds when `name` is bound to each: a string, or a selection of the one entry.
     Filter {
         over: Box<Expr>,
-        name: Name,
+        name: Binding,
         keep: Box<Expr>,
     },
     /// `then` if the condition holds, else `otherwise`.

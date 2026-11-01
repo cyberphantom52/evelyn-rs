@@ -76,14 +76,22 @@ impl Resources {
 }
 
 impl Visitor for Resources {
-    fn stmt(&mut self, stmt: &Stmt, _bound: &[&Name]) -> Result<(), recipe::Error> {
+    fn stmt(
+        &mut self,
+        stmt: &Stmt,
+        _bound: &[&recipe::tree::Binding],
+    ) -> Result<(), recipe::Error> {
         if let Stmt::Copy { to: Some(to), .. } = stmt {
             self.note_expr(to);
         }
         Ok(())
     }
 
-    fn expr(&mut self, expr: &Expr, _bound: &[&Name]) -> Result<(), recipe::Error> {
+    fn expr(
+        &mut self,
+        expr: &Expr,
+        _bound: &[&recipe::tree::Binding],
+    ) -> Result<(), recipe::Error> {
         if let Expr::Select { pattern, .. } = expr {
             self.note_expr(pattern);
         }
