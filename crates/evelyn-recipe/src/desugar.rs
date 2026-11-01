@@ -198,13 +198,21 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
         ..Scope::default()
     };
     let stmt = match operation {
-        Operation::Copy { from, to, metadata } => return copy(from, to.as_ref(), *metadata),
-        Operation::Import(from) => return copy(from, None, tree::Metadata::Source),
+        Operation::Copy {
+            from,
+            to,
+            metadata,
+            overwrite,
+            create_parent,
+        } => return copy(from, to.as_ref(), *metadata, *overwrite, *create_parent),
+        Operation::Import(from) => return copy(from, None, tree::Metadata::Source, true, true),
         Operation::Install { asset, to } => {
             return copy(
                 &Location::Asset(asset.clone()),
                 Some(to),
                 tree::Metadata::Default,
+                true,
+                true,
             );
         }
         Operation::Remove {
@@ -449,7 +457,13 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
 }
 
 /// A copy of what `from` names, which must be there, with `metadata`.
-fn copy(from: &Location, to: Option<&Written>, metadata: tree::Metadata) -> Vec<Stmt> {
+fn copy(
+    from: &Location,
+    to: Option<&Written>,
+    metadata: tree::Metadata,
+    overwrite: bool,
+    create_parent: bool,
+) -> Vec<Stmt> {
     let path = from.path();
     let found = expect(
         at(from, Scope::default()),
@@ -466,6 +480,8 @@ fn copy(from: &Location, to: Option<&Written>, metadata: tree::Metadata) -> Vec<
             selection: at(from, Scope::default()),
             to: to.map(expr),
             metadata,
+            overwrite,
+            create_parent,
         },
     ]
 }

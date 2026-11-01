@@ -153,10 +153,11 @@ impl Target {
         &mut self,
         from: &RelativePath,
         to: &RelativePath,
+        placing: crate::operations::Placing,
         step: &Name,
     ) -> Result<BTreeSet<RelativePath>, Error> {
         let selected = crate::layout::subtree(&self.tree, from, to)?;
-        let mut changed = self.destination(to, true, Some(&self.tree))?;
+        let mut changed = self.destination(to, placing, Some(&self.tree))?;
         changed.entries.extend(selected);
         Ok(self.accept(changed, step))
     }
@@ -168,10 +169,11 @@ impl Target {
         destination: &mut Self,
         from: &RelativePath,
         to: &RelativePath,
+        placing: crate::operations::Placing,
         step: &Name,
     ) -> Result<BTreeSet<RelativePath>, Error> {
         let selected = crate::layout::subtree(&self.tree, from, to)?;
-        let mut changed = destination.destination(to, true, Some(&self.tree))?;
+        let mut changed = destination.destination(to, placing, Some(&self.tree))?;
         changed
             .entries
             .extend(destination.adopt(Some(&self.root), selected)?);

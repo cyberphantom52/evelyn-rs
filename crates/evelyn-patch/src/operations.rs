@@ -27,16 +27,16 @@ impl Target {
         Ok(true)
     }
 
-    /// Copy `path` from a firmware's `source` tree, with the source's metadata; the
-    /// paths written. With `source_metadata`, a directory made for it must be one
-    /// the source has, whose metadata it takes.
+    /// Copy `path` from a firmware's `source` tree; the paths written. With the
+    /// source's metadata, a directory made for it must be one the source has,
+    /// whose metadata it takes.
     pub(crate) fn import(
         &mut self,
         source: &PartitionTree,
         from: &SourceRef,
         path: &RelativePath,
         to_path: &RelativePath,
-        source_metadata: bool,
+        placing: Placing,
         step: &Name,
     ) -> Result<BTreeSet<RelativePath>, Error> {
         // A wildcard import keeps every match at its own path.
@@ -55,8 +55,8 @@ impl Target {
         let mut written = BTreeSet::new();
         for (from_path, to_path) in pairs {
             let selected = layout::select(source, &from_path, &to_path, from)?;
-            let mut changed = self.destination(&to_path, true, Some(source))?;
-            if source_metadata
+            let mut changed = self.destination(&to_path, placing, Some(source))?;
+            if placing.metadata == Metadata::Source
                 && let Some(made) = changed.entries.keys().find(|path| {
                     !self.tree.entries.contains_key(*path)
                         && !selected.contains_key(*path)
@@ -78,6 +78,7 @@ impl Target {
         file: &Path,
         asset: &RelativePath,
         to: &RelativePath,
+        placing: Placing,
     ) -> Result<PartitionTree, Error> {
         let previous = self.tree.entries.get(to);
         if previous.is_some_and(|entry| matches!(entry.kind, EntryKind::Directory)) {
@@ -89,7 +90,7 @@ impl Target {
             Some(entry) => (entry.metadata.clone(), entry.provenance.clone()),
             None => (self.tree.root.clone(), Vec::new()),
         };
-        let mut changed = self.destination(to, true, None)?;
+        let mut changed = self.destination(to, placing, None)?;
         let bytes = std::fs::read(file)?;
         lineage.push(Provenance::Asset {
             path: asset.clone(),
@@ -194,22 +195,31 @@ impl Target {
         Ok(())
     }
 
-    /// The tree with `path` cleared for a new entry: its parent must be a
-    /// directory, and an existing entry is removed only when `replace` is set.
+    /// The tree with `path` cleared for a new entry: an entry there is removed
+    /// only to `overwrite` it, and missing parent directories are made, like
+    /// `like`'s, only to `create_parent`.
     pub(crate) fn destination(
         &self,
         path: &RelativePath,
-        replace: bool,
+        placing: Placing,
         like: Option<&PartitionTree>,
     ) -> Result<PartitionTree, Error> {
         let mut changed = if self.tree.entries.contains_key(path) {
-            if !replace {
+            if !placing.overwrite {
                 return Err(layout::Error::DestinationExists(path.clone()).into());
             }
             layout::remove(&self.tree, path)?
         } else {
             self.tree.clone()
         };
+        if !placing.create_parent
+            && let Some((parent, _)) = path.as_ref().rsplit_once('/')
+        {
+            let parent = RelativePath::try_from(parent.to_owned())?;
+            if !changed.entries.contains_key(&parent) {
+                return Err(layout::Error::MissingParent(parent).into());
+            }
+        }
         layout::create_parents(&mut changed, path, like)?;
         Ok(changed)
     }
@@ -259,6 +269,15 @@ impl Target {
             self.derived.extend(waiting);
         }
     }
+}
+
+/// How a copy writes: the metadata it gives, and whether it may write in place
+/// of an entry and make missing parent directories.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Placing {
+    pub metadata: Metadata,
+    pub overwrite: bool,
+    pub create_parent: bool,
 }
 
 /// A file's content after `transform`, wherever the file is: in the build or in a

@@ -39,12 +39,15 @@ pub enum Stmt {
     /// Copy what is selected (from a firmware, the recipe's assets, or the build
     /// itself) into the build, at the same path or at `to`. Every entry it writes,
     /// new or in place of one, and every directory it makes for them, gets
-    /// `metadata`.
+    /// `metadata`. Writing in place of an entry needs `overwrite`, and making a
+    /// missing parent directory `create_parent`; without them it is an error.
     Copy {
         selection: Expr,
         /// A device path.
         to: Option<Expr>,
         metadata: Metadata,
+        overwrite: bool,
+        create_parent: bool,
     },
     /// Set metadata on every entry selected (not what is below it; for that,
     /// select with `Below`). `pattern` names the selection in reports.
