@@ -69,10 +69,10 @@ impl Location {
                 self.path()
             )));
         }
-        let path = self.path();
-        if path.contains('{') {
+        let Some(path) = crate::expr::written_out(self.path()) else {
             return Ok(());
-        }
+        };
+        let path = path.as_str();
         match self {
             Self::Rom(_) | Self::Stock(_) | Self::Package(_) => {
                 DevicePath::try_from(path.to_owned()).map(drop)?

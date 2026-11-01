@@ -119,3 +119,61 @@ impl Expr {
         }
     }
 }
+
+/// A piece of a written string: text, or the value a name is bound to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Part {
+    Text(String),
+    Bound(Name),
+}
+
+/// The pieces of a written string. `{name}`, a name of `[A-Za-z0-9_-]`, is the
+/// value bound to it; `{{` and `}}` are `{` and `}`; any other brace stands for
+/// itself, as in an XML namespace's `{http://…}`.
+pub(crate) fn parts(written: &str) -> Vec<Part> {
+    let mut parts = Vec::new();
+    let mut text = String::new();
+    let mut rest = written;
+    while let Some(at) = rest.find(['{', '}']) {
+        text.push_str(&rest[..at]);
+        rest = &rest[at..];
+        if let Some(after) = rest.strip_prefix("{{").or_else(|| rest.strip_prefix("}}")) {
+            text.push_str(&rest[..1]);
+            rest = after;
+            continue;
+        }
+        let after = &rest[1..];
+        let end = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+            .unwrap_or(after.len());
+        let bound = (rest.starts_with('{') && end > 0 && after[end..].starts_with('}'))
+            .then(|| Name::try_from(after[..end].to_owned()).ok())
+            .flatten();
+        match bound {
+            Some(name) => {
+                if !text.is_empty() {
+                    parts.push(Part::Text(std::mem::take(&mut text)));
+                }
+                parts.push(Part::Bound(name));
+                rest = &after[end + 1..];
+            }
+            None => {
+                text.push_str(&rest[..1]);
+                rest = after;
+            }
+        }
+    }
+    text.push_str(rest);
+    if !text.is_empty() || parts.is_empty() {
+        parts.push(Part::Text(text));
+    }
+    parts
+}
+
+/// A written string that names no bound value, as it reads: its escapes undone.
+pub(crate) fn written_out(written: &str) -> Option<String> {
+    match &parts(written)[..] {
+        [Part::Text(text)] => Some(text.clone()),
+        _ => None,
+    }
+}
