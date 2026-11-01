@@ -49,9 +49,11 @@ fn walk_stmt<'a>(
                 Error::Invalid(message) => Error::Invalid(format!("step {id}: {message}")),
                 error => error,
             }),
-        Stmt::Package { body, .. } => body
-            .iter()
-            .try_for_each(|stmt| walk_stmt(stmt, visitor, bound)),
+        Stmt::Package { package, body } => {
+            walk_expr(package, visitor, bound)?;
+            body.iter()
+                .try_for_each(|stmt| walk_stmt(stmt, visitor, bound))
+        }
         Stmt::Let { name, value, body } => {
             walk_expr(value, visitor, bound)?;
             bound.push(name);
@@ -294,7 +296,7 @@ impl Visitor for Check {
             Stmt::Remove { selection, .. }
             | Stmt::SetMetadata { selection, .. }
             | Stmt::Edit { selection, .. } => of(selection, &[Kind::Selection], "a selection")?,
-            Stmt::Package { .. } => {}
+            Stmt::Package { package, .. } => of(package, &[Kind::Str], "Package")?,
         }
         Ok(())
     }

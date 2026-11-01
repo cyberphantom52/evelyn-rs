@@ -175,7 +175,8 @@ pub enum Operation {
     /// ordinary operations with paths from the package's root
     /// (`/res/values/strings.xml`), plus the smali edits only a package has.
     Package {
-        target: DevicePath,
+        /// A device path, in which `{name}` is a bound value.
+        target: String,
         edits: Vec<Operation>,
     },
     /// Inside a `Package`: replace a smali method with the asset `body`.
@@ -423,15 +424,20 @@ impl Operation {
             }
             Self::Append { content, .. } => content.check(in_package),
             Self::Assert { condition, .. } => condition.check(in_package),
-            Self::Package { edits, .. } => edits.iter().try_for_each(|edit| {
-                if !edit.in_package() {
-                    return Err(Error::Invalid(format!(
-                        "{} does not work inside a Package",
-                        edit.name()
-                    )));
+            Self::Package { target, edits } => {
+                if !target.contains('{') {
+                    DevicePath::try_from(target.clone())?;
                 }
-                edit.validate(true)
-            }),
+                edits.iter().try_for_each(|edit| {
+                    if !edit.in_package() {
+                        return Err(Error::Invalid(format!(
+                            "{} does not work inside a Package",
+                            edit.name()
+                        )));
+                    }
+                    edit.validate(true)
+                })
+            }
             _ => Ok(()),
         }
     }

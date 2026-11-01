@@ -368,7 +368,12 @@ impl Composition {
                 }
             }
             Stmt::Package { package, body } => {
-                let at = self.resolve_one(package, context, step)?;
+                let package = self.eval(package, context, step, bound)?;
+                let package = package.as_str()?.ok_or(Error::Unsupported(
+                    "a package's path is a string that is set",
+                ))?;
+                let at =
+                    self.resolve_one(&DevicePath::try_from(package.to_owned())?, context, step)?;
                 let opened =
                     crate::package::open(self.target(&at.partition)?, &at, body, context, step)?;
                 self.package = Some(opened);
