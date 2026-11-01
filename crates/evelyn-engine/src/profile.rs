@@ -44,6 +44,12 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
+    #[error("cannot write {path}: {source}")]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
     #[error("invalid profile {path}: {source}")]
     Toml {
         path: PathBuf,
@@ -159,6 +165,16 @@ impl Profile {
     }
 
     fn validate(&self) -> Result<(), Error> {
+        if self.device.product_ids.is_empty() {
+            return Err(Error::Invalid(format!(
+                "{MANIFEST} sets no device.product_ids"
+            )));
+        }
+        if self.device.stock.fingerprint.is_empty() {
+            return Err(Error::Invalid(format!(
+                "{MANIFEST} sets no device.stock.fingerprint"
+            )));
+        }
         if let Some(standard) = self
             .device
             .partitions
@@ -336,6 +352,92 @@ impl Visitor for Partitions<'_> {
             _ => Ok(()),
         }
     }
+}
+
+/// A new device repository.
+#[derive(Debug, Serialize)]
+pub struct Initialized {
+    pub root: PathBuf,
+    /// The manifest, for the device's stock fingerprint, product IDs and
+    /// `super` layout to be filled in.
+    pub manifest: PathBuf,
+}
+
+/// Set up a device repository at `root` that ports `rom` to `device`: its
+/// manifest, the `ports/` and `patches/` directories, and `.evelyn/`, the work
+/// directory, ignored by git. One already there is left alone.
+pub fn init(root: &Path, device: &Name, rom: &Name) -> Result<Initialized, Error> {
+    let manifest = root.join(MANIFEST);
+    if manifest.exists() {
+        return Err(Error::Invalid(format!(
+            "{} is already a device repository",
+            root.display()
+        )));
+    }
+    let write = |path: &Path| {
+        let path = path.to_path_buf();
+        move |source| Error::Write { path, source }
+    };
+    for dir in [root.join("ports"), root.join("patches")] {
+        fs::create_dir_all(&dir).map_err(write(&dir))?;
+    }
+    let text = format!(
+        r#"# {rom} ported to {device}.
+rom = "{rom}"
+
+[device]
+name = "{device}"
+# The ro.product.device values the installer accepts.
+product_ids = []
+# Settings for the device's own partitions, where the defaults are wrong:
+# partitions.<name> = {{ filesystem = "ext4", mount_point = "/<name>" }}
+
+# The stock build the device's partitions come from: each device partition's
+# ro.<partition>.build.fingerprint must equal it.
+[device.stock]
+fingerprint = ""
+
+# The super partition, for super and ZIP output.
+# [device.super]
+# size = 0
+# metadata_size = 65536
+# slots = "virtual_ab"
+# group = ""
+
+# A port is ports/<name>/port.toml: the patches it applies, in order, as
+# directories under patches/, each holding a {PATCH}; then any ROM partitions
+# it takes beyond the standard system side.
+#
+# patches = ["<topic>/<name>"]
+#
+# [partitions]
+# "my_*" = {{}}
+"#
+    );
+    fs::write(&manifest, text).map_err(write(&manifest))?;
+    let ignore = root.join(".gitignore");
+    let ignored = match fs::read_to_string(&ignore) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(source) => {
+            return Err(Error::Read {
+                path: ignore,
+                source,
+            });
+        }
+    };
+    if !ignored.lines().any(|line| line == "/.evelyn/") {
+        let separator = if ignored.is_empty() || ignored.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
+        fs::write(&ignore, format!("{ignored}{separator}/.evelyn/\n")).map_err(write(&ignore))?;
+    }
+    Ok(Initialized {
+        root: root.to_path_buf(),
+        manifest,
+    })
 }
 
 fn toml_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, Error> {

@@ -46,6 +46,10 @@ python3 tools/manager.py fetch
 ```sh
 cargo build --release
 
+# A device repository: fill in the stock fingerprint and product IDs in
+# evelyn.toml, then add ports/<name>/port.toml and patches/.
+evelyn init pong-oxygenos --device pong --rom OxygenOS
+
 # Partition images, a super image, or a flashable ZIP. --rom and --stock are
 # directories of <partition>.img images from the ROM and the device's firmware;
 # for a ZIP, --stock/firmware/ holds the firmware images it also flashes.
