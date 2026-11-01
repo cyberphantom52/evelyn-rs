@@ -147,18 +147,18 @@ impl Target {
         Ok(())
     }
 
-    /// Copy a subtree to another path in this target, keeping its metadata.
+    /// Copy a subtree to another path in this target, with its metadata; the
+    /// paths written.
     pub(crate) fn copy_within(
         &mut self,
         from: &RelativePath,
         to: &RelativePath,
         step: &Name,
-    ) -> Result<(), Error> {
+    ) -> Result<BTreeSet<RelativePath>, Error> {
         let selected = crate::layout::subtree(&self.tree, from, to)?;
-        let mut changed = self.destination(to, true, None)?;
+        let mut changed = self.destination(to, true, Some(&self.tree))?;
         changed.entries.extend(selected);
-        self.accept(changed, step);
-        Ok(())
+        Ok(self.accept(changed, step))
     }
 
     /// Copy a subtree into another target, keeping its metadata; file contents the
@@ -169,14 +169,13 @@ impl Target {
         from: &RelativePath,
         to: &RelativePath,
         step: &Name,
-    ) -> Result<(), Error> {
+    ) -> Result<BTreeSet<RelativePath>, Error> {
         let selected = crate::layout::subtree(&self.tree, from, to)?;
         let mut changed = destination.destination(to, true, Some(&self.tree))?;
         changed
             .entries
             .extend(destination.adopt(Some(&self.root), selected)?);
-        destination.accept(changed, step);
-        Ok(())
+        Ok(destination.accept(changed, step))
     }
 
     /// Write the manifest and drop blobs no longer referenced by the tree.

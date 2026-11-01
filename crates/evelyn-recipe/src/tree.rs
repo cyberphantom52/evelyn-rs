@@ -37,13 +37,14 @@ pub enum Stmt {
     /// Remove every entry selected.
     Remove { selection: Expr },
     /// Copy what is selected (from a firmware, the recipe's assets, or the build
-    /// itself) into the build, at the same path or at `to`. Overwritten entries
-    /// keep their metadata; new ones have their source's, and assets, which have
-    /// none, get Android's defaults.
+    /// itself) into the build, at the same path or at `to`. Every entry it writes,
+    /// new or in place of one, and every directory it makes for them, gets
+    /// `metadata`.
     Copy {
         selection: Expr,
         /// A device path.
         to: Option<Expr>,
+        metadata: Metadata,
     },
     /// Set metadata on every entry selected (not what is below it; for that,
     /// select with `Below`). `pattern` names the selection in reports.
@@ -199,6 +200,17 @@ pub enum MethodEdit {
     Replace(RelativePath),
     /// Add the asset `body` as a new method.
     Insert(RelativePath),
+}
+
+/// What a copy gives what it writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Metadata {
+    /// What its source has: the firmware's or the build's, the same directory's
+    /// for a directory made. A source without it (an asset, or no such
+    /// directory) is an error.
+    Source,
+    /// Android's defaults for where it is on the device.
+    Default,
 }
 
 /// What `SetMetadata` gives an entry.

@@ -1,9 +1,9 @@
 //! Surface recipes (steps of operations, `let:` and `when:`) into the primitive tree.
 
 use crate::{
-    Error, Expr as Written, Feature, Location, Metadata, Operation, Recipe, Step, XmlEdit,
-    XmlMatch, XmlName, XmlPath, XmlPredicate, escape_attribute,
-    tree::{Assigned, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree},
+    Error, Expr as Written, Feature, Location, Operation, Recipe, Step, XmlEdit, XmlMatch, XmlName,
+    XmlPath, XmlPredicate, escape_attribute,
+    tree::{self, Assigned, Expr, MethodEdit, Pattern, Scope, Source, Stmt, Transform, Tree},
     value::Value,
 };
 use android_firmware::{DevicePath, Name, RelativePath};
@@ -187,39 +187,14 @@ fn select_expr(pattern: Expr, scope: Scope) -> Expr {
 
 fn operation(operation: &Operation) -> Vec<Stmt> {
     let stmt = match operation {
-        Operation::Copy { from, to, metadata } => {
-            let path = from.path();
-            let found = expect(
-                at(from, Scope::default()),
-                match from {
-                    Location::Rom(_) => format!("{path} is not in the ROM"),
-                    Location::Stock(_) => format!("{path} is not in the stock firmware"),
-                    Location::Asset(_) => format!("{path} is not in the recipe's assets"),
-                    _ => format!("{path} is not there"),
-                },
+        Operation::Copy { from, to, metadata } => return copy(from, to.as_ref(), *metadata),
+        Operation::Import(from) => return copy(from, None, tree::Metadata::Source),
+        Operation::Install { asset, to } => {
+            return copy(
+                &Location::Asset(asset.clone()),
+                Some(to),
+                tree::Metadata::Default,
             );
-            let copy = Stmt::Copy {
-                selection: at(from, Scope::default()),
-                to: to.as_ref().map(expr),
-            };
-            // What the copy put in the build, by where it went.
-            let placed = match to {
-                Some(to) => shown(to),
-                None => path.to_owned(),
-            };
-            let in_build = || match to {
-                Some(to) => select_expr(expr(to), Scope::default()),
-                None => select_expr(text(path), Scope::default()),
-            };
-            let defaults = || Stmt::SetMetadata {
-                selection: Expr::Below(Box::new(in_build())),
-                pattern: placed.clone(),
-                metadata: Assigned::Default,
-            };
-            return match metadata {
-                Metadata::Source => vec![found, copy],
-                Metadata::Default => vec![found, copy, defaults()],
-            };
         }
         Operation::Remove {
             pattern,
@@ -434,6 +409,28 @@ fn operation(operation: &Operation) -> Vec<Stmt> {
         _ => return vec![stmt],
     };
     vec![expect(selection, message), stmt]
+}
+
+/// A copy of what `from` names, which must be there, with `metadata`.
+fn copy(from: &Location, to: Option<&Written>, metadata: tree::Metadata) -> Vec<Stmt> {
+    let path = from.path();
+    let found = expect(
+        at(from, Scope::default()),
+        match from {
+            Location::Rom(_) => format!("{path} is not in the ROM"),
+            Location::Stock(_) => format!("{path} is not in the stock firmware"),
+            Location::Asset(_) => format!("{path} is not in the recipe's assets"),
+            _ => format!("{path} is not there"),
+        },
+    );
+    vec![
+        found,
+        Stmt::Copy {
+            selection: at(from, Scope::default()),
+            to: to.map(expr),
+            metadata,
+        },
+    ]
 }
 
 /// An asset's path in the recipe's directory, checked to be written out.

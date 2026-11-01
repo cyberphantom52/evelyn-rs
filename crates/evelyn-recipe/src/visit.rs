@@ -79,7 +79,7 @@ fn walk_stmt<'a>(
             walk_expr(selection, visitor, bound)?;
             walk_expr(text, visitor, bound)
         }
-        Stmt::Copy { selection, to } => {
+        Stmt::Copy { selection, to, .. } => {
             walk_expr(selection, visitor, bound)?;
             to.iter().try_for_each(|to| walk_expr(to, visitor, bound))
         }
@@ -285,7 +285,7 @@ impl Visitor for Check {
                     _ => of(text, &[Kind::Selection], "AddPolicy")?,
                 }
             }
-            Stmt::Copy { selection, to } => {
+            Stmt::Copy { selection, to, .. } => {
                 of(selection, &[Kind::Selection], "a selection")?;
                 if let Some(to) = to {
                     of(to, &[Kind::Str], "a copy's to")?;
