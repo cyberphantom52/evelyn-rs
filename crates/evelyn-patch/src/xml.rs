@@ -21,14 +21,14 @@ pub enum Error {
     MixedContent,
     #[error("XML document element cannot be removed")]
     RemoveRoot,
-    #[error("XML fragment must be one element that its key matches")]
+    #[error("XML fragment must be one element")]
     Fragment,
     #[error("XML could not be written: {0}")]
     Write(String),
 }
 
-/// Later edits see earlier edits. A `PutChild` fragment must be exactly one element
-/// that matches its key where it is inserted.
+/// Later edits see earlier edits. An `AppendChild` fragment must be exactly one
+/// element.
 pub fn apply(input: &[u8], edits: &[XmlEdit]) -> Result<Vec<u8>, Error> {
     let source = std::str::from_utf8(input).map_err(|_| Error::Utf8)?;
     let mut xot = Xot::new();
@@ -107,30 +107,11 @@ fn apply_one(xot: &mut Xot, document: Node, edit: &XmlEdit) -> Result<bool, Erro
             }
             Ok(!nodes.is_empty())
         }
-        XmlEdit::PutChild {
-            parent,
-            key,
-            element,
-        } => {
+        XmlEdit::AppendChild { parent, element } => {
             let parents = select(xot, document, &parent.selectors);
             for parent in &parents {
-                let children: Vec<_> = xot
-                    .children(*parent)
-                    .filter(|node| matches(xot, *node, key))
-                    .collect();
                 let fragment = fragment(xot, *parent, element)?;
-                if !matches(xot, fragment, key) {
-                    return Err(Error::Fragment);
-                }
-                match children.split_first() {
-                    Some((first, rest)) => {
-                        xot.replace(*first, fragment).map_err(invalid)?;
-                        for child in rest {
-                            xot.remove(*child).map_err(invalid)?;
-                        }
-                    }
-                    None => xot.append(*parent, fragment).map_err(invalid)?,
-                }
+                xot.append(*parent, fragment).map_err(invalid)?;
             }
             Ok(!parents.is_empty())
         }
