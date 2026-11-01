@@ -75,7 +75,7 @@ pub enum Transform {
     /// Write bytes at offsets.
     WriteBytes(BTreeMap<u64, Hex>),
     Xml(Vec<XmlEdit>),
-    /// Set a property to `value`, or remove it without one.
+    /// Set every assignment of a property to `value`, or remove them without one.
     Property {
         key: String,
         value: Option<String>,
