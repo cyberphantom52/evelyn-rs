@@ -12,7 +12,7 @@ pub use authoring::{
     prepare_file, preview_trees,
 };
 pub use build::{BuildRequest, Built, build};
-pub use profile::Profile;
+pub use profile::{Profile, init};
 
 use android_firmware::Firmware;
 use android_firmware::{Filesystem, Mounts, Name, SourceRef};
