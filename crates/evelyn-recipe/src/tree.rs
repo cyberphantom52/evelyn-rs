@@ -89,7 +89,7 @@ pub enum Transform {
         edit: MethodEdit,
     },
     /// Patch one of the device's CIL policy files with TE `policies` (assets), checked
-    /// to resolve with the policy files `resolve_with` selects, less the one patched.
+    /// to resolve with the policy files `resolve_with` selects.
     AddPolicy {
         policies: Vec<RelativePath>,
         resolve_with: Expr,

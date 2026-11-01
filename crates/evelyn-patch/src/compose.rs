@@ -310,9 +310,6 @@ impl Composition {
                             .eval(resolve_with, context, step, bound)?
                             .as_selection()?
                         {
-                            if selected.contains(file) {
-                                continue;
-                            }
                             let file = Expr::Literal(Value::Selection(vec![file.clone()]));
                             let text =
                                 self.eval(&Expr::Read(Box::new(file)), context, step, bound)?;
