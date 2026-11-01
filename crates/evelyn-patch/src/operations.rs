@@ -9,12 +9,11 @@ use recipe::{
 use std::{collections::BTreeSet, path::Path};
 
 impl Target {
-    /// Remove `path` (or every entry a glob matches) and its contents. Returns
-    /// whether there was anything to remove.
-    pub(crate) fn remove(&mut self, path: &RelativePath, step: &Name) -> Result<bool, Error> {
+    /// Remove `path` (or every entry a glob matches) and its contents.
+    pub(crate) fn remove(&mut self, path: &RelativePath, step: &Name) -> Result<(), Error> {
         let matches = layout::matches(&self.tree, path);
         if matches.is_empty() {
-            return Ok(false);
+            return Ok(());
         }
         let mut changed = self.tree.clone();
         for path in matches {
@@ -24,7 +23,7 @@ impl Target {
             }
         }
         self.accept(changed, step);
-        Ok(true)
+        Ok(())
     }
 
     /// Copy `path` from a firmware's `source` tree; the paths written. With the
@@ -86,10 +85,9 @@ impl Target {
                 "remove a directory explicitly before installing a file",
             ));
         }
-        let (metadata, mut lineage) = match previous {
-            Some(entry) => (entry.metadata.clone(), entry.provenance.clone()),
-            None => (self.tree.root.clone(), Vec::new()),
-        };
+        // What it replaces is its history; its metadata is the copy's to give.
+        let mut lineage = previous.map_or_else(Vec::new, |entry| entry.provenance.clone());
+        let metadata = self.tree.root.clone();
         let mut changed = self.destination(to, placing, None)?;
         let bytes = std::fs::read(file)?;
         lineage.push(Provenance::Asset {
