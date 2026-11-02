@@ -10,7 +10,7 @@ mod output;
 pub mod profile;
 pub use authoring::{
     CaptureKind, CaptureRequest, CapturedRecipe, PrepareRequest, PreparedFile, capture_file,
-    prepare_file, preview_trees,
+    prepare_file,
 };
 pub use build::{BuildRequest, Built, build};
 pub use firmware::{Extracted, Given, extract_in_place};
@@ -37,8 +37,6 @@ pub enum Error {
     Patch(#[from] patch::Error),
     #[error(transparent)]
     Capture(#[from] patch::capture::Error),
-    #[error(transparent)]
-    Preview(#[from] patch::preview::Error),
     #[error("invalid JSON record: {0}")]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
