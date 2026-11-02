@@ -1,6 +1,5 @@
 //! Firmware composition planning and build execution.
 
-mod authoring;
 mod build;
 mod firmware;
 mod flashable;
@@ -8,10 +7,6 @@ mod fstab;
 mod needs;
 mod output;
 pub mod profile;
-pub use authoring::{
-    CaptureKind, CaptureRequest, CapturedRecipe, PrepareRequest, PreparedFile, capture_file,
-    prepare_file,
-};
 pub use build::{BuildRequest, Built, build};
 pub use firmware::{Extracted, Given, extract_in_place};
 pub use profile::{Profile, init};
@@ -35,8 +30,6 @@ pub enum Error {
     SourceFilesystem(SourceRef),
     #[error(transparent)]
     Patch(#[from] patch::Error),
-    #[error(transparent)]
-    Capture(#[from] patch::capture::Error),
     #[error("invalid JSON record: {0}")]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
@@ -84,8 +77,6 @@ pub enum Error {
     MissingLayout,
     #[error("missing regular recipe asset: {0}")]
     MissingAsset(PathBuf),
-    #[error("invalid authoring request: {0}")]
-    Authoring(&'static str),
     #[error("OTA package: {0}")]
     Payload(#[from] payload_dumper::Error),
     #[error("{0} is an incremental OTA; give a full one")]
