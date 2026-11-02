@@ -101,16 +101,14 @@ enum Inspect {
 #[derive(clap::Args)]
 pub(crate) struct InputArgs {
     /// The ROM being ported, which supplies the system side: a directory of
-    /// <partition>.img images or an OTA package [default: firmware/rom].
+    /// <partition>.img images, or an OTA package, local or an http(s) URL
+    /// [default: firmware/rom].
     #[arg(long)]
-    rom: Option<PathBuf>,
+    rom: Option<String>,
     /// The device's own firmware, which supplies the vendor side, likewise
     /// [default: firmware/stock].
     #[arg(long)]
-    stock: Option<PathBuf>,
-    /// The port to build [default: the one the ROM matches].
-    #[arg(long)]
-    port: Option<String>,
+    stock: Option<String>,
 }
 
 impl InputArgs {
@@ -121,11 +119,9 @@ impl InputArgs {
         extra: &[PathBuf],
     ) -> Result<engine::Plan, Error> {
         let root = engine::profile::find(Path::new("."))?;
-        let port = self.port.clone().map(Name::try_from).transpose()?;
         let inputs = engine::Inputs {
-            rom: self.rom.as_deref(),
-            stock: self.stock.as_deref(),
-            port: port.as_ref(),
+            rom: self.rom.as_deref().map(engine::Given::parse),
+            stock: self.stock.as_deref().map(engine::Given::parse),
         };
         Ok(engine::Plan::load(&root, &inputs, output, extra)?)
     }
