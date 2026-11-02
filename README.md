@@ -84,9 +84,8 @@ flashes the stock OTA's partitions outside `super`, or the images in
 are downloaded, so a CI job can build from links alone:
 `evelyn build --rom <url> --stock <url>`. `--patch <directory>` applies an extra patch for one
 build, such as a debug build's. `--dry-run` applies every patch to the firmware
-but writes no images, and prints the plan with what applied. `evelyn inspect`
-checks images, ports and recipes, and `evelyn patch` turns a hand-edited file
-into a new patch.
+but writes no images, and prints the plan with what applied. `evelyn patch`
+turns a hand-edited file into a new patch.
 
 ## Layout
 

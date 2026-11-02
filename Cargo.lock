@@ -675,11 +675,8 @@ name = "evelyn-cli"
 version = "0.1.0"
 dependencies = [
  "android-firmware",
- "android-fs",
- "android-property",
  "clap",
  "evelyn-engine",
- "evelyn-recipe",
  "serde",
  "serde_json",
  "thiserror",
