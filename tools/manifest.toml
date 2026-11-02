@@ -152,3 +152,17 @@ files = [
     { path = "android-37.0/lib64/libc++.so.1", install = "bin/lib64/libc++.so.1" },
     { path = "android-37.0/NOTICE.txt" },
 ]
+
+# VNDK APEXes for vendors older than Android 15, which ROMs from Android 15 on no
+# longer ship; built from AOSP and published with Evelyn.
+[tools.vndk-v32]
+version = "32"
+source = "https://android.googlesource.com/platform/packages/modules/vndk"
+
+[[tools.vndk-v32.downloads]]
+url = "https://github.com/cyberphantom52/evelyn-rs/releases/download/vndk/com.android.vndk.v32.apex"
+sha256 = "d4cedaf37d6424a6899730a2d867b108f2a47035e300df78420a29ff12e6bd7d"
+format = "raw"
+files = [
+    { path = "com.android.vndk.v32.apex", install = "apex/com.android.vndk.v32.apex" },
+]

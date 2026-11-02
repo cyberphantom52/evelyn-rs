@@ -154,7 +154,7 @@ def validate_manifest(manifest):
                 asset["files"][member] = {"path": path, "executable": executable}
                 if "install" in spec:
                     destination = relative(spec["install"])
-                    if destination.split("/")[0] not in ("bin", "scripts") or "/" not in destination or any(
+                    if destination.split("/")[0] not in ("bin", "scripts", "apex") or "/" not in destination or any(
                         destination == previous or destination.startswith(previous + "/") or previous.startswith(destination + "/")
                         for previous in links
                     ):

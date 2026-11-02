@@ -483,12 +483,15 @@ impl Recipe {
     }
 
     pub fn load(path: &Path) -> Result<Self, Error> {
-        let recipe: Self = ron_options()
-            .from_str(&read(path)?)
-            .map_err(|source| Error::Ron {
-                path: path.into(),
-                source: Box::new(source),
-            })?;
+        Self::parse(&read(path)?, path)
+    }
+
+    /// A recipe from its text, with `path` naming it in errors.
+    pub fn parse(text: &str, path: &Path) -> Result<Self, Error> {
+        let recipe: Self = ron_options().from_str(text).map_err(|source| Error::Ron {
+            path: path.into(),
+            source: Box::new(source),
+        })?;
         recipe.validate()?;
         Ok(recipe)
     }

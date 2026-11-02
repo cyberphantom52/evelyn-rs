@@ -32,6 +32,10 @@ A patch applies only where a port lists it, so two versions share a patch by
 listing it, and a new version starts with nothing until its patches are
 carried over and checked against it.
 
+Every build first applies what Evelyn does for any port: the VNDK APEX a
+vendor older than Android 15 needs, when the ROM lacks it, from `tools/apex/`,
+where `tools/manager.py fetch` puts it.
+
 A port takes the device's own partitions (`vendor`, `odm`, `vendor_dlkm`,
 `odm_dlkm`) from the stock firmware, checked against the build fingerprint
 `evelyn.toml` pins, and `system`, `system_ext`, `product` and `system_dlkm` from the
