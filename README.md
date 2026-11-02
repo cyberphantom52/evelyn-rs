@@ -29,9 +29,12 @@ as globs over properties the ROM sets, such as `"ro.build.version.release" = "17
 under `[rom]`. Porting a new OTA is replacing what `firmware/rom` holds.
 
 A build reads `firmware/rom` and `firmware/stock` as they are: images in place,
-or an OTA package extracted for that build alone, then removed. `evelyn extract`
-replaces a package by its images for good, so builds stop extracting it; a
-directory holding both a package and images is refused.
+or an OTA package, of which it extracts only the partitions it reads, for that
+build alone: the ROM's system side, whose properties pick the port, then what
+the port takes and its patches read, and the device's own partitions of the
+stock firmware. `evelyn extract` replaces a package by its images for good, so
+builds stop extracting it; a directory holding both a package and images is
+refused.
 
 A patch applies only where a port lists it, so two versions share a patch by
 listing it, and a new version starts with nothing until its patches are
@@ -74,10 +77,12 @@ evelyn build
 ```
 
 Everything a build reads has a default, and each can be given instead:
-`--rom` and `--stock` (an OTA package or a directory of images), `--port`,
-`--output partitions|super|zip`, `--output-dir` and `--work-dir`. A ZIP also
+`--rom` and `--stock` (an OTA package, local or an `http(s)://` URL, or a
+directory of images), `--output partitions|super|zip`, `--output-dir` and `--work-dir`. A ZIP also
 flashes the stock OTA's partitions outside `super`, or the images in
-`firmware/stock/firmware/`. `--patch <directory>` applies an extra patch for one
+`firmware/stock/firmware/`. Of a package at a URL, only the partitions extracted
+are downloaded, so a CI job can build from links alone:
+`evelyn build --rom <url> --stock <url>`. `--patch <directory>` applies an extra patch for one
 build, such as a debug build's. `--dry-run` applies every patch to the firmware
 but writes no images, and prints the plan with what applied. `evelyn inspect`
 checks images, ports and recipes, and `evelyn patch` turns a hand-edited file

@@ -13,18 +13,18 @@ pub use authoring::{
     prepare_file, preview_trees,
 };
 pub use build::{BuildRequest, Built, build};
-pub use firmware::{Extracted, extract_in_place};
+pub use firmware::{Extracted, Given, extract_in_place};
 pub use profile::{Profile, init};
 
-use android_firmware::Firmware;
+use android_firmware::Firmware as Source;
 use android_firmware::{Filesystem, Mounts, Name, SourceRef};
 use android_firmware::{STANDARD_SYSTEM, VENDOR_SIDE};
-use android_fs::{Artifact, ImageFormat};
+use android_fs::Artifact;
+use firmware::Firmware;
 use recipe::Recipe;
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::{Path, PathBuf},
 };
 use thiserror::Error;
@@ -91,9 +91,9 @@ pub enum Error {
     #[error("OTA package: {0}")]
     Payload(#[from] payload_dumper::Error),
     #[error("{0} is an incremental OTA; give a full one")]
-    IncrementalOta(PathBuf),
+    IncrementalOta(String),
     #[error("{image}, extracted from {package}, does not match the hash its manifest records")]
-    OtaHash { package: PathBuf, image: PathBuf },
+    OtaHash { package: String, image: PathBuf },
     #[error("{0} holds more than one OTA package")]
     AmbiguousFirmware(PathBuf),
     #[error("{0} holds both an OTA package and images: keep one")]
@@ -102,8 +102,6 @@ pub enum Error {
     NoPort(String),
     #[error("the ROM matches more than one port: {0}")]
     Ports(String),
-    #[error("the ROM is not one port {0} is for")]
-    PortMismatch(Name),
 }
 
 /// What a build produces: partition images, a super image, or a flashable ZIP.
@@ -145,14 +143,12 @@ pub struct PlannedPartition {
 }
 
 /// What a build is of, where it is not the repository's default: each firmware a
-/// directory of partition images or an OTA package, by default `firmware/rom` and
-/// `firmware/stock` in the repository, and the port, by default the one the ROM
-/// matches.
+/// directory of partition images or an OTA package, local or a URL, by default
+/// `firmware/rom` and `firmware/stock` in the repository.
 #[derive(Default)]
-pub struct Inputs<'a> {
-    pub rom: Option<&'a Path>,
-    pub stock: Option<&'a Path>,
-    pub port: Option<&'a Name>,
+pub struct Inputs {
+    pub rom: Option<Given>,
+    pub stock: Option<Given>,
 }
 
 /// Recipes every build applies before the port's patches, by name and text.
@@ -172,46 +168,43 @@ pub struct Plan {
     pub firmware: Vec<PathBuf>,
     /// ROM partitions the port does not take.
     pub ignored: Vec<Name>,
-    /// OTA packages' images, extracted for this plan and removed with it.
+    /// The ROM and stock firmware, whose packages' images, extracted for this
+    /// plan, are removed with it.
     #[serde(skip)]
-    _scratch: Vec<firmware::Scratch>,
+    _firmware: [Firmware; 2],
 }
 
 impl Plan {
     /// Plan a build of the repository at `root` from `inputs`: the recipes built
     /// into Evelyn, the port's patches, then `extra` patch directories. Without
     /// an output, a device with a `super` layout gets a super image, and one
-    /// without, partition images. Firmware given as an OTA package is extracted
-    /// into `.evelyn/firmware`, kept only as long as the plan.
+    /// without, partition images. Of firmware given as an OTA package, only the
+    /// partitions the build reads are extracted, into `.evelyn/firmware`, kept
+    /// only as long as the plan: the ROM's system side first, whose properties
+    /// pick the port, then what the port takes and its patches read.
     pub fn load(
         root: &Path,
-        inputs: &Inputs<'_>,
+        inputs: &Inputs,
         output: Option<Output>,
         extra: &[PathBuf],
     ) -> Result<Self, Error> {
-        let given = |input: Option<&Path>, default: &str| {
-            input.map_or_else(|| root.join("firmware").join(default), Path::to_path_buf)
+        let given = |input: &Option<Given>, default: &str| {
+            input
+                .clone()
+                .unwrap_or_else(|| Given::Path(root.join("firmware").join(default)))
         };
-        let extracted = root.join(".evelyn").join("firmware");
-        let (rom_dir, rom_scratch) =
-            firmware::images(&given(inputs.rom, "rom"), &extracted.join("rom"), false)?;
-        let (stock_dir, stock_scratch) = firmware::images(
-            &given(inputs.stock, "stock"),
-            &extracted.join("stock"),
-            true,
-        )?;
-        let rom = filesystems(images(&rom_dir)?)?;
-        let stock = filesystems(images(&stock_dir)?)?;
+        let scratch = root.join(".evelyn").join("firmware");
+        let mut rom = Firmware::open(&given(&inputs.rom, "rom"), &scratch.join("rom"))?;
+        let mut stock = Firmware::open(&given(&inputs.stock, "stock"), &scratch.join("stock"))?;
 
+        let system: Vec<Name> = rom
+            .names()
+            .filter(|name| STANDARD_SYSTEM.contains(&name.as_ref()))
+            .cloned()
+            .collect();
+        rom.extract(&system)?;
         let properties = rom_properties(&rom)?;
-        let name = match inputs.port {
-            Some(port) => port.clone(),
-            None => port_for(root, &properties)?,
-        };
-        let profile = Profile::load(root, &name)?;
-        if !profile.port.matches(&properties) {
-            return Err(Error::PortMismatch(name));
-        }
+        let profile = Profile::load(root, &port_for(root, &properties)?)?;
         let output = output.unwrap_or(match profile.device.super_layout {
             Some(_) => Output::Super,
             None => Output::Partitions,
@@ -260,7 +253,7 @@ impl Plan {
 
         let mut partitions = Vec::new();
         let mut ignored = Vec::new();
-        let mut plan_partition = |name: &Name, source: Firmware| -> Result<(), Error> {
+        let mut plan_partition = |name: &Name, source: Source| -> Result<(), Error> {
             let settings = profile
                 .settings(name.as_ref())?
                 .cloned()
@@ -278,17 +271,18 @@ impl Plan {
             });
             Ok(())
         };
+        let rom_names: Vec<Name> = rom.names().cloned().collect();
         for name in STANDARD_SYSTEM {
-            if let Some(name) = rom.keys().find(|key| key.as_ref() == name) {
-                plan_partition(name, Firmware::Rom)?;
+            if let Some(name) = rom_names.iter().find(|key| key.as_ref() == name) {
+                plan_partition(name, Source::Rom)?;
             }
         }
-        for name in rom.keys() {
+        for name in &rom_names {
             if STANDARD_SYSTEM.contains(&name.as_ref()) || profile.is_vendor_side(name.as_ref()) {
                 continue;
             }
             if profile.takes_from_rom(name.as_ref()) {
-                plan_partition(name, Firmware::Rom)?;
+                plan_partition(name, Source::Rom)?;
             } else {
                 tracing::warn!(partition = %name, "the ROM's partition is not in port.toml; leaving it out");
                 ignored.push(name.clone());
@@ -300,30 +294,43 @@ impl Plan {
             .device
             .partitions
             .keys()
-            .find(|name| !stock.contains_key(*name))
+            .find(|name| !stock.has(name.as_ref()))
         {
             return Err(Error::MissingStockPartition(missing.clone()));
         }
-        let mut device: Vec<&Name> = stock
-            .keys()
+        let mut device: Vec<Name> = stock
+            .names()
             .filter(|name| {
                 VENDOR_SIDE.contains(&name.as_ref())
                     || profile.device.partitions.contains_key(*name)
             })
+            .cloned()
             .collect();
-        device.sort_by_key(|name| Profile::device_order(name));
-        for name in device {
-            check_fingerprint(name, &stock[name], &profile.device.stock.fingerprint)?;
-            plan_partition(name, Firmware::Stock)?;
+        device.sort_by_key(Profile::device_order);
+        stock.extract(&device)?;
+        for name in &device {
+            let image = stock.image(name).expect("extracted");
+            check_fingerprint(name, image, &profile.device.stock.fingerprint)?;
+            plan_partition(name, Source::Stock)?;
         }
 
+        let required = required_sources(&partitions, &recipes)?;
+        let of = |source: Source| -> Vec<Name> {
+            required
+                .iter()
+                .filter(|required| required.source == source)
+                .map(|required| required.partition.clone())
+                .collect()
+        };
+        rom.extract(&of(Source::Rom))?;
+        stock.extract(&of(Source::Stock))?;
         let mut sources = Vec::new();
-        for source in required_sources(&partitions, &recipes)? {
+        for source in required {
             let images = match source.source {
-                Firmware::Rom => &rom,
-                Firmware::Stock => &stock,
+                Source::Rom => &rom,
+                Source::Stock => &stock,
             };
-            let Some(image) = images.get(&source.partition) else {
+            let Some(image) = images.image(&source.partition) else {
                 // Steps that run check their imports; a skipped step needs none.
                 continue;
             };
@@ -332,15 +339,10 @@ impl Plan {
                 source,
             });
         }
-        // A flashable ZIP also flashes every image in the stock firmware's firmware/.
-        let firmware_images = if output == Output::Zip {
-            let directory = stock_dir.join("firmware");
-            if !directory.is_dir() {
-                return Err(Error::MissingFirmware(directory));
-            }
-            images(&directory)?.into_values().collect()
-        } else {
-            Vec::new()
+        // A flashable ZIP also flashes the stock firmware's partitions outside super.
+        let firmware_images = match output {
+            Output::Zip => stock.firmware_images()?,
+            _ => Vec::new(),
         };
         Ok(Self {
             profile,
@@ -350,7 +352,7 @@ impl Plan {
             recipes,
             firmware: firmware_images,
             ignored,
-            _scratch: rom_scratch.into_iter().chain(stock_scratch).collect(),
+            _firmware: [rom, stock],
         })
     }
 }
@@ -375,10 +377,12 @@ fn check_fingerprint(partition: &Name, image: &Path, expected: &str) -> Result<(
 
 /// The properties the ROM's standard system side sets, in the order init loads
 /// them, a later assignment of a key winning.
-fn rom_properties(rom: &BTreeMap<Name, PathBuf>) -> Result<BTreeMap<String, String>, Error> {
+fn rom_properties(rom: &Firmware) -> Result<BTreeMap<String, String>, Error> {
     let mut properties = BTreeMap::new();
     for name in STANDARD_SYSTEM {
-        if let Some((partition, image)) = rom.iter().find(|(key, _)| key.as_ref() == name) {
+        if let Some(partition) = rom.names().find(|key| key.as_ref() == name)
+            && let Some(image) = rom.image(partition)
+        {
             properties.extend(loaded(partition, image)?);
         }
     }
@@ -455,40 +459,6 @@ fn loaded(partition: &Name, image: &Path) -> Result<BTreeMap<String, String>, Er
         }
     }
     Ok(assigned)
-}
-
-/// The `<partition>.img` files in a firmware directory.
-fn images(directory: &Path) -> Result<BTreeMap<Name, PathBuf>, Error> {
-    let mut images = BTreeMap::new();
-    for entry in fs::read_dir(directory)? {
-        let path = entry?.path();
-        let Some(stem) = path
-            .extension()
-            .is_some_and(|extension| extension == "img")
-            .then(|| path.file_stem())
-            .flatten()
-        else {
-            continue;
-        };
-        let Ok(name) = Name::try_from(stem.to_string_lossy().into_owned()) else {
-            continue;
-        };
-        if path.is_file() {
-            images.insert(name, path);
-        }
-    }
-    Ok(images)
-}
-
-/// The filesystem images (EROFS or ext4, raw or sparse) among `images`.
-fn filesystems(images: BTreeMap<Name, PathBuf>) -> Result<BTreeMap<Name, PathBuf>, Error> {
-    let mut filesystems = BTreeMap::new();
-    for (name, path) in images {
-        if ImageFormat::detect(&path)? != ImageFormat::Unknown {
-            filesystems.insert(name, path);
-        }
-    }
-    Ok(filesystems)
 }
 
 /// Partition bases plus the firmware partition of every import, deduplicated.
