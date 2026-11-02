@@ -120,7 +120,9 @@ pub struct PlannedSource {
 
 #[derive(Debug, Serialize)]
 pub struct PlannedRecipe {
-    pub path: PathBuf,
+    /// The patch's `patch.ron`, its assets beside it; `None` for a recipe built
+    /// into Evelyn, whose assets are in the tools.
+    pub path: Option<PathBuf>,
     pub recipe: Recipe,
     /// The recipe as primitives, which is what is checked and applied.
     #[serde(skip)]
@@ -150,6 +152,9 @@ pub struct Inputs<'a> {
     pub port: Option<&'a Name>,
 }
 
+/// Recipes every build applies before the port's patches, by name and text.
+const BUILT_IN: [(&str, &str); 1] = [("vndk.ron", include_str!("vndk.ron"))];
+
 /// A port with its recipes loaded and the partitions the firmware supplies resolved.
 #[derive(Debug, Serialize)]
 pub struct Plan {
@@ -166,8 +171,8 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Plan a build of the repository at `root` from `inputs`: the port's patches,
-    /// then `extra` patch directories. Without an output, a device with a `super`
+    /// Plan a build of the repository at `root` from `inputs`: the recipes built
+    /// into Evelyn, the port's patches, then `extra` patch directories. Without an output, a device with a `super`
     /// layout gets a super image, and one without, partition images.
     pub fn load(
         root: &Path,
@@ -205,17 +210,19 @@ impl Plan {
             return Err(Error::MissingLayout);
         }
         let mut recipes = Vec::new();
-        let mut step_ids = BTreeSet::new();
+        for (name, text) in BUILT_IN {
+            let recipe = Recipe::parse(text, Path::new(name))?;
+            let tree = recipe.tree()?;
+            recipes.push(PlannedRecipe {
+                path: None,
+                recipe,
+                tree,
+            });
+        }
         let extra = extra.iter().map(|patch| patch.join(profile::PATCH));
         for recipe_path in profile.patches().into_iter().chain(extra) {
             let recipe = Recipe::load(&recipe_path)?;
             let tree = recipe.tree()?;
-            profile.validate_recipe(&tree)?;
-            for step in &recipe.steps {
-                if !step_ids.insert(step.id.clone()) {
-                    return Err(Error::DuplicateStep(step.id.clone()));
-                }
-            }
             let assets = recipe_path.parent().unwrap_or(Path::new("."));
             let mut needed = needs::Assets::default();
             tree.walk(&mut needed)?;
@@ -226,10 +233,19 @@ impl Plan {
                 }
             }
             recipes.push(PlannedRecipe {
-                path: recipe_path,
+                path: Some(recipe_path),
                 recipe,
                 tree,
             });
+        }
+        let mut step_ids = BTreeSet::new();
+        for planned in &recipes {
+            profile.validate_recipe(&planned.tree)?;
+            for step in &planned.recipe.steps {
+                if !step_ids.insert(step.id.clone()) {
+                    return Err(Error::DuplicateStep(step.id.clone()));
+                }
+            }
         }
 
         let mut partitions = Vec::new();

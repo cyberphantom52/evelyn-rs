@@ -36,6 +36,10 @@ impl Tools {
         Self { root: root.into() }
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// A Java tool from `scripts/`, run with the host `java`.
     pub fn jar(&self, name: &str) -> Result<Command, Error> {
         let path = self.file(&format!("scripts/{name}"))?;

@@ -227,7 +227,10 @@ fn compose(
             sources,
             images,
             tools: request.tools,
-            assets: planned.path.parent().unwrap_or(Path::new(".")),
+            assets: match &planned.path {
+                Some(path) => path.parent().unwrap_or(Path::new(".")),
+                None => request.tools.root(),
+            },
             packages: &packages,
             mounts,
         };
