@@ -21,12 +21,17 @@ patches/<topic>/<name>/patch.ron  one patch, with its assets beside it
 firmware/stock/        the device's stock firmware: a full OTA package or <partition>.img images
 firmware/rom/          the ROM being ported, likewise
 out/<port>/            what a build writes
-.evelyn/               extracted firmware, scans and composed trees kept between builds
+.evelyn/               scans kept between builds, and each build's working space
 ```
 
 A build takes the port the ROM matches: each port says which builds it is for
 as globs over properties the ROM sets, such as `"ro.build.version.release" = "17"`
 under `[rom]`. Porting a new OTA is replacing what `firmware/rom` holds.
+
+A build reads `firmware/rom` and `firmware/stock` as they are: images in place,
+or an OTA package extracted for that build alone, then removed. `evelyn extract`
+replaces a package by its images for good, so builds stop extracting it; a
+directory holding both a package and images is refused.
 
 A patch applies only where a port lists it, so two versions share a patch by
 listing it, and a new version starts with nothing until its patches are

@@ -54,6 +54,13 @@ enum Command {
         #[arg(long = "patch")]
         patches: Vec<PathBuf>,
     },
+    /// Replace the OTA package in firmware/rom or firmware/stock, or both, by its
+    /// images, so builds read them in place instead of extracting the package
+    /// each time. Images an earlier extraction left there are replaced.
+    Extract {
+        #[arg(value_enum)]
+        firmware: Option<FirmwareArg>,
+    },
     /// Download every file builds need that Evelyn lacks, check those it has,
     /// generate the signing key if there is none, and check for Java.
     Check,
@@ -125,6 +132,12 @@ impl InputArgs {
         };
         Ok(engine::Plan::load(&root, &inputs, output, extra)?)
     }
+}
+
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum FirmwareArg {
+    Rom,
+    Stock,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -235,6 +248,17 @@ fn run(cli: Cli) -> Result<(), Error> {
             print(&serde_json::json!({ "repository": repository, "checked": checked }))
         }
         Command::Check => print(&check(&toolchain::Tools::user()?)?),
+        Command::Extract { firmware } => {
+            let root = engine::profile::find(Path::new("."))?;
+            let mut extracted = Vec::new();
+            for (side, name) in [(FirmwareArg::Rom, "rom"), (FirmwareArg::Stock, "stock")] {
+                if firmware.is_none_or(|firmware| firmware == side) {
+                    let dir = root.join("firmware").join(name);
+                    extracted.extend(engine::extract_in_place(&dir, side == FirmwareArg::Stock)?);
+                }
+            }
+            print(&extracted)
+        }
         Command::Build {
             inputs,
             output,

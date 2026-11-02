@@ -13,6 +13,7 @@ pub use authoring::{
     prepare_file, preview_trees,
 };
 pub use build::{BuildRequest, Built, build};
+pub use firmware::{Extracted, extract_in_place};
 pub use profile::{Profile, init};
 
 use android_firmware::Firmware;
@@ -95,6 +96,8 @@ pub enum Error {
     OtaHash { package: PathBuf, image: PathBuf },
     #[error("{0} holds more than one OTA package")]
     AmbiguousFirmware(PathBuf),
+    #[error("{0} holds both an OTA package and images: keep one")]
+    MixedFirmware(PathBuf),
     #[error("the ROM matches no port ({0})")]
     NoPort(String),
     #[error("the ROM matches more than one port: {0}")]
@@ -169,12 +172,17 @@ pub struct Plan {
     pub firmware: Vec<PathBuf>,
     /// ROM partitions the port does not take.
     pub ignored: Vec<Name>,
+    /// OTA packages' images, extracted for this plan and removed with it.
+    #[serde(skip)]
+    _scratch: Vec<firmware::Scratch>,
 }
 
 impl Plan {
     /// Plan a build of the repository at `root` from `inputs`: the recipes built
-    /// into Evelyn, the port's patches, then `extra` patch directories. Without an output, a device with a `super`
-    /// layout gets a super image, and one without, partition images.
+    /// into Evelyn, the port's patches, then `extra` patch directories. Without
+    /// an output, a device with a `super` layout gets a super image, and one
+    /// without, partition images. Firmware given as an OTA package is extracted
+    /// into `.evelyn/firmware`, kept only as long as the plan.
     pub fn load(
         root: &Path,
         inputs: &Inputs<'_>,
@@ -185,8 +193,9 @@ impl Plan {
             input.map_or_else(|| root.join("firmware").join(default), Path::to_path_buf)
         };
         let extracted = root.join(".evelyn").join("firmware");
-        let rom_dir = firmware::images(&given(inputs.rom, "rom"), &extracted.join("rom"), false)?;
-        let stock_dir = firmware::images(
+        let (rom_dir, rom_scratch) =
+            firmware::images(&given(inputs.rom, "rom"), &extracted.join("rom"), false)?;
+        let (stock_dir, stock_scratch) = firmware::images(
             &given(inputs.stock, "stock"),
             &extracted.join("stock"),
             true,
@@ -341,6 +350,7 @@ impl Plan {
             recipes,
             firmware: firmware_images,
             ignored,
+            _scratch: rom_scratch.into_iter().chain(stock_scratch).collect(),
         })
     }
 }
