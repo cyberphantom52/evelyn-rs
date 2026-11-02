@@ -1,11 +1,7 @@
 mod patch;
 
-use android_firmware::Name;
-use android_fs::Artifact;
 use clap::{Parser, Subcommand, ValueEnum};
 use engine::Output;
-use engine::Profile;
-use recipe::Recipe;
 use serde::Serialize;
 use std::{
     io::{self, Write},
@@ -73,28 +69,6 @@ enum Command {
         #[command(subcommand)]
         action: patch::Command,
     },
-    /// Inspect an image, profile or recipe.
-    Inspect {
-        #[command(subcommand)]
-        item: Inspect,
-    },
-}
-
-#[derive(Subcommand)]
-enum Inspect {
-    /// Hash an image and identify its format.
-    Image { path: PathBuf },
-    /// Parse and validate the current repository's ports, or one of them, and
-    /// list the patches each applies.
-    Profile { port: Option<String> },
-    /// Parse and validate a RON recipe.
-    Recipe { path: PathBuf },
-    /// List the properties in an image's *.prop files, read without extracting it.
-    Props {
-        image: PathBuf,
-        /// Only this key, with the file each definition comes from.
-        key: Option<String>,
-    },
 }
 
 /// What a build is of, where it is not the repository's default.
@@ -155,13 +129,9 @@ enum Error {
     #[error(transparent)]
     Firmware(#[from] android_firmware::Error),
     #[error(transparent)]
-    Recipe(#[from] recipe::Error),
-    #[error(transparent)]
     Engine(#[from] engine::Error),
     #[error(transparent)]
     Profile(#[from] engine::profile::Error),
-    #[error(transparent)]
-    Image(#[from] android_fs::Error),
     #[error(transparent)]
     Toolchain(#[from] toolchain::Error),
     #[error("Java is needed for apktool and apksigner: {0}")]
@@ -280,40 +250,6 @@ fn run(cli: Cli) -> Result<(), Error> {
             }
         }
         Command::Patch { action } => patch::run(action),
-        Command::Inspect { item } => match item {
-            Inspect::Image { path } => print(&Artifact::inspect(&path)?),
-            Inspect::Profile { port } => {
-                let root = engine::profile::find(Path::new("."))?;
-                let names = match port {
-                    Some(port) => vec![Name::try_from(port)?],
-                    None => engine::profile::ports(&root)?.into_keys().collect(),
-                };
-                let mut profiles = Vec::new();
-                for name in names {
-                    let profile = Profile::load(&root, &name)?;
-                    profiles.push(
-                        serde_json::json!({ "profile": profile, "patches": profile.patches() }),
-                    );
-                }
-                print(&profiles)
-            }
-            Inspect::Recipe { path } => print(&Recipe::load(&path)?),
-            Inspect::Props { image, key } => {
-                let source = android_fs::Image::detect(&image)?;
-                let mut found = Vec::new();
-                for (file, data) in source.read_files(android_property::is_property_file)? {
-                    let text = String::from_utf8_lossy(&data);
-                    for entry in android_property::entries(&text) {
-                        if key.as_deref().is_none_or(|key| key == entry.key) {
-                            found.push(serde_json::json!({
-                                "file": file, "key": entry.key, "value": entry.value,
-                            }));
-                        }
-                    }
-                }
-                print(&found)
-            }
-        },
     }
 }
 
