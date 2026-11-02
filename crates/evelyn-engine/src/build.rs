@@ -28,10 +28,13 @@ pub struct BuildRequest<'a> {
     pub tools: &'a Tools,
     pub work_dir: &'a Path,
     pub output_dir: &'a Path,
+    /// Compose and apply every recipe, but build and write no images.
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct Built {
+    /// What was written; nothing for a dry run.
     pub outputs: Vec<PathBuf>,
     /// Steps whose bindings or condition did not apply here.
     pub skipped: Vec<patch::Skipped>,
@@ -59,6 +62,14 @@ pub fn build(request: &BuildRequest<'_>) -> Result<Built, Error> {
         tracing::warn!(step = %unchanged.step, pattern = %unchanged.pattern, "SetMetadata sets what is already there");
     }
     crate::fstab::check(&targets, &images)?;
+    if request.dry_run {
+        return Ok(Built {
+            outputs: Vec::new(),
+            skipped: report.skipped,
+            unchanged: report.unchanged,
+            ignored: plan.ignored.clone(),
+        });
+    }
     let output = request.work_dir.join("images");
     reset(&output)?;
     // Builds `partition` into `to`: a region of `super`, or its own image file.

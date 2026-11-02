@@ -78,9 +78,10 @@ Everything a build reads has a default, and each can be given instead:
 `--output partitions|super|zip`, `--output-dir` and `--work-dir`. A ZIP also
 flashes the stock OTA's partitions outside `super`, or the images in
 `firmware/stock/firmware/`. `--patch <directory>` applies an extra patch for one
-build, such as a debug build's. `evelyn plan` shows what a build would do,
-`evelyn inspect` checks images, ports and recipes, and `evelyn patch` turns a
-hand-edited file into a new patch.
+build, such as a debug build's. `--dry-run` applies every patch to the firmware
+but writes no images, and prints the plan with what applied. `evelyn inspect`
+checks images, ports and recipes, and `evelyn patch` turns a hand-edited file
+into a new patch.
 
 ## Layout
 
