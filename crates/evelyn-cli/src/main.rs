@@ -24,7 +24,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Set up a device repository, which ports one ROM to one device.
+    /// Set up a device repository, which ports one ROM to one device, and check
+    /// what builds need, as `check` does.
     Init {
         /// The repository's directory [default: the current directory].
         dir: Option<PathBuf>,
@@ -49,14 +50,13 @@ enum Command {
         /// Where the built images or ZIP are written [default: out/<port> in the repository].
         #[arg(long)]
         output_dir: Option<PathBuf>,
-        /// Directory populated by tools/manager.py [default: tools in the Evelyn
-        /// checkout this was built from].
-        #[arg(long)]
-        tools: Option<PathBuf>,
         /// An extra patch directory, applied after the port's.
         #[arg(long = "patch")]
         patches: Vec<PathBuf>,
     },
+    /// Download every file builds need that Evelyn lacks, check those it has,
+    /// generate the signing key if there is none, and check for Java.
+    Check,
     /// Author and replay recipes against extracted partition trees.
     Patch {
         #[command(subcommand)]
@@ -156,18 +156,59 @@ enum Error {
     Profile(#[from] engine::profile::Error),
     #[error(transparent)]
     Image(#[from] android_fs::Error),
+    #[error(transparent)]
+    Toolchain(#[from] toolchain::Error),
+    #[error("Java is needed for apktool and apksigner: {0}")]
+    Java(String),
+    #[error("{0} of what builds need could not be set up")]
+    Unchecked(usize),
     #[error("cannot write JSON result: {0}")]
     Json(#[from] serde_json::Error),
     #[error("cannot write output: {0}")]
     Output(#[from] io::Error),
 }
 
-/// `--tools` as given, else `tools` in the Evelyn checkout this was built from,
-/// where tools/manager.py installs them.
-pub(crate) fn tools_or_default(tools: Option<PathBuf>) -> toolchain::Tools {
-    toolchain::Tools::new(
-        tools.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools")),
-    )
+/// What builds need beyond Evelyn, each with its state: Java, the pinned files
+/// and the signing key, printed whether or not some fail.
+fn check(tools: &toolchain::Tools) -> Result<serde_json::Value, Error> {
+    let java = match std::process::Command::new("java").arg("-version").output() {
+        Ok(output) if output.status.success() => Ok(String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned()),
+        Ok(output) => Err(String::from_utf8_lossy(&output.stderr).into_owned()),
+        Err(error) => Err(error.to_string()),
+    };
+    let mut failed = 0;
+    let mut checked = vec![match java {
+        Ok(version) => {
+            serde_json::json!({ "name": "java", "state": "present", "version": version })
+        }
+        Err(error) => {
+            failed += 1;
+            serde_json::json!({ "name": "java", "state": "failed", "error": Error::Java(error).to_string() })
+        }
+    }];
+    for status in tools.check() {
+        let (state, error) = match status.state {
+            Ok(toolchain::State::Present) => ("present", None),
+            Ok(toolchain::State::New) => ("new", None),
+            Err(error) => {
+                failed += 1;
+                ("failed", Some(error.to_string()))
+            }
+        };
+        checked.push(serde_json::json!({
+            "name": status.name, "path": status.path, "state": state, "error": error,
+        }));
+    }
+    let checked = serde_json::Value::from(checked);
+    if failed > 0 {
+        print(&checked)?;
+        return Err(Error::Unchecked(failed));
+    }
+    Ok(checked)
 }
 
 /// `--work-dir` as given, else `.evelyn` in the port's repository.
@@ -184,17 +225,21 @@ fn print(value: &impl Serialize) -> Result<(), Error> {
 
 fn run(cli: Cli) -> Result<(), Error> {
     match cli.command {
-        Command::Init { dir, device, rom } => print(&engine::init(
-            &dir.unwrap_or_else(|| PathBuf::from(".")),
-            &device.try_into()?,
-            &rom.try_into()?,
-        )?),
+        Command::Init { dir, device, rom } => {
+            let repository = engine::init(
+                &dir.unwrap_or_else(|| PathBuf::from(".")),
+                &device.try_into()?,
+                &rom.try_into()?,
+            )?;
+            let checked = check(&toolchain::Tools::user()?)?;
+            print(&serde_json::json!({ "repository": repository, "checked": checked }))
+        }
+        Command::Check => print(&check(&toolchain::Tools::user()?)?),
         Command::Build {
             inputs,
             output,
             work_dir,
             output_dir,
-            tools,
             patches,
         } => {
             let plan = inputs.plan(output.map(Output::from), &patches)?;
@@ -205,7 +250,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                     .join(plan.profile.name.as_ref())
             });
             print(&engine::build(&engine::BuildRequest {
-                tools: &tools_or_default(tools),
+                tools: &toolchain::Tools::user()?,
                 work_dir: &resolve_work_dir(work_dir, &plan),
                 output_dir: &output_dir,
                 plan: &plan,

@@ -153,7 +153,8 @@ pub struct Inputs<'a> {
 }
 
 /// Recipes every build applies before the port's patches, by name and text.
-const BUILT_IN: [(&str, &str); 1] = [("vndk.ron", include_str!("vndk.ron"))];
+const BUILT_IN: [(&str, &str); 1] =
+    [("vndk.ron", include_str!("../../../assets/recipes/vndk.ron"))];
 
 /// A port with its recipes loaded and the partitions the firmware supplies resolved.
 #[derive(Debug, Serialize)]

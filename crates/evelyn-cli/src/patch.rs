@@ -17,10 +17,6 @@ pub(crate) enum Command {
         /// Where to put the editable copy.
         #[arg(long, default_value = "dev")]
         into: PathBuf,
-        /// Directory populated by tools/manager.py [default: tools in the Evelyn
-        /// checkout this was built from].
-        #[arg(long)]
-        tools: Option<PathBuf>,
     },
     /// Capture the edited copy as a new patch directory.
     Capture {
@@ -63,11 +59,10 @@ pub(crate) fn run(command: Command) -> Result<(), Error> {
             path,
             work_dir,
             into,
-            tools,
         } => {
             let plan = inputs.plan(Some(engine::Output::Partitions), &[])?;
             print(&engine::prepare_file(engine::PrepareRequest {
-                tools: &crate::tools_or_default(tools),
+                tools: &toolchain::Tools::user()?,
                 work_dir: &crate::resolve_work_dir(work_dir, &plan),
                 plan: &plan,
                 path: path.try_into()?,

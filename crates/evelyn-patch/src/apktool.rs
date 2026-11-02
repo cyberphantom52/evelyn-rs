@@ -22,7 +22,7 @@ pub fn decode(
 }
 
 /// Rebuild a decoded package and align it to `output`. APKs are then signed with
-/// Evelyn's key in `tools/keys`; JARs are not verified and stay unsigned.
+/// Evelyn's key; JARs are not verified and stay unsigned.
 pub fn build(tools: &Tools, decoded: &Path, output: &Path, sign: bool) -> Result<(), crate::Error> {
     let unaligned = output.with_extension("unaligned");
     let aligned = output.with_extension("aligned");
@@ -37,15 +37,15 @@ pub fn build(tools: &Tools, decoded: &Path, output: &Path, sign: bool) -> Result
     crate::align::align(&unaligned, if sign { &aligned } else { output })?;
     let _ = std::fs::remove_file(unaligned);
     if sign {
-        let keys = tools.file("keys")?;
+        let keys = tools.keys()?;
         toolchain::run(
             tools
                 .jar("apksigner.jar")?
                 .args(["sign", "--v4-signing-enabled", "false"])
-                .arg("--ks")
-                .arg(keys.join("evelyn.p12"))
-                .args(["--ks-key-alias", "evelyn", "--ks-pass"])
-                .arg(format!("file:{}", keys.join("password").display()))
+                .arg("--key")
+                .arg(&keys.key)
+                .arg("--cert")
+                .arg(&keys.certificate)
                 .arg("--in")
                 .arg(&aligned)
                 .arg("--out")
