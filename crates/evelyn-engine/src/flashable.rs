@@ -11,9 +11,23 @@ use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 const UPDATE_BINARY: &str = "META-INF/com/google/android/update-binary";
 
+/// The installer files, with `INSERT_DEVICE_ID` in update-binary.
+const TEMPLATE: [(&str, &[u8]); 3] = [
+    (
+        UPDATE_BINARY,
+        include_bytes!("../../../assets/flashable/META-INF/com/google/android/update-binary"),
+    ),
+    (
+        "META-INF/com/google/android/updater-script",
+        include_bytes!("../../../assets/flashable/META-INF/com/google/android/updater-script"),
+    ),
+    (
+        "META-INF/zstd",
+        include_bytes!("../../../assets/flashable/META-INF/zstd"),
+    ),
+];
+
 pub(crate) struct Package<'a> {
-    /// The installer files: `META-INF/...`, with `INSERT_DEVICE_ID` in update-binary.
-    pub template: &'a Path,
     pub device: &'a str,
     pub super_image: &'a Path,
     pub firmware: &'a [PathBuf],
@@ -24,14 +38,14 @@ pub(crate) fn write(package: &Package<'_>, output: &Path) -> Result<(), Error> {
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Stored)
         .unix_permissions(0o644);
-    for (name, path) in toolchain::files(package.template)? {
-        let mut bytes = fs::read(&path)?;
-        if name == UPDATE_BINARY {
-            let text = String::from_utf8_lossy(&bytes).replace("INSERT_DEVICE_ID", package.device);
-            bytes = text.into_bytes();
-        }
+    for (name, bytes) in TEMPLATE {
         zip.start_file(name, options)?;
-        zip.write_all(&bytes)?;
+        if name == UPDATE_BINARY {
+            let text = String::from_utf8_lossy(bytes).replace("INSERT_DEVICE_ID", package.device);
+            zip.write_all(text.as_bytes())?;
+        } else {
+            zip.write_all(bytes)?;
+        }
     }
     compress(&mut zip, package.super_image, "super.img.zst")?;
     let mut names = String::new();

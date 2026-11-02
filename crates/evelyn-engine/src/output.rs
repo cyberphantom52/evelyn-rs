@@ -27,7 +27,6 @@ pub(crate) fn publish(request: &BuildRequest<'_>, images: Written) -> Result<Vec
                 .join(format!("{}.zip", profile.device.name));
             crate::flashable::write(
                 &crate::flashable::Package {
-                    template: &request.tools.file("packaging/template")?,
                     device: &profile.device.product_ids[0],
                     super_image: &super_image,
                     firmware: &request.plan.firmware,

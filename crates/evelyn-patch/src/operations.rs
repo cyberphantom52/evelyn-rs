@@ -293,7 +293,7 @@ pub(crate) fn transformed(
 
     let asset_path =
         |expr: &Expr| Ok::<_, Error>(RelativePath::try_from(literal(expr)?.to_owned())?);
-    let asset = |expr: &Expr| text(&std::fs::read(asset_path(expr)?.resolve(context.assets))?);
+    let asset = |expr: &Expr| text(&std::fs::read(context.asset(&asset_path(expr)?)?)?);
     Ok(match transform {
         Transform::WriteBytes(edits) => crate::binary::apply(bytes, edits)?,
         Transform::Xml(edits) => {

@@ -156,7 +156,7 @@ impl Scope<'_> {
     /// An asset, a file or directory, by its path in the recipe's directory.
     fn select_asset(&self, pattern: &str) -> Result<Vec<Located>, Error> {
         let path = RelativePath::try_from(pattern.to_owned())?;
-        Ok(match path.resolve(self.context.assets).exists() {
+        Ok(match self.context.has_asset(&path) {
             true => vec![Located {
                 place: Place::Asset,
                 partition: Name::try_from("assets".to_owned())?,
@@ -483,7 +483,7 @@ impl Scope<'_> {
     /// The content of a selected file: in the build, a firmware or the open package.
     pub(crate) fn content(&self, entry: &Located) -> Result<Vec<u8>, Error> {
         match entry.place {
-            Place::Asset => Ok(std::fs::read(entry.path.resolve(self.context.assets))?),
+            Place::Asset => Ok(std::fs::read(self.context.asset(&entry.path)?)?),
             Place::Build => self
                 .targets
                 .get(&entry.partition)

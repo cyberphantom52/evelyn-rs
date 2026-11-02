@@ -22,7 +22,7 @@ use recipe::{
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::Path,
+    path::{Path, PathBuf},
 };
 use toolchain::Tools;
 
@@ -35,8 +35,9 @@ pub struct Context<'a> {
     /// The open source images that untouched file contents are read from.
     pub images: &'a Images,
     pub tools: &'a Tools,
-    /// The recipe's directory; asset paths resolve below it.
-    pub assets: &'a Path,
+    /// The recipe's directory, which asset paths resolve below; `None` for a
+    /// recipe built into Evelyn, whose assets are files Evelyn downloads.
+    pub assets: Option<&'a Path>,
     /// Scratch directory for decoded packages.
     pub packages: &'a Path,
     /// Where each partition is mounted, for resolving device paths.
@@ -44,6 +45,23 @@ pub struct Context<'a> {
 }
 
 impl Context<'_> {
+    /// Where an asset is, downloading it first for a recipe built into Evelyn.
+    pub(crate) fn asset(&self, path: &RelativePath) -> Result<PathBuf, Error> {
+        match self.assets {
+            Some(dir) => Ok(path.resolve(dir)),
+            None => Ok(self.tools.file(path.as_ref())?),
+        }
+    }
+
+    /// Whether an asset is there: for a recipe built into Evelyn, whether Evelyn
+    /// has it pinned.
+    pub(crate) fn has_asset(&self, path: &RelativePath) -> bool {
+        match self.assets {
+            Some(dir) => path.resolve(dir).exists(),
+            None => self.tools.pinned(path.as_ref()),
+        }
+    }
+
     /// The scanned tree of a firmware's partition.
     pub(crate) fn source(&self, source: &SourceRef) -> Result<&PartitionTree, Error> {
         self.sources
@@ -460,7 +478,7 @@ impl Composition {
         context: &Context<'_>,
         step: &Name,
     ) -> Result<(), Error> {
-        let source = asset.resolve(context.assets);
+        let source = context.asset(asset)?;
         if let Some(package) = &self.package {
             let inside = RelativePath::try_from(to.to_string()[1..].to_owned())?;
             let path = inside.resolve(&package.decoded);

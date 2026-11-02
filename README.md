@@ -33,8 +33,7 @@ listing it, and a new version starts with nothing until its patches are
 carried over and checked against it.
 
 Every build first applies what Evelyn does for any port: the VNDK APEX a
-vendor older than Android 15 needs, when the ROM lacks it, from `tools/apex/`,
-where `tools/manager.py fetch` puts it.
+vendor older than Android 15 needs, when the ROM lacks it.
 
 A port takes the device's own partitions (`vendor`, `odm`, `vendor_dlkm`,
 `odm_dlkm`) from the stock firmware, checked against the build fingerprint
@@ -45,12 +44,14 @@ ROM. Other ROM partitions are taken only when the port lists them.
 
 - Rust (the toolchain is pinned in `rust-toolchain.toml`)
 - A C compiler, which builds liblz4 for EROFS compression
-- Java, for apktool
-- Python 3, to install the pinned host tools:
+- Java, for apktool and apksigner
 
-```sh
-python3 tools/manager.py fetch
-```
+What else a build needs Evelyn keeps in its data directory
+(`~/Library/Application Support/evelyn` on macOS, `~/.local/share/evelyn` on
+Linux): apktool, apksigner and VNDK APEXes, downloaded the first time one is
+needed and checked against the SHA-256 Evelyn pins, and the key it signs APKs
+with, generated the first time. `evelyn check` sets all of it up at once,
+checks what is there and reports what is missing; `evelyn init` runs it too.
 
 ## Usage
 
@@ -69,8 +70,7 @@ evelyn build
 
 Everything a build reads has a default, and each can be given instead:
 `--rom` and `--stock` (an OTA package or a directory of images), `--port`,
-`--output partitions|super|zip`, `--output-dir`, `--work-dir`, and `--tools`,
-which is `tools/` in the Evelyn checkout the binary was built from. A ZIP also
+`--output partitions|super|zip`, `--output-dir` and `--work-dir`. A ZIP also
 flashes the stock OTA's partitions outside `super`, or the images in
 `firmware/stock/firmware/`. `--patch <directory>` applies an extra patch for one
 build, such as a debug build's. `evelyn plan` shows what a build would do,
@@ -87,15 +87,14 @@ hand-edited file into a new patch.
   - `evelyn-recipe`: the recipe language
   - `evelyn-patch`: applies recipes to partition trees
   - `evelyn-engine`: device repositories, planning and the build pipeline
-  - `toolchain`: the pinned host tools
+  - `toolchain`: the files Evelyn downloads, pinned by SHA-256, and its signing key
   - `evelyn-cli`: the `evelyn` binary
-- `tools/`: the host tool manager, the ZIP packaging template and the SELinux macros
+- `assets/`: files compiled into Evelyn: the recipes every build applies, the ZIP installer and the SELinux macros
 
 ## TODO
 
 - [ ] Read `.dat` (sdat) firmware images
 - [ ] Flash-test the ZIP output
-- [ ] Install the host tools in a per-user directory, so a binary moved off the machine it was built on needs no `--tools`
 - [ ] Sparse image output
 - [ ] Port system-as-root ROMs to devices with the older `/system` layout (and the reverse)
 - [ ] Patch boot images (`boot`, `vendor_boot`) in Evelyn instead of beforehand, and check the first-stage fstab in `vendor_boot` as well as `vendor/etc`
