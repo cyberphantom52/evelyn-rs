@@ -10,8 +10,9 @@ use crate::Error;
 use android_firmware::{Name, Sha256Digest};
 use android_fs::ImageFormat;
 use payload_dumper::{
-    AsyncPayloadRead, DeltaArchiveManifest, FileType, HttpReader, LocalAsyncPayloadReader,
-    LocalAsyncZipPayloadReader, NoOpReporter, PartitionUpdate, RemoteAsyncBinPayloadReader,
+    AsyncPayloadRead, DeltaArchiveManifest, ExtractionPaths, FileType, HttpReader,
+    LocalAsyncPayloadReader, LocalAsyncZipPayloadReader, NoOpDownloadReporter, NoOpReporter,
+    PartitionExtractionConfig, PartitionUpdate, RemoteAsyncBinPayloadReader,
     RemoteAsyncZipPayloadReader,
 };
 use serde::Serialize;
@@ -73,9 +74,18 @@ struct Package {
     manifest: DeltaArchiveManifest,
     offset: u64,
     reader: Arc<dyn AsyncPayloadRead>,
+    remote: Option<Remote>,
     /// The partitions outside `super`, which a flashable ZIP flashes.
     other: Vec<String>,
     scratch: PathBuf,
+}
+
+/// A package at a URL: each partition's data is downloaded in one request, then
+/// extracted from that, rather than read an operation at a time.
+struct Remote {
+    http: Arc<HttpReader>,
+    /// Where the payload starts in what the URL serves.
+    payload_offset: u64,
 }
 
 impl Drop for Package {
@@ -114,7 +124,7 @@ impl Firmware {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
-        let (manifest, offset, reader) = runtime.block_on(open_payload(&given))?;
+        let (manifest, offset, reader, remote) = runtime.block_on(open_payload(&given))?;
         if manifest.minor_version.is_some_and(|version| version != 0) {
             return Err(Error::IncrementalOta(given.to_string()));
         }
@@ -152,6 +162,7 @@ impl Firmware {
                 manifest,
                 offset,
                 reader,
+                remote,
                 other,
                 scratch: scratch.to_path_buf(),
             }),
@@ -255,21 +266,49 @@ impl Package {
                 let (partition, reader, written) =
                     (partition.clone(), self.reader.clone(), image.clone());
                 let offset = self.offset;
+                // A partition with data to download is prefetched; one without
+                // any is extracted as it is.
+                let remote = self.remote.as_ref().filter(|_| {
+                    payload_dumper::calculate_partition_range(&partition, offset).is_some()
+                });
+                let remote = remote.map(|remote| (remote.http.clone(), remote.payload_offset));
+                let download = into.join(format!("{}.download", partition.partition_name));
                 tasks.push((
                     partition.partition_name.clone(),
                     image,
                     hash,
                     tokio::spawn(async move {
-                        payload_dumper::dump_partition(
+                        let Some((http, payload_offset)) = remote else {
+                            return payload_dumper::dump_partition(
+                                &partition,
+                                offset,
+                                block_size,
+                                written,
+                                &reader,
+                                &NoOpReporter,
+                                None,
+                            )
+                            .await;
+                        };
+                        let dumped = payload_dumper::prefetch_and_dump_partition(
                             &partition,
-                            offset,
-                            block_size,
-                            written,
-                            &reader,
+                            &PartitionExtractionConfig {
+                                data_offset: offset,
+                                block_size,
+                                payload_offset,
+                            },
+                            &http,
+                            ExtractionPaths {
+                                temp_path: download.clone(),
+                                output_path: written,
+                            },
+                            &NoOpDownloadReporter,
                             &NoOpReporter,
                             None,
                         )
-                        .await
+                        .await;
+                        let _ = tokio::fs::remove_file(&download).await;
+                        dumped
                     }),
                 ));
             }
@@ -296,11 +335,17 @@ impl Package {
     }
 }
 
-/// The manifest of the payload `given` is or holds, where its data starts, and
-/// a reader of it.
-async fn open_payload(
-    given: &Given,
-) -> Result<(DeltaArchiveManifest, u64, Arc<dyn AsyncPayloadRead>), Error> {
+/// What opening a payload gives: its manifest, where its data starts, a reader
+/// of it, and for one at a URL, what downloads its data.
+type Opened = (
+    DeltaArchiveManifest,
+    u64,
+    Arc<dyn AsyncPayloadRead>,
+    Option<Remote>,
+);
+
+/// Open the payload `given` is or holds.
+async fn open_payload(given: &Given) -> Result<Opened, Error> {
     let mut magic = [0; 4];
     match given {
         Given::Path(path) => {
@@ -311,27 +356,29 @@ async fn open_payload(
                     let (manifest, offset, _) =
                         payload_dumper::parse_local_zip_payload(path.clone()).await?;
                     let reader = LocalAsyncZipPayloadReader::new(path).await?;
-                    (manifest, offset, Arc::new(reader))
+                    (manifest, offset, Arc::new(reader), None)
                 }
                 FileType::Bin => {
                     let (manifest, offset) = payload_dumper::parse_local_payload(&path).await?;
                     let reader = LocalAsyncPayloadReader::new(path).await?;
-                    (manifest, offset, Arc::new(reader))
+                    (manifest, offset, Arc::new(reader), None)
                 }
             })
         }
         Given::Url(url) => {
-            HttpReader::new(url.clone(), None, None, None)
-                .await?
-                .read_at(0, &mut magic)
-                .await?;
+            let http = Arc::new(HttpReader::new(url.clone(), None, None, None).await?);
+            http.read_at(0, &mut magic).await?;
             Ok(match payload_dumper::detect_file(&magic)? {
                 FileType::Zip => {
-                    let (manifest, offset, _) =
+                    let (manifest, offset, zip) =
                         payload_dumper::parse_remote_payload(url.clone(), None, None, None).await?;
                     let reader =
                         RemoteAsyncZipPayloadReader::new(url.clone(), None, None, None).await?;
-                    (manifest, offset, Arc::new(reader))
+                    let remote = Remote {
+                        http,
+                        payload_offset: zip.payload_data_offset,
+                    };
+                    (manifest, offset, Arc::new(reader), Some(remote))
                 }
                 FileType::Bin => {
                     let (manifest, offset, _) =
@@ -339,7 +386,11 @@ async fn open_payload(
                             .await?;
                     let reader =
                         RemoteAsyncBinPayloadReader::new(url.clone(), None, None, None).await?;
-                    (manifest, offset, Arc::new(reader))
+                    let remote = Remote {
+                        http,
+                        payload_offset: 0,
+                    };
+                    (manifest, offset, Arc::new(reader), Some(remote))
                 }
             })
         }
