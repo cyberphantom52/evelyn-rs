@@ -1,5 +1,3 @@
-mod patch;
-
 use clap::{Parser, Subcommand, ValueEnum};
 use engine::Output;
 use serde::Serialize;
@@ -64,16 +62,11 @@ enum Command {
     /// Download every file builds need that Evelyn lacks, check those it has,
     /// generate the signing key if there is none, and check for Java.
     Check,
-    /// Turn a hand-edited file from the last build into a new patch.
-    Patch {
-        #[command(subcommand)]
-        action: patch::Command,
-    },
 }
 
 /// What a build is of, where it is not the repository's default.
 #[derive(clap::Args)]
-pub(crate) struct InputArgs {
+struct InputArgs {
     /// The ROM being ported, which supplies the system side: a directory of
     /// <partition>.img images, or an OTA package, local or an http(s) URL
     /// [default: firmware/rom].
@@ -87,11 +80,7 @@ pub(crate) struct InputArgs {
 
 impl InputArgs {
     /// Plan a build of the repository the current directory is in.
-    pub(crate) fn plan(
-        &self,
-        output: Option<Output>,
-        extra: &[PathBuf],
-    ) -> Result<engine::Plan, Error> {
+    fn plan(&self, output: Option<Output>, extra: &[PathBuf]) -> Result<engine::Plan, Error> {
         let root = engine::profile::find(Path::new("."))?;
         let inputs = engine::Inputs {
             rom: self.rom.as_deref().map(engine::Given::parse),
@@ -249,7 +238,6 @@ fn run(cli: Cli) -> Result<(), Error> {
                 false => print(&built),
             }
         }
-        Command::Patch { action } => patch::run(action),
     }
 }
 

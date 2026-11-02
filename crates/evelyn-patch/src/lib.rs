@@ -1,11 +1,10 @@
 //! Recipe steps applied to partition targets and decoded packages: bindings and
 //! conditions read from the composed firmware, operations guarded by the content
-//! checks the recipe declares, plus capture of new operations.
+//! checks the recipe declares.
 
 mod align;
 mod apktool;
 mod binary;
-pub mod capture;
 mod compose;
 mod defaults;
 mod layout;
