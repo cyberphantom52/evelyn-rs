@@ -53,6 +53,10 @@ enum Command {
         /// An extra patch directory, applied after the port's.
         #[arg(long = "patch")]
         patches: Vec<PathBuf>,
+        /// Apply every recipe to the firmware but write no images, and print the
+        /// plan with what applied.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Replace the OTA package in firmware/rom or firmware/stock, or both, by its
     /// images, so builds read them in place instead of extracting the package
@@ -73,13 +77,6 @@ enum Command {
     Inspect {
         #[command(subcommand)]
         item: Inspect,
-    },
-    /// Resolve the port, partitions, sources and recipe order a build would use.
-    Plan {
-        #[command(flatten)]
-        inputs: InputArgs,
-        #[arg(long, value_enum)]
-        output: Option<OutputArg>,
     },
 }
 
@@ -265,6 +262,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             work_dir,
             output_dir,
             patches,
+            dry_run,
         } => {
             let plan = inputs.plan(output.map(Output::from), &patches)?;
             let output_dir = output_dir.unwrap_or_else(|| {
@@ -273,12 +271,17 @@ fn run(cli: Cli) -> Result<(), Error> {
                     .join("out")
                     .join(plan.profile.name.as_ref())
             });
-            print(&engine::build(&engine::BuildRequest {
+            let built = engine::build(&engine::BuildRequest {
                 tools: &toolchain::Tools::user()?,
                 work_dir: &resolve_work_dir(work_dir, &plan),
                 output_dir: &output_dir,
                 plan: &plan,
-            })?)
+                dry_run,
+            })?;
+            match dry_run {
+                true => print(&serde_json::json!({ "plan": plan, "applied": built })),
+                false => print(&built),
+            }
         }
         Command::Patch { action } => patch::run(action),
         Command::Inspect { item } => match item {
@@ -315,7 +318,6 @@ fn run(cli: Cli) -> Result<(), Error> {
                 print(&found)
             }
         },
-        Command::Plan { inputs, output } => print(&inputs.plan(output.map(Output::from), &[])?),
     }
 }
 
