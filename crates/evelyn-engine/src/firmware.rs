@@ -1,7 +1,7 @@
 //! The firmware a build reads: a directory of `<partition>.img` images, or a full
 //! OTA package, a zip holding `payload.bin` or `payload.bin` itself, whose
-//! partitions are extracted once into a directory of images and checked against
-//! the hashes its manifest records.
+//! partitions are extracted and checked against the hashes its manifest records:
+//! for one build into scratch space, or for good into the directory holding it.
 
 use crate::Error;
 use android_firmware::Sha256Digest;
@@ -9,6 +9,7 @@ use payload_dumper::{
     AsyncPayloadRead, DeltaArchiveManifest, FileType, LocalAsyncPayloadReader,
     LocalAsyncZipPayloadReader, NoOpReporter,
 };
+use serde::Serialize;
 use std::{
     collections::BTreeSet,
     fs,
@@ -17,68 +18,136 @@ use std::{
     sync::Arc,
 };
 
-/// What extraction records of the package it extracted, to extract it again only
-/// when the package changes.
-const EXTRACTED: &str = ".extracted";
+/// A package's images, extracted for one plan and removed with it.
+#[derive(Debug)]
+pub(crate) struct Scratch(PathBuf);
 
-/// The directory of images `given` is: `given` itself, or the images of the OTA
-/// package it is or holds, extracted below `cache`. An OTA's dynamic partitions
-/// are extracted, and with `firmware`, its other partitions too, into `firmware/`,
-/// for a flashable ZIP to flash.
-pub(crate) fn images(given: &Path, cache: &Path, firmware: bool) -> Result<PathBuf, Error> {
-    let Some(package) = package(given)? else {
-        return Ok(given.to_path_buf());
-    };
-    let metadata = fs::metadata(&package)?;
-    let modified = metadata
-        .modified()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let record = format!(
-        "{}\n{}\n{}.{}\n{firmware}\n",
-        fs::canonicalize(&package)?.display(),
-        metadata.len(),
-        modified.as_secs(),
-        modified.subsec_nanos()
-    );
-    if fs::read_to_string(cache.join(EXTRACTED)).is_ok_and(|extracted| extracted == record) {
-        return Ok(cache.to_path_buf());
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
     }
-    if cache.exists() {
-        fs::remove_dir_all(cache)?;
-    }
-    fs::create_dir_all(cache.join("firmware"))?;
-    tracing::info!(package = %package.display(), "extracting OTA package");
-    extract(&package, cache, firmware)?;
-    fs::write(cache.join(EXTRACTED), record)?;
-    Ok(cache.to_path_buf())
 }
 
-/// The OTA package `given` is or holds, if it is not a directory of images.
+/// The directory of images `given` is: `given` itself, or, for an OTA package
+/// or a directory holding one, its images extracted into `scratch`, which lives
+/// as long as what is returned with it. An OTA's dynamic partitions are
+/// extracted, and with `firmware`, its other partitions too, into `firmware/`,
+/// for a flashable ZIP to flash.
+pub(crate) fn images(
+    given: &Path,
+    scratch: &Path,
+    firmware: bool,
+) -> Result<(PathBuf, Option<Scratch>), Error> {
+    let Some(package) = package(given)? else {
+        return Ok((given.to_path_buf(), None));
+    };
+    if scratch.exists() {
+        fs::remove_dir_all(scratch)?;
+    }
+    fs::create_dir_all(scratch)?;
+    let kept = Scratch(scratch.to_path_buf());
+    tracing::info!(package = %package.display(), "extracting OTA package");
+    extract(&package, scratch, firmware)?;
+    Ok((scratch.to_path_buf(), Some(kept)))
+}
+
+/// An OTA package replaced by its images in the directory holding it.
+#[derive(Debug, Serialize)]
+pub struct Extracted {
+    pub package: PathBuf,
+    pub images: Vec<PathBuf>,
+}
+
+/// Replace the OTA package in `dir` by its images, beside where it was, once
+/// they are all extracted and checked: any images an earlier extraction left
+/// there go first. A directory without a package is left as it is.
+pub fn extract_in_place(dir: &Path, firmware: bool) -> Result<Option<Extracted>, Error> {
+    let Some(package) = packages(dir)?.pop() else {
+        return Ok(None);
+    };
+    let staging = dir.join(".extracting");
+    if staging.exists() {
+        fs::remove_dir_all(&staging)?;
+    }
+    fs::create_dir_all(&staging)?;
+    tracing::info!(package = %package.display(), "extracting OTA package");
+    let written = match extract(&package, &staging, firmware) {
+        Ok(written) => written,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
+    };
+    for old in [dir.to_path_buf(), dir.join("firmware")] {
+        for image in image_files(&old)? {
+            fs::remove_file(image)?;
+        }
+    }
+    let mut images = Vec::new();
+    for image in written {
+        let relative = image.strip_prefix(&staging).unwrap_or(&image);
+        let to = dir.join(relative);
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::rename(&image, &to)?;
+        images.push(to);
+    }
+    fs::remove_dir_all(&staging)?;
+    fs::remove_file(&package)?;
+    Ok(Some(Extracted { package, images }))
+}
+
+/// The OTA package `given` is or holds, if any. A directory holding none is one
+/// of images; one holding a package and images, or two packages, is refused.
 fn package(given: &Path) -> Result<Option<PathBuf>, Error> {
     if !given.is_dir() {
         return Ok(Some(given.to_path_buf()));
     }
+    let mut packages = packages(given)?;
+    if !packages.is_empty() && !image_files(given)?.is_empty() {
+        return Err(Error::MixedFirmware(given.to_path_buf()));
+    }
+    Ok(packages.pop())
+}
+
+/// The OTA packages in `dir`; more than one is refused.
+fn packages(dir: &Path) -> Result<Vec<PathBuf>, Error> {
     let mut packages = Vec::new();
-    for entry in fs::read_dir(given)? {
+    for entry in fs::read_dir(dir)? {
         let path = entry?.path();
-        if path.extension().is_some_and(|extension| extension == "img") {
-            return Ok(None);
-        }
         if path.extension().is_some_and(|extension| extension == "zip")
             || path.file_name().is_some_and(|name| name == "payload.bin")
         {
             packages.push(path);
         }
     }
-    match packages.len() {
-        0 => Ok(None),
-        1 => Ok(packages.pop()),
-        _ => Err(Error::AmbiguousFirmware(given.to_path_buf())),
+    if packages.len() > 1 {
+        return Err(Error::AmbiguousFirmware(dir.to_path_buf()));
     }
+    Ok(packages)
 }
 
-fn extract(package: &Path, into: &Path, firmware: bool) -> Result<(), Error> {
+/// The `.img` files directly in `dir`, if it exists.
+fn image_files(dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut images = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_file() && path.extension().is_some_and(|extension| extension == "img") {
+            images.push(path);
+        }
+    }
+    Ok(images)
+}
+
+/// Extract `package` into `into`; the images written, each checked.
+fn extract(package: &Path, into: &Path, firmware: bool) -> Result<Vec<PathBuf>, Error> {
+    if firmware {
+        fs::create_dir_all(into.join("firmware"))?;
+    }
     let mut magic = [0; 4];
     fs::File::open(package)?.read_exact(&mut magic)?;
     let runtime = tokio::runtime::Builder::new_multi_thread().build()?;
@@ -98,16 +167,17 @@ fn extract(package: &Path, into: &Path, firmware: bool) -> Result<(), Error> {
             }
         }
     });
-    for (image, hash) in extracted? {
+    let extracted = extracted?;
+    for (image, hash) in &extracted {
         let Some(hash) = hash else { continue };
-        if Sha256Digest::reader(fs::File::open(&image)?)?.as_bytes()[..] != hash[..] {
+        if Sha256Digest::reader(fs::File::open(image)?)?.as_bytes()[..] != hash[..] {
             return Err(Error::OtaHash {
                 package: package.to_path_buf(),
-                image,
+                image: image.clone(),
             });
         }
     }
-    Ok(())
+    Ok(extracted.into_iter().map(|(image, _)| image).collect())
 }
 
 /// Extract the partitions `manifest` describes, each on a task of its own; the
