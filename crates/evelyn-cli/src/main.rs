@@ -64,7 +64,7 @@ enum Command {
     /// Download every file builds need that Evelyn lacks, check those it has,
     /// generate the signing key if there is none, and check for Java.
     Check,
-    /// Author and replay recipes against extracted partition trees.
+    /// Turn a hand-edited file from the last build into a new patch.
     Patch {
         #[command(subcommand)]
         action: patch::Command,

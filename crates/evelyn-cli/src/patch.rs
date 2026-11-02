@@ -28,8 +28,6 @@ pub(crate) enum Command {
         #[arg(long, value_enum, default_value = "text")]
         kind: CaptureArg,
     },
-    /// Compare two trees' content, Android metadata and hardlinks.
-    Preview { before: PathBuf, after: PathBuf },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -80,6 +78,5 @@ pub(crate) fn run(command: Command) -> Result<(), Error> {
             name: name.try_into()?,
             kind: kind.into(),
         })?),
-        Command::Preview { before, after } => print(&engine::preview_trees(&before, &after)?),
     }
 }

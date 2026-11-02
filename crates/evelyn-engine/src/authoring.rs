@@ -176,9 +176,3 @@ pub fn capture_file(request: CaptureRequest<'_>) -> Result<CapturedRecipe, Error
         after: captured.after,
     })
 }
-
-pub fn preview_trees(before: &Path, after: &Path) -> Result<patch::preview::Changes, Error> {
-    let before = android_fs::read_tree(before)?;
-    let after = android_fs::read_tree(after)?;
-    Ok(patch::preview::compare(&before, &after)?)
-}
