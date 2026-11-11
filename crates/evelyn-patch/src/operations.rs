@@ -105,33 +105,30 @@ impl Target {
         Ok(changed)
     }
 
-    /// Set what `overrides` sets on the entry at `path`, and whether that changed
-    /// it; for an entry waiting for Android's defaults, `None`: it is set over them.
+    /// Set what `overrides` sets on the entry at `path`; for an entry waiting for
+    /// Android's defaults, it is set over them.
     pub(crate) fn set_metadata(
         &mut self,
         path: &RelativePath,
         overrides: &Overrides,
-        statement: usize,
         step: &Name,
-    ) -> Result<Option<bool>, Error> {
+    ) -> Result<(), Error> {
         if let Some(pending) = self.derived.get_mut(path) {
             pending.push(Pending {
-                statement,
                 overrides: overrides.clone(),
                 step: step.clone(),
             });
-            return Ok(None);
+            return Ok(());
         }
         let entry = self
             .tree
             .entries
             .get_mut(path)
             .ok_or_else(|| Error::Missing(path.clone()))?;
-        if !set(&mut entry.metadata, overrides) {
-            return Ok(Some(false));
+        if set(&mut entry.metadata, overrides) {
+            entry.provenance.push(Provenance::Step { id: step.clone() });
         }
-        entry.provenance.push(Provenance::Step { id: step.clone() });
-        Ok(Some(true))
+        Ok(())
     }
 
     /// Have `path` get Android's defaults; what was set on it before no longer
@@ -143,15 +140,13 @@ impl Target {
     }
 
     /// Give every entry waiting for them Android's defaults for where it is on the
-    /// device, then what was set over them. Returns the `SetMetadata` statements that
-    /// changed something.
+    /// device, then what was set over them.
     pub(crate) fn give_defaults(
         &mut self,
         partition: &Name,
         mounts: &android_firmware::Mounts,
         defaults: &crate::defaults::Defaults,
-    ) -> Result<Vec<usize>, Error> {
-        let mut changed = Vec::new();
+    ) -> Result<(), Error> {
         for (path, pending) in std::mem::take(&mut self.derived) {
             let Some(entry) = self.tree.entries.get_mut(&path) else {
                 continue;
@@ -166,12 +161,11 @@ impl Target {
             entry.metadata = defaults.metadata(&device, &entry.kind)?;
             for pending in pending {
                 if set(&mut entry.metadata, &pending.overrides) {
-                    changed.push(pending.statement);
                     entry.provenance.push(Provenance::Step { id: pending.step });
                 }
             }
         }
-        Ok(changed)
+        Ok(())
     }
 
     /// Transform a file's content for its whole hardlink group, keeping metadata.
@@ -373,7 +367,6 @@ pub(crate) fn transformed(
 /// A `SetMetadata` on an entry waiting for Android's defaults, set over them.
 #[derive(Clone, Debug)]
 pub(crate) struct Pending {
-    pub statement: usize,
     pub overrides: Overrides,
     pub step: Name,
 }

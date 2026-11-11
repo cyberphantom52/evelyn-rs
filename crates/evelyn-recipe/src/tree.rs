@@ -50,12 +50,8 @@ pub enum Stmt {
         create_parent: bool,
     },
     /// Set metadata on every entry selected (not what is below it; for that,
-    /// select with `Below`). `pattern` names the selection in reports.
-    SetMetadata {
-        selection: Expr,
-        pattern: String,
-        metadata: Assigned,
-    },
+    /// select with `Below`).
+    SetMetadata { selection: Expr, metadata: Assigned },
     /// Transform the content of every file selected.
     Edit {
         selection: Expr,

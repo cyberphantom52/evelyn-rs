@@ -215,7 +215,6 @@ fn operation(operation: &Operation, inside: Option<Source>) -> Vec<Stmt> {
         }
         Operation::SetMetadata { pattern, .. } => Stmt::SetMetadata {
             selection: select_expr(text(pattern), here()),
-            pattern: pattern.to_string(),
             metadata: Assigned::Fields(crate::set(operation)),
         },
         // Where the key is defined, everywhere in the target's scope; or added
