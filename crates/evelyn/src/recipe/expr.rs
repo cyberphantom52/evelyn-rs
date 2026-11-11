@@ -111,7 +111,7 @@ pub fn substitute(written: &str, bound: &BTreeMap<String, String>) -> Result<Str
 
 /// A piece of a written string: text, or the value a name is bound to.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Part {
+enum Part {
     Text(String),
     Bound(String),
 }
@@ -119,7 +119,7 @@ pub(crate) enum Part {
 /// The pieces of a written string. `{name}`, a name of `[A-Za-z0-9_-]` starting
 /// with a letter or digit, is the value bound to it; `{{` and `}}` are `{` and `}`;
 /// any other brace stands for itself, as in an XML namespace's `{http://…}`.
-pub(crate) fn parts(written: &str) -> Vec<Part> {
+fn parts(written: &str) -> Vec<Part> {
     let mut parts = Vec::new();
     let mut text = String::new();
     let mut rest = written;

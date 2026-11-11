@@ -270,7 +270,7 @@ pub enum SlotScheme {
 }
 
 impl SuperLayout {
-    pub fn metadata_slots(&self) -> u32 {
+    fn metadata_slots(&self) -> u32 {
         match self.slots {
             SlotScheme::Single => 2,
             SlotScheme::Ab | SlotScheme::VirtualAb => 3,
@@ -279,7 +279,7 @@ impl SuperLayout {
 
     /// A slot's group may use the whole device, except on A/B, where both slots
     /// hold full copies.
-    pub fn group_capacity(&self) -> u64 {
+    fn group_capacity(&self) -> u64 {
         match self.slots {
             SlotScheme::Ab => self.size / 2,
             SlotScheme::Single | SlotScheme::VirtualAb => self.size,

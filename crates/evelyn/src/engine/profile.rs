@@ -28,11 +28,11 @@ use std::{
 use thiserror::Error;
 
 /// The repository's manifest, at its root.
-pub const MANIFEST: &str = "evelyn.toml";
+const MANIFEST: &str = "evelyn.toml";
 /// A port's settings, in its directory.
-pub const PORT: &str = "port.toml";
+const PORT: &str = "port.toml";
 /// A patch's recipe, in its directory.
-pub const PATCH: &str = "patch.ron";
+pub(crate) const PATCH: &str = "patch.ron";
 /// What a repository keeps out of git: the work directory, the firmware and
 /// what builds write.
 const IGNORED: [&str; 3] = ["/.evelyn/", "/firmware/", "/out/"];
@@ -64,14 +64,16 @@ pub enum Error {
 /// `evelyn.toml`: the ROM a repository ports and the device it ports it to.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Repository {
-    pub rom: String,
-    pub device: Device,
+struct Repository {
+    /// The ROM the repository ports, for whoever reads the manifest.
+    #[serde(rename = "rom")]
+    _rom: String,
+    device: Device,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Device {
+pub(crate) struct Device {
     pub name: String,
     /// `ro.product.device` values the installer accepts.
     pub product_ids: Vec<String>,
@@ -86,14 +88,14 @@ pub struct Device {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Stock {
+pub(crate) struct Stock {
     /// Each device partition's `ro.<partition>.build.fingerprint` must equal this.
     pub fingerprint: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Port {
+pub(crate) struct Port {
     /// The ROM builds this port is for: properties the ROM sets, each to a value
     /// its glob matches. A port without any is for every build.
     #[serde(default)]
@@ -109,7 +111,7 @@ pub struct Port {
 
 impl Port {
     /// Whether a ROM that sets `properties` is one this port is for.
-    pub fn matches(&self, properties: &BTreeMap<String, String>) -> bool {
+    pub(crate) fn matches(&self, properties: &BTreeMap<String, String>) -> bool {
         self.rom.iter().all(|(key, pattern)| {
             properties
                 .get(key)
@@ -120,7 +122,7 @@ impl Port {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Settings {
+pub(crate) struct Settings {
     /// Default: the source image's filesystem.
     pub filesystem: Option<Filesystem>,
     /// Default: `/<name>`; for `system`, `/` or `/system` as its image is laid out.
@@ -128,8 +130,7 @@ pub struct Settings {
 }
 
 #[derive(Clone, Debug)]
-pub struct Profile {
-    pub rom: String,
+pub(crate) struct Profile {
     pub device: Device,
     /// The port's name: its directory under `ports/`.
     pub name: String,
@@ -140,11 +141,10 @@ pub struct Profile {
 
 impl Profile {
     /// Load the port `name` of the repository at `root`.
-    pub fn load(root: &Path, name: &str) -> Result<Self, Error> {
+    pub(crate) fn load(root: &Path, name: &str) -> Result<Self, Error> {
         let repository: Repository = toml_file(&root.join(MANIFEST))?;
         let port: Port = toml_file(&root.join("ports").join(name).join(PORT))?;
         let profile = Self {
-            rom: repository.rom,
             device: repository.device,
             name: name.to_owned(),
             port,
@@ -218,7 +218,7 @@ impl Profile {
     }
 
     /// The recipes of the patches this port applies, in the order they apply.
-    pub fn patches(&self) -> Vec<PathBuf> {
+    pub(crate) fn patches(&self) -> Vec<PathBuf> {
         self.port
             .patches
             .iter()
@@ -232,7 +232,7 @@ impl Profile {
 
     /// Settings for `partition` from its most specific entry: an exact name beats
     /// any glob, and a glob with more literal characters beats one with fewer.
-    pub fn settings(&self, partition: &str) -> Result<Option<&Settings>, Error> {
+    pub(crate) fn settings(&self, partition: &str) -> Result<Option<&Settings>, Error> {
         if let Some((_, settings)) = self
             .device
             .partitions
@@ -272,12 +272,12 @@ impl Profile {
             .chain(self.device.partitions.keys().map(|name| name.as_str()))
     }
 
-    pub fn is_vendor_side(&self, partition: &str) -> bool {
+    pub(crate) fn is_vendor_side(&self, partition: &str) -> bool {
         self.vendor_side().any(|vendor| vendor == partition)
     }
 
     /// `super` order for the device's partitions: Treble's order, then by name.
-    pub fn device_order(partition: &str) -> (usize, String) {
+    pub(crate) fn device_order(partition: &str) -> (usize, String) {
         (
             VENDOR_SIDE
                 .iter()
@@ -288,7 +288,7 @@ impl Profile {
     }
 
     /// A ROM partition this port builds into `super`.
-    pub fn takes_from_rom(&self, partition: &str) -> bool {
+    pub(crate) fn takes_from_rom(&self, partition: &str) -> bool {
         STANDARD_SYSTEM.contains(&partition)
             || (!self.is_vendor_side(partition)
                 && self
@@ -418,7 +418,7 @@ pub fn find(start: &Path) -> Result<PathBuf, Error> {
 }
 
 /// The ports of the repository at `root`, by name.
-pub fn ports(root: &Path) -> Result<BTreeMap<String, Port>, Error> {
+pub(crate) fn ports(root: &Path) -> Result<BTreeMap<String, Port>, Error> {
     let dir = root.join("ports");
     let entries = fs::read_dir(&dir).map_err(|source| Error::Read {
         path: dir.clone(),

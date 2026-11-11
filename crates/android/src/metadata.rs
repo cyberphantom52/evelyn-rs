@@ -14,7 +14,7 @@ pub struct AndroidMetadata {
 }
 
 /// The xattr an entry's SELinux label is in.
-pub const SELINUX_XATTR: &str = "security.selinux";
+const SELINUX_XATTR: &str = "security.selinux";
 
 impl AndroidMetadata {
     /// Label the entry `label`, and whether that changed it. A label is the same
