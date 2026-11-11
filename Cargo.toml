@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*"]
-default-members = ["crates/evelyn-cli"]
+default-members = ["crates/evelyn"]
 resolver = "3"
 
 [workspace.package]
@@ -11,10 +11,6 @@ publish = false
 
 [workspace.dependencies]
 android = { path = "crates/android" }
-engine = { package = "evelyn-engine", path = "crates/evelyn-engine" }
-patch = { package = "evelyn-patch", path = "crates/evelyn-patch" }
-recipe = { package = "evelyn-recipe", path = "crates/evelyn-recipe" }
-toolchain = { path = "crates/toolchain" }
 thiserror = "2.0.21"
 pest = "2.9.5"
 pest_derive = "2.9.5"

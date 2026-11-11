@@ -663,62 +663,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "evelyn-cli"
+name = "evelyn"
 version = "0.1.0"
 dependencies = [
  "android",
+ "base64",
  "clap",
- "evelyn-engine",
+ "diffy",
+ "dirs",
+ "payload_dumper",
+ "rand",
+ "rcgen",
+ "regex",
+ "ron",
+ "rsa",
+ "sepolicy-inject-rs",
  "serde",
  "serde_json",
- "thiserror",
- "toolchain",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "evelyn-engine"
-version = "0.1.0"
-dependencies = [
- "android",
- "evelyn-patch",
- "evelyn-recipe",
- "payload_dumper",
- "serde",
+ "sha2",
+ "smali",
  "thiserror",
  "tokio",
  "toml",
- "toolchain",
  "tracing",
- "zip",
- "zstd",
-]
-
-[[package]]
-name = "evelyn-patch"
-version = "0.1.0"
-dependencies = [
- "android",
- "diffy",
- "evelyn-recipe",
- "sepolicy-inject-rs",
- "serde",
- "smali",
- "thiserror",
- "toolchain",
+ "tracing-subscriber",
+ "ureq",
  "xot",
  "zip",
-]
-
-[[package]]
-name = "evelyn-recipe"
-version = "0.1.0"
-dependencies = [
- "android",
- "regex",
- "ron",
- "serde",
- "thiserror",
+ "zstd",
 ]
 
 [[package]]
@@ -2689,22 +2661,6 @@ name = "toml_writer"
 version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
-
-[[package]]
-name = "toolchain"
-version = "0.1.0"
-dependencies = [
- "base64",
- "dirs",
- "rand",
- "rcgen",
- "rsa",
- "sha2",
- "thiserror",
- "tracing",
- "ureq",
- "zip",
-]
 
 [[package]]
 name = "tower"
