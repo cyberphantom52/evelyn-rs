@@ -193,7 +193,7 @@ impl Image {
     }
 
     /// Stream the first `size` bytes of a regular file.
-    pub fn file(&self, id: u64, size: u64) -> Result<Box<dyn Read + '_>, Error> {
+    pub fn file(&self, id: u64, size: u64) -> Result<Box<dyn Read + Send + '_>, Error> {
         Ok(match &self.0 {
             Backend::Erofs(fs) => {
                 let inode = fs.read_inode(id)?;
