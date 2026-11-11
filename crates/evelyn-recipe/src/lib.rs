@@ -45,8 +45,6 @@ pub enum Error {
         #[source]
         source: Box<ron::error::SpannedError>,
     },
-    #[error("cannot encode recipe: {0}")]
-    Encode(#[from] ron::Error),
     #[error("invalid configuration: {0}")]
     Invalid(String),
     #[error(transparent)]
@@ -465,7 +463,7 @@ fn is_false(value: &bool) -> bool {
     !value
 }
 
-/// Optional fields are written as plain values, without `Some(...)`.
+/// Optional fields are given as plain values, without `Some(...)`.
 fn ron_options() -> ron::Options {
     ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
 }
@@ -476,12 +474,6 @@ pub fn property_key(key: &str) -> bool {
 }
 
 impl Recipe {
-    pub fn write(&self, writer: impl io::Write) -> Result<(), Error> {
-        self.validate()?;
-        ron_options().to_io_writer_pretty(writer, self, ron::ser::PrettyConfig::default())?;
-        Ok(())
-    }
-
     pub fn load(path: &Path) -> Result<Self, Error> {
         Self::parse(&read(path)?, path)
     }
