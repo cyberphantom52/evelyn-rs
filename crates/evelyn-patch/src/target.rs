@@ -1,11 +1,12 @@
 //! Mutable partition trees. Untouched files keep referring to their source image;
 //! every edit writes a new blob, and blobs are never changed in place.
 
-use android_firmware::{Filesystem, Name, RelativePath, Sha256Writer, SourceRef};
+use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath, Sha256Writer, SourceRef};
 use android_fs::{Content, Entry, EntryKind, File, PartitionTree};
 use android_fs::{Image, Store};
+use recipe::tree::Overrides;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fs,
     io::{self, Read},
     path::{Path, PathBuf},
@@ -74,13 +75,23 @@ pub enum Error {
 /// Open source images, by source reference.
 pub type Images = BTreeMap<SourceRef, Image>;
 
+/// A target entry's metadata.
+#[derive(Clone, Debug)]
+pub(crate) enum EntryMetadata {
+    /// Its own.
+    Set(AndroidMetadata),
+    /// Android's defaults for where the entry is on the device, as the finished
+    /// build has them, then what these set over them, in order.
+    Default(Vec<Overrides>),
+}
+
+/// A partition tree being edited.
+pub(crate) type Tree = PartitionTree<EntryMetadata>;
+
 pub struct Target {
     root: PathBuf,
-    pub(crate) tree: PartitionTree,
+    pub(crate) tree: Tree,
     next_blob: u64,
-    /// Entries that get Android's defaults when the build is done, with what is
-    /// set over them.
-    pub(crate) derived: BTreeMap<RelativePath, Vec<crate::operations::Pending>>,
 }
 
 impl Target {
@@ -88,10 +99,11 @@ impl Target {
     /// Nothing is copied: entries keep referring to their source image until edited.
     pub fn create(
         output: &Path,
-        mut tree: PartitionTree,
+        tree: PartitionTree,
         partition: Name,
         filesystem: Filesystem,
     ) -> Result<Self, Error> {
+        let mut tree = tree.map(|_, _, metadata| Ok::<_, Error>(EntryMetadata::Set(metadata)))?;
         tree.partition = partition;
         tree.filesystem = filesystem;
         fs::create_dir_all(output.join("content"))?;
@@ -99,7 +111,6 @@ impl Target {
             root: output.into(),
             tree,
             next_blob: 0,
-            derived: BTreeMap::new(),
         })
     }
 
@@ -146,38 +157,41 @@ impl Target {
         Ok(())
     }
 
-    /// Copy a subtree to another path in this target, with its metadata; the
-    /// paths written.
+    /// Copy a subtree to another path in this target, with the metadata the copy
+    /// states.
     pub(crate) fn copy_within(
         &mut self,
         from: &RelativePath,
         to: &RelativePath,
         placing: crate::operations::Placing,
-    ) -> Result<BTreeSet<RelativePath>, Error> {
+    ) -> Result<(), Error> {
         let selected = crate::layout::subtree(&self.tree, from, to)?;
         // The directories made for it are not in the tree, so not like its own.
-        let mut written = self.destination(to, placing, None)?;
+        let mut written = self.destination(to, placing, |_| None)?;
         written.extend(selected.keys().cloned());
         self.tree.entries.extend(selected);
-        Ok(written)
+        self.give(written, placing.metadata);
+        Ok(())
     }
 
-    /// Copy a subtree into another target, with the metadata it has there; file
-    /// contents the source holds are linked or copied into the destination. The
-    /// copy then gives what it wrote the metadata it states.
+    /// Copy a subtree into another target, with the metadata the copy states;
+    /// file contents the source holds are linked or copied into the destination.
     pub(crate) fn copy_into(
         &self,
         destination: &mut Self,
         from: &RelativePath,
         to: &RelativePath,
         placing: crate::operations::Placing,
-    ) -> Result<BTreeSet<RelativePath>, Error> {
+    ) -> Result<(), Error> {
         let selected = crate::layout::subtree(&self.tree, from, to)?;
-        let mut written = destination.destination(to, placing, Some(&self.tree))?;
+        let mut written = destination.destination(to, placing, |dir| {
+            crate::layout::directory(&self.tree, dir).cloned()
+        })?;
         written.extend(selected.keys().cloned());
-        let adopted = destination.adopt(Some(&self.root), selected)?;
+        let adopted = destination.adopt(&self.root, selected)?;
         destination.tree.entries.extend(adopted);
-        Ok(written)
+        destination.give(written, placing.metadata);
+        Ok(())
     }
 
     /// Give `canonical`, and so all of its hardlinks, new content.
@@ -213,17 +227,16 @@ impl Target {
     /// the tree at `source_root` are linked (or copied) into this target's store.
     pub(crate) fn adopt(
         &mut self,
-        source_root: Option<&Path>,
-        mut entries: BTreeMap<RelativePath, Entry>,
-    ) -> Result<BTreeMap<RelativePath, Entry>, Error> {
+        source_root: &Path,
+        mut entries: BTreeMap<RelativePath, Entry<EntryMetadata>>,
+    ) -> Result<BTreeMap<RelativePath, Entry<EntryMetadata>>, Error> {
         for entry in entries.values_mut() {
             if let EntryKind::File {
                 content: Content::Blob(blob),
                 ..
             } = &mut entry.kind
             {
-                let root = source_root.ok_or(Error::Unsupported("blob outside a target"))?;
-                let source = root.join(PartitionTree::blob_path(blob).as_ref());
+                let source = source_root.join(PartitionTree::blob_path(blob).as_ref());
                 *blob = self.new_blob();
                 let destination = self.blob_path(blob);
                 if fs::hard_link(&source, &destination).is_err() {

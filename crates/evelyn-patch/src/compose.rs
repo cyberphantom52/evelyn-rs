@@ -6,7 +6,7 @@ use crate::{
     Error, Images, Target,
     defaults::Defaults,
     layout,
-    operations::{Pending, Placing},
+    operations::Placing,
     package::Opened,
     scope::{Bound, Scope},
 };
@@ -21,7 +21,7 @@ use recipe::{
 };
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 use toolchain::Tools;
@@ -422,10 +422,8 @@ impl Composition {
                 path: entry.path.clone(),
             },
         };
-        let target = self.target(&to.partition)?;
-        let written = target.import(tree, &entry.path, &to.path, placing)?;
-        target.copied(written, placing.metadata, Vec::new());
-        Ok(())
+        self.target(&to.partition)?
+            .import(tree, &entry.path, &to.path, placing)
     }
 
     /// Copy a recipe asset (a file, or a directory's files) to `to`, in the build
@@ -483,11 +481,9 @@ impl Composition {
             ));
         }
         let target = self.target(&partition)?;
-        let mut written = BTreeSet::new();
         for (to, file) in files {
-            written.extend(target.install(&file, &to, placing)?);
+            target.install(&file, &to, placing)?;
         }
-        target.copied(written, placing.metadata, Vec::new());
         Ok(())
     }
 
@@ -502,22 +498,9 @@ impl Composition {
         step: &Name,
     ) -> Result<(), Error> {
         let to = self.resolve_one(to, context, step)?;
-        let below = |path: &RelativePath, root: &RelativePath| {
-            path == root || path.as_ref().starts_with(&format!("{root}/"))
-        };
-        let waiting: Vec<(RelativePath, Vec<Pending>)> = self
-            .target(&entry.partition)?
-            .derived
-            .iter()
-            .filter(|(path, _)| below(path, &entry.path))
-            .map(|(path, pending)| {
-                let copied = format!("{}{}", to.path, &path.as_ref()[entry.path.as_ref().len()..]);
-                Ok((RelativePath::try_from(copied)?, pending.clone()))
-            })
-            .collect::<Result<_, Error>>()?;
-        let written = if entry.partition == to.partition {
+        if entry.partition == to.partition {
             self.target(&to.partition)?
-                .copy_within(&entry.path, &to.path, placing)?
+                .copy_within(&entry.path, &to.path, placing)
         } else {
             let source = self
                 .targets
@@ -527,11 +510,8 @@ impl Composition {
                 source.copy_into(destination, &entry.path, &to.path, placing)
             });
             self.targets.insert(entry.partition.clone(), source);
-            copied?
-        };
-        self.target(&to.partition)?
-            .copied(written, placing.metadata, waiting);
-        Ok(())
+            copied
+        }
     }
 
     /// Where a device path is in the build. A literal path under a standard mount
@@ -580,25 +560,22 @@ impl Composition {
     /// build's own policy as the device labels with it, then what was set over
     /// them; the finished trees, with the steps that were skipped.
     pub fn finish(
-        mut self,
+        self,
         mounts: &Mounts,
         images: &Images,
     ) -> Result<(BTreeMap<Name, PartitionTree>, Vec<Skipped>), Error> {
-        if self
-            .targets
-            .values()
-            .any(|target| !target.derived.is_empty())
-        {
-            let defaults = Defaults::new(&self.targets, mounts, images)?;
-            for (name, target) in &mut self.targets {
-                target.give_defaults(name, mounts, &defaults)?;
-            }
-        }
+        let defaults = match self.targets.values().any(Target::waits_for_defaults) {
+            true => Some(Defaults::new(&self.targets, mounts, images)?),
+            false => None,
+        };
         let trees = self
             .targets
             .into_iter()
-            .map(|(name, target)| (name, target.tree))
-            .collect();
+            .map(|(name, target)| {
+                let tree = target.resolve(&name, mounts, defaults.as_ref())?;
+                Ok((name, tree))
+            })
+            .collect::<Result<_, Error>>()?;
         Ok((trees, self.skipped))
     }
 }
