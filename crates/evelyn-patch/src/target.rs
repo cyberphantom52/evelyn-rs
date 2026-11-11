@@ -1,7 +1,7 @@
 //! Mutable partition trees. Untouched files keep referring to their source image;
 //! every edit writes a new blob, and blobs are never changed in place.
 
-use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath, SourceRef};
+use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath};
 use android_fs::{Content, Entry, EntryKind, File, PartitionTree};
 use android_fs::{Image, Store};
 use recipe::tree::Overrides;
@@ -72,8 +72,8 @@ pub enum Error {
     },
 }
 
-/// Open source images, by source reference.
-pub type Images = BTreeMap<SourceRef, Image>;
+/// The open source images, which scanned trees refer to by index.
+pub type Images = Vec<Image>;
 
 /// A target entry's metadata.
 #[derive(Clone, Debug)]

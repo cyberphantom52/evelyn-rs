@@ -1,12 +1,13 @@
 use crate::Error;
 use crate::image::{Image, Kind};
 use crate::{Content, Entry, EntryKind, PartitionTree};
-use android_firmware::{RelativePath, SourceRef};
+use android_firmware::RelativePath;
 use std::collections::{BTreeMap, btree_map};
 
 struct Scan<'a> {
     image: &'a Image,
-    identity: &'a SourceRef,
+    /// What the tree's contents call the image.
+    index: usize,
     tree: PartitionTree,
     /// Inode -> (first path seen, links seen, link count recorded in the image).
     links: BTreeMap<u64, (RelativePath, u32, u32)>,
@@ -41,7 +42,7 @@ impl Scan<'_> {
                     } else {
                         EntryKind::File {
                             content: Content::Image {
-                                source: self.identity.clone(),
+                                image: self.index,
                                 inode: id,
                             },
                             size: inode.size,
@@ -66,12 +67,14 @@ impl Scan<'_> {
 
 /// Describe a source image as a tree whose file contents stay in the image: every
 /// entry with its Android metadata. Only metadata is read, no file's content.
-pub fn scan(image: &Image, identity: &SourceRef) -> Result<PartitionTree, Error> {
+/// Its files refer to the image as `index`, its place among those a
+/// [`crate::Store`] reads.
+pub fn scan(image: &Image, index: usize) -> Result<PartitionTree, Error> {
     let root_id = image.root()?;
     let root = image.inode(root_id)?;
     let mut extraction = Scan {
         image,
-        identity,
+        index,
         tree: PartitionTree {
             filesystem: image.filesystem(),
             root: root.metadata,

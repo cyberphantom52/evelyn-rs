@@ -2,14 +2,15 @@
 //! each file's bytes are.
 
 use crate::Error;
-use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath, SourceRef};
+use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath};
 use std::collections::BTreeMap;
 
 /// Where a file's bytes are: unchanged in a source image, or in a tree's own store.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Content {
-    /// Inode `inode` of source image `source`.
-    Image { source: SourceRef, inode: u64 },
+    /// Inode `inode` of source image `image`: its index among those a
+    /// [`crate::Store`] reads.
+    Image { image: usize, inode: u64 },
     /// A file in the tree's `content/` directory, written by an edit.
     Blob(Name),
 }

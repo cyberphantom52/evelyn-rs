@@ -160,8 +160,8 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
         };
         let image = Image::detect(path).map_err(|_| Error::SourceFilesystem(source.clone()))?;
         tracing::info!(%source, "scanning source image");
-        sources.insert(source.clone(), android_fs::scan(&image, &source)?);
-        images.insert(source, image);
+        sources.insert(source, android_fs::scan(&image, images.len())?);
+        images.push(image);
     }
 
     let (targets, skipped) = compose(build, &partitions, &recipes, &sources, &images, &mounts)?;
