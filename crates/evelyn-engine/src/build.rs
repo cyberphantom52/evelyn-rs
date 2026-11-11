@@ -6,7 +6,7 @@
 //!
 //! Work directory layout (reused across builds):
 //!   sources/<source>.<partition>/       scanned trees, reused while the image hash matches
-//!   targets/<partition>/                composed trees and the blobs edits wrote
+//!   targets/<partition>/                the blobs edits wrote
 //!   packages/                           decoded APK/JAR workspaces
 //!   images/<partition>.img              built filesystem images
 
