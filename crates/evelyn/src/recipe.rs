@@ -12,7 +12,7 @@ pub use xml::{XmlEdit, XmlMatch, XmlName, XmlOp, XmlPredicate, XmlStep, escape_a
 
 use crate::Firmware;
 use android::hash::Sha256Digest;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs, io,
@@ -246,7 +246,7 @@ pub(crate) const BUILT_IN: [&str; 19] = [
 ];
 
 /// What a copy gives what it writes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 pub enum Metadata {
     /// What its source has: the firmware's or the build's, the same directory's
     /// for a directory made. A source without it (an asset, or no such
@@ -257,7 +257,7 @@ pub enum Metadata {
 }
 
 /// What a stubbed method returns: nothing (`V`), zero/false/null, or one/true.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 pub enum Returns {
     Void,
     Zero,
@@ -265,8 +265,8 @@ pub enum Returns {
 }
 
 /// Bytes written as hex, two digits each: `"a9008052"`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
 pub struct Hex(pub Vec<u8>);
 
 impl TryFrom<String> for Hex {
@@ -277,12 +277,6 @@ impl TryFrom<String> for Hex {
             .filter(|bytes| !bytes.is_empty())
             .map(Self)
             .ok_or_else(|| format!("invalid hex bytes {text:?}"))
-    }
-}
-
-impl From<Hex> for String {
-    fn from(hex: Hex) -> Self {
-        android::hash::hex(&hex.0)
     }
 }
 
