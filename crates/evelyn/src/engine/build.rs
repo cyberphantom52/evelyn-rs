@@ -95,7 +95,7 @@ struct Patch {
 }
 
 /// Recipes every build applies before the port's patches, by name and text.
-const BUILT_IN: [(&str, &str); 1] = [(
+const BUILT_IN_RECIPES: [(&str, &str); 1] = [(
     "vndk.ron",
     include_str!("../../../../assets/recipes/vndk.ron"),
 )];
@@ -308,7 +308,7 @@ fn partition(
 /// directories'.
 fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Patch>, Error> {
     let mut recipes = Vec::new();
-    for (name, text) in BUILT_IN {
+    for (name, text) in BUILT_IN_RECIPES {
         let recipe = Recipe::parse(text, Path::new(name))?;
         recipes.push(Patch {
             recipe,

@@ -223,7 +223,7 @@ pub enum Operation {
 }
 
 /// The built-in operations' names.
-pub(crate) const BUILT_IN: [&str; 19] = [
+pub(crate) const BUILT_IN_OPERATIONS: [&str; 19] = [
     "Copy",
     "Import",
     "Install",
