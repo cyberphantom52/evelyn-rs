@@ -1,11 +1,12 @@
 //! The value of every expression a recipe writes, against the build composed so
 //! far. An operator given a value it is not defined for is an error.
 
+use crate::patch::value::Value;
 use crate::patch::{
     Composition, Error,
     compose::{Bound, Context},
 };
-use crate::recipe::{Expr, Location, value::Value};
+use crate::recipe::{Expr, Location};
 
 impl Composition {
     pub(crate) fn eval(
@@ -96,7 +97,7 @@ impl Composition {
                         Value::Selection(kept)
                     }
                     other => {
-                        return Err(crate::recipe::value::ValueError {
+                        return Err(crate::patch::value::ValueError {
                             op: "Filter",
                             found: other.kind().to_owned(),
                         }

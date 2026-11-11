@@ -2,7 +2,7 @@
 //! of value. An operator applied to values it is not defined for is an error, not
 //! a silent result.
 
-use crate::recipe::Firmware;
+use crate::Firmware;
 use android::path::RelativePath;
 use thiserror::Error;
 

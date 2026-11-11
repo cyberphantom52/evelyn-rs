@@ -15,6 +15,7 @@ mod package;
 mod sepolicy;
 mod target;
 mod text;
+mod value;
 mod xml;
 
 pub use compose::{Composition, Context, Skipped, Sources};

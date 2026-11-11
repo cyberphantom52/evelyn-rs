@@ -43,7 +43,7 @@ pub enum Error {
     #[error(transparent)]
     Tool(#[from] crate::toolchain::Error),
     #[error(transparent)]
-    Value(#[from] crate::recipe::value::ValueError),
+    Value(#[from] crate::patch::value::ValueError),
     #[error("step {step}: {source}")]
     Step {
         step: String,

@@ -1,10 +1,11 @@
 //! Apply recipes across every target partition: each step's `let:` and `when:`,
 //! then its operations, each a function in [`crate::patch::operations`].
 
+use crate::patch::value::Located;
 use crate::patch::{
     Error, Images, Target, defaults::Defaults, layout, package::Opened, target::Placing,
 };
-use crate::recipe::{Expr, Metadata, Operation, Recipe, value::Located};
+use crate::recipe::{Expr, Metadata, Operation, Recipe};
 use crate::toolchain::Tools;
 use crate::{Firmware, SourceRef};
 use android::PartitionTree;
