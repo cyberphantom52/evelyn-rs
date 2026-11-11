@@ -7,7 +7,7 @@ use android_firmware::{
     VENDOR_SIDE,
 };
 use android_fs::PartitionTree;
-use recipe::{Expr, Operation, Recipe, tree::Metadata, value::Located};
+use recipe::{Expr, Metadata, Operation, Recipe, value::Located};
 use serde::Serialize;
 use std::{
     collections::BTreeMap,

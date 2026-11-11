@@ -1,14 +1,10 @@
-//! The expressions recipes are written with: the primitive tree's, named for how a
-//! recipe reads, each desugared into the tree's when the recipe is loaded. A file
-//! is named by where it is looked for, a [`Location`], and a string can name a bound value as
-//! `{name}`: `Exists(Asset("apex/com.android.vndk.v{vndk}.apex"))`.
+//! The expressions recipes are written with: conditions, the strings `let:` binds
+//! and the values of operations' fields. A file is named by where it is looked
+//! for, a [`Location`], and a string can name a bound value as `{name}`:
+//! `Exists(Asset("apex/com.android.vndk.v{vndk}.apex"))`.
 
-use crate::{
-    Error,
-    location::{Kind, Location},
-    tree::Pattern,
-};
-use android_firmware::{DevicePath, Name, RelativePath};
+use crate::{Error, location::Location};
+use android_firmware::Name;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt};
 
@@ -67,59 +63,6 @@ pub enum Expr {
     Text(String),
     #[serde(untagged)]
     Bool(bool),
-}
-
-impl Expr {
-    /// That every location in it is one an expression can select: inside a
-    /// package its files, `Package(…)`, outside it the build's, `Build(…)`; a
-    /// `Partition(…)` only to test it exists or to read properties from.
-    pub(crate) fn check(&self, in_package: bool) -> Result<(), Error> {
-        let files: &[Kind] = match in_package {
-            true => &[Kind::Package, Kind::Rom, Kind::Stock, Kind::Asset],
-            false => &[Kind::Build, Kind::Rom, Kind::Stock, Kind::Asset],
-        };
-        let check = |expr: &Expr| expr.check(in_package);
-        match self {
-            Self::At(location) => location.check(files, "an expression"),
-            Self::Exists(inner) => match &**inner {
-                Self::At(Location::Partition(_)) => Ok(()),
-                inner => check(inner),
-            },
-            Self::Property { target, .. } => target
-                .iter()
-                .try_for_each(|target| target.check(&[Kind::Build, Kind::Partition], "Property")),
-            Self::Read(inner)
-            | Self::Hash(inner)
-            | Self::Below(inner)
-            | Self::Not(inner)
-            | Self::Lines(inner)
-            | Self::Join(inner)
-            | Self::Trim(inner)
-            | Self::Matches(inner, _) => check(inner),
-            Self::All(exprs) | Self::Any(exprs) | Self::Union(exprs) => {
-                exprs.iter().try_for_each(check)
-            }
-            Self::Eq(left, right) => {
-                check(left)?;
-                check(right)
-            }
-            Self::In(inner, _) => check(inner),
-            Self::If {
-                condition,
-                then,
-                otherwise,
-            } => {
-                check(condition)?;
-                check(then)?;
-                check(otherwise)
-            }
-            Self::Filter { over, keep, .. } => {
-                check(over)?;
-                check(keep)
-            }
-            Self::Text(_) | Self::Bool(_) => Ok(()),
-        }
-    }
 }
 
 impl Expr {
@@ -254,31 +197,27 @@ pub fn written_out(written: &str) -> Option<String> {
     }
 }
 
-/// Whether `written`, written out, is a valid `T`; one naming a bound value is
-/// checked when it is used.
-pub(crate) fn written<T>(written: &str) -> Result<(), Error>
-where
-    T: TryFrom<String>,
-    Error: From<T::Error>,
-{
-    match written_out(written) {
-        Some(text) => T::try_from(text).map(drop).map_err(Error::from),
-        None => Ok(()),
+/// A regular expression, compiled when the recipe is loaded.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Pattern(regex::Regex);
+
+impl Pattern {
+    pub fn is_match(&self, text: &str) -> bool {
+        self.0.is_match(text)
     }
 }
 
-/// Whether `written`, written out, is a build pattern: a device path, or a path
-/// relative to each partition a scope selects.
-pub(crate) fn pattern(written: &str) -> Result<(), Error> {
-    match written_out(written) {
-        Some(path) if path.starts_with('/') => Ok(DevicePath::try_from(path).map(drop)?),
-        Some(path) => Ok(RelativePath::try_from(path).map(drop)?),
-        None => Ok(()),
+impl TryFrom<String> for Pattern {
+    type Error = regex::Error;
+
+    fn try_from(pattern: String) -> Result<Self, regex::Error> {
+        regex::Regex::new(&pattern).map(Self)
     }
 }
 
-/// Whether `written`, written out, is as `valid` wants it; one naming a bound
-/// value is checked when it is used.
-pub(crate) fn written_or(written: &str, valid: impl Fn(&str) -> bool) -> bool {
-    written_out(written).is_none_or(|written| valid(&written))
+impl From<Pattern> for String {
+    fn from(pattern: Pattern) -> Self {
+        pattern.0.as_str().to_owned()
+    }
 }

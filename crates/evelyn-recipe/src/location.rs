@@ -1,9 +1,7 @@
 //! Where a recipe names a file, a directory or a partition. A path can name a
-//! bound value as `{name}`, and one that does is checked when it is used.
+//! bound value as `{name}`.
 
-use crate::Error;
-use crate::expr::{pattern, written};
-use android_firmware::{DevicePath, Name, RelativePath};
+use android_firmware::Name;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -24,29 +22,7 @@ pub enum Location {
     Partition(Name),
 }
 
-/// The kinds of location a field takes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Kind {
-    Build,
-    Rom,
-    Stock,
-    Asset,
-    Package,
-    Partition,
-}
-
 impl Location {
-    pub(crate) fn kind(&self) -> Kind {
-        match self {
-            Self::Build(_) => Kind::Build,
-            Self::Rom(_) => Kind::Rom,
-            Self::Stock(_) => Kind::Stock,
-            Self::Asset(_) => Kind::Asset,
-            Self::Package(_) => Kind::Package,
-            Self::Partition(_) => Kind::Partition,
-        }
-    }
-
     /// The path or pattern, or the partition's name.
     pub fn path(&self) -> &str {
         match self {
@@ -56,26 +32,6 @@ impl Location {
             | Self::Asset(path)
             | Self::Package(path) => path,
             Self::Partition(name) => name.as_ref(),
-        }
-    }
-
-    /// That it is a kind `what` takes, and, written out, a well-formed path: a
-    /// device path in a firmware, one relative to the recipe's directory for an
-    /// asset, and one from the root inside a package.
-    pub(crate) fn check(&self, allowed: &[Kind], what: &str) -> Result<(), Error> {
-        if !allowed.contains(&self.kind()) {
-            return Err(Error::Invalid(format!(
-                "{what} takes {allowed:?}, not {:?}({:?})",
-                self.kind(),
-                self.path()
-            )));
-        }
-        let path = self.path();
-        match self {
-            Self::Rom(_) | Self::Stock(_) | Self::Package(_) => written::<DevicePath>(path),
-            Self::Asset(_) => written::<RelativePath>(path),
-            Self::Build(_) => pattern(path),
-            Self::Partition(_) => Ok(()),
         }
     }
 }

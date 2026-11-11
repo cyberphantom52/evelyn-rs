@@ -85,11 +85,10 @@ struct Partition {
     mount_point: String,
 }
 
-/// A recipe as it is applied, its primitive tree, and the directory its assets
-/// are in, `None` for a recipe built into Evelyn, whose assets are in the tools.
+/// A recipe, and the directory its assets are in, `None` for a recipe built into
+/// Evelyn, whose assets are in the tools.
 struct Loaded {
     recipe: Recipe,
-    tree: recipe::tree::Tree,
     assets: Option<PathBuf>,
 }
 
@@ -183,7 +182,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
             .collect(),
         recipes: recipes
             .iter()
-            .map(|recipe| recipe.tree.name.clone())
+            .map(|recipe| recipe.recipe.name.clone())
             .collect(),
         ignored,
         skipped,
@@ -297,32 +296,24 @@ fn partition(
 }
 
 /// The recipes built into Evelyn, the port's patches, then the `extra` patch
-/// directories', each checked against the port.
+/// directories'.
 fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Loaded>, Error> {
     let mut recipes = Vec::new();
-    let mut step_ids = BTreeSet::new();
-    let mut add = |recipe: Recipe, assets: Option<PathBuf>| -> Result<(), Error> {
-        for step in &recipe.steps {
-            if !step_ids.insert(step.id.clone()) {
-                return Err(Error::DuplicateStep(step.id.clone()));
-            }
-        }
-        let tree = recipe.tree()?;
-        profile.validate_recipe(&tree)?;
+    for (name, text) in BUILT_IN {
+        let recipe = Recipe::parse(text, Path::new(name))?;
         recipes.push(Loaded {
             recipe,
-            tree,
-            assets,
+            assets: None,
         });
-        Ok(())
-    };
-    for (name, text) in BUILT_IN {
-        add(Recipe::parse(text, Path::new(name))?, None)?;
     }
     let extra = extra.iter().map(|patch| patch.join(profile::PATCH));
     for path in profile.patches().into_iter().chain(extra) {
         let assets = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        add(Recipe::load(&path)?, Some(assets))?;
+        let recipe = Recipe::load(&path)?;
+        recipes.push(Loaded {
+            recipe,
+            assets: Some(assets),
+        });
     }
     Ok(recipes)
 }
@@ -341,11 +332,11 @@ fn read(
             partition: partition.name.clone(),
         })
         .collect();
-    let mut reads = crate::needs::Sources::default();
+    let mut reads = Vec::new();
     for recipe in recipes {
-        recipe.tree.walk(&mut reads)?;
+        reads.extend(crate::needs::reads(&recipe.recipe)?);
     }
-    for (firmware, path) in reads.reads {
+    for (firmware, path) in reads {
         for found in mounts.resolve(&path) {
             read.insert(SourceRef {
                 source: firmware,

@@ -18,10 +18,6 @@
 use android_firmware::{
     Filesystem, Name, RelativePath, STANDARD_SYSTEM, SuperLayout, VENDOR_SIDE, glob,
 };
-use recipe::{
-    tree::{Expr, Tree},
-    visit::Visitor,
-};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -299,51 +295,6 @@ impl Profile {
                     .partitions
                     .keys()
                     .any(|pattern| glob(pattern, partition)))
-    }
-
-    /// A partition name a recipe may refer to.
-    pub fn known(&self, partition: &str) -> bool {
-        self.is_vendor_side(partition) || self.takes_from_rom(partition)
-    }
-
-    /// Every partition `recipe` names must be one this port can have. Device paths
-    /// are checked when they are resolved, against the build's mount points.
-    pub fn validate_recipe(&self, tree: &Tree) -> Result<(), recipe::Error> {
-        tree.walk(&mut Partitions(self))
-    }
-}
-
-/// The load-time partition check, over the primitive tree.
-struct Partitions<'a>(&'a Profile);
-
-impl Partitions<'_> {
-    fn known(&self, partition: &str) -> Result<(), recipe::Error> {
-        if self.0.known(partition) {
-            return Ok(());
-        }
-        Err(recipe::Error::Invalid(format!(
-            "refers to partition {partition}, which this port neither defines nor takes by default"
-        )))
-    }
-}
-
-impl Visitor for Partitions<'_> {
-    fn expr(
-        &mut self,
-        expr: &Expr,
-        _bound: &[&recipe::tree::Binding],
-    ) -> Result<(), recipe::Error> {
-        match expr {
-            Expr::HasPartition(name)
-            | Expr::PropertyFiles {
-                partition: Some(name),
-            } => self.known(name.as_ref()),
-            Expr::Select { scope, .. } => match &scope.partition {
-                Some(partition) if !partition.contains(['*', '?']) => self.known(partition),
-                _ => Ok(()),
-            },
-            _ => Ok(()),
-        }
     }
 }
 

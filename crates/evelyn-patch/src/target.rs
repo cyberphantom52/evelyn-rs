@@ -5,7 +5,7 @@ use crate::layout;
 use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath};
 use android_fs::{Content, Entry, EntryKind, File, PartitionTree};
 use android_fs::{Image, Store};
-use recipe::tree::Metadata;
+use recipe::Metadata;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
