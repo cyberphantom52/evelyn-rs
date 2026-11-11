@@ -48,6 +48,79 @@ A port takes the device's own partitions (`vendor`, `odm`, `vendor_dlkm`,
 `evelyn.toml` pins, and `system`, `system_ext`, `product` and `system_dlkm` from the
 ROM. Other ROM partitions are taken only when the port lists them.
 
+## Recipes
+
+A patch's `patch.ron` is a recipe: steps, each a list of operations, applied in
+the order their `after:` lists allow, declaration order breaking ties.
+
+```ron
+Recipe(
+    name: "vndk",
+    steps: [
+        Step(
+            id: "vndk-apex",
+            let: { "vndk": Property(key: "ro.vndk.version", target: Partition("vendor")) },
+            when: Not(Exists(Build("/system_ext/apex/com.android.vndk.v{vndk}.apex"))),
+            operations: [
+                Remove(pattern: "/system_ext/apex/com.android.vndk*.apex"),
+                Install(asset: "apex/com.android.vndk.v{vndk}.apex", to: "/system_ext/apex/com.android.vndk.v{vndk}.apex"),
+            ],
+        ),
+    ],
+)
+```
+
+`let:` binds names to values read from the build so far, which any string in
+the step names as `{name}`; `when:` is a condition the step needs. A value that
+is not set, or a condition that does not hold, skips the step and is reported.
+Paths are device paths (`/vendor/etc/fstab.qcom`), globs allowed; asset paths
+are relative to the patch's directory. Beyond its syntax, nothing is checked
+before a recipe is applied: a wrong path or value fails the build at its step.
+
+The operations:
+
+- `Copy(from:, to:, metadata: Source | Default, overwrite:, create_parent:)`
+  copies from a firmware, `Rom("/…")` or `Stock("/…")`, from the build,
+  `Build("/…")`, or an asset, `Asset("…")`. `Import(Rom("/…"))` is a copy to the
+  same path with the firmware's metadata; `Install(asset:, to:)` a copy of an
+  asset with Android's default metadata.
+- `Remove(pattern:)` removes from the build; a relative pattern is tried in every
+  partition that came from `origin: Rom | Stock` or is named by `partition:`.
+  Matching nothing is reported, not an error.
+- `SetMetadata(pattern:, uid:, gid:, mode:, selinux:)` sets what Android's
+  defaults do not give.
+- `SetProperty(key:, value:, target:)` sets a property where init loads it, or in
+  a `Partition(…)` or a `Build(…)` file; `RemoveProperty(key:, target:)` removes
+  it, and reports a key defined nowhere.
+- `ApplyDiff(target:, patch:)`, `WriteBytes(target:, edits: {offset: "hex"})`,
+  `EditXml(target:, edits: [SetText, SetAttribute, Remove, PutChild])` and
+  `Append(target:, content:)` edit a file.
+- `AddPolicy(target:, policies:)` adds TE policies to one of the vendor's CIL
+  files, checked to resolve with the rest of the device's policy.
+- `Package(target:, edits:)` decodes an APK or JAR and applies edits to it, with
+  paths from its root, including `StubMethod`, `ReplaceMethod` and `InsertMethod`.
+- `Assert(condition:, message:)` and `AssertHash(target:, sha256:)` fail the build
+  when the firmware is not what the patch expects.
+- `ForEach(over:, name:, operations:)` applies operations once for each string of
+  a list, or each file of a selection, with `{name}` bound to it.
+
+Expressions select files (`Build`, `Rom`, `Stock`, `Asset`, `Package`), read them
+(`Read`, `Property(key:, target:)`, `Lines`), test values (`Exists`, which also
+takes a `Partition(…)`, `Not`, `All`, `Matches(text, "regex")`, `Contains(text,
+"…")`) and combine them (`Union`, `Filter(over:, name:, keep:)`, `Join`).
+
+### Kits
+
+Operations specific to a ROM family come in kits Evelyn ships, `assets/kits/`,
+which define them out of the operations above. Every recipe can call any kit's
+operation as it calls a built-in one: one parameter bare, several by name.
+
+- `oplus.ron`: `EnableAndroidFeature("…")`, `EnableOplusFeature("…")`,
+  `EnableAppFeature(name:, file:)` and `EnableAppFeatureWithArgs(name:, args:,
+  file:)` declare a feature in its kind's file, replacing one declared with that
+  name; `DisableFeature("…")` removes one from every permissions and extension
+  XML that mentions it, and reports a feature declared nowhere.
+
 ## Requirements
 
 - Rust (the toolchain is pinned in `rust-toolchain.toml`)
@@ -95,12 +168,12 @@ partitions left out and the steps skipped.
   - `android-fs`: EROFS and ext4 images (raw or sparse) read in place, scanned into partition trees and built back, alone or straight into a `super` image
   - `android-property`: `.prop` files
   - `smali`: smali parser and method edits
-  - `evelyn-recipe`: the recipe language
+  - `evelyn-recipe`: the recipe language and its kits
   - `evelyn-patch`: applies recipes to partition trees
   - `evelyn-engine`: device repositories and the build pipeline
   - `toolchain`: the files Evelyn downloads, pinned by SHA-256, and its signing key
   - `evelyn-cli`: the `evelyn` binary
-- `assets/`: files compiled into Evelyn: the recipes every build applies and the ZIP installer
+- `assets/`: files compiled into Evelyn: the recipes every build applies, the kits and the ZIP installer
 
 ## TODO
 
