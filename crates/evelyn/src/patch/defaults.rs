@@ -7,7 +7,7 @@ use android::EntryKind;
 use android::defaults::{FILE_CONTEXTS, FS_CONFIG};
 use android::defaults::{FileContexts, FileKind, FsConfig, capability_xattr};
 use android::metadata::AndroidMetadata;
-use android::partition::{Mounts, TargetPath};
+use android::partition::{Mounts, PartitionPath};
 use android::path::{DevicePath, Name};
 use std::collections::BTreeMap;
 
@@ -26,7 +26,7 @@ impl Defaults {
         let read = |path: &str| -> Result<Option<Vec<u8>>, Error> {
             let path = DevicePath::try_from(path.to_owned())?;
             let Ok([at]) =
-                <[TargetPath; 1]>::try_from(Composition::resolve(targets, mounts, &path))
+                <[PartitionPath; 1]>::try_from(Composition::resolve(targets, mounts, &path))
             else {
                 return Ok(None);
             };

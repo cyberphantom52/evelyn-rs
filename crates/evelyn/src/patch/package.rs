@@ -4,7 +4,7 @@
 
 use crate::patch::{Target, compose::Context};
 use crate::recipe::{Expr, Location, Operation};
-use android::partition::TargetPath;
+use android::partition::PartitionPath;
 use android::path::{Name, RelativePath};
 use std::{
     fs,
@@ -29,7 +29,7 @@ pub(crate) struct Opened {
 /// Decode the package at `at`. Resources are decoded only when `edits` touch them.
 pub(crate) fn open(
     target: &mut Target,
-    at: &TargetPath,
+    at: &PartitionPath,
     edits: &[Operation],
     context: &Context<'_>,
 ) -> Result<Opened, crate::patch::Error> {

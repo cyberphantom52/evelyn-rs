@@ -398,7 +398,7 @@ impl Target {
         self.tree.map(|path, kind, metadata| match metadata {
             EntryMetadata::Set(metadata) => Ok(metadata),
             EntryMetadata::Default(overrides) => {
-                let at = android::partition::TargetPath {
+                let at = android::partition::PartitionPath {
                     partition: partition.clone(),
                     path: path.clone(),
                 };

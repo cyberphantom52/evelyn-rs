@@ -13,7 +13,7 @@ use crate::recipe::{
 };
 use crate::{Firmware, SourceRef};
 use android::EntryKind;
-use android::partition::TargetPath;
+use android::partition::PartitionPath;
 use android::path::{DevicePath, Name, RelativePath};
 
 impl Composition {
@@ -240,7 +240,7 @@ impl Composition {
         match entry.place {
             Place::Build | Place::Firmware(_) => context
                 .mounts
-                .device_path(&TargetPath {
+                .device_path(&PartitionPath {
                     partition: entry.partition.clone(),
                     path: entry.path.clone(),
                 })

@@ -3,9 +3,9 @@
 
 use crate::path::{DevicePath, Name, RelativePath, glob};
 
-/// A path in a target partition.
+/// A path in a partition.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TargetPath {
+pub struct PartitionPath {
     pub partition: Name,
     pub path: RelativePath,
 }
@@ -23,9 +23,9 @@ impl Mounts {
     /// The partitions and partition-relative paths `path` refers to. A literal path
     /// belongs to the partition with the longest matching mount point; where globs
     /// in its leading components match other mount points, those partitions too.
-    pub fn resolve(&self, path: &DevicePath) -> Vec<TargetPath> {
+    pub fn resolve(&self, path: &DevicePath) -> Vec<PartitionPath> {
         let components: Vec<&str> = path.components().collect();
-        let mut literal: Option<(usize, TargetPath)> = None;
+        let mut literal: Option<(usize, PartitionPath)> = None;
         let mut globbed = Vec::new();
         for (mount, partition) in &self.0 {
             let mount: Vec<&str> = mount.split('/').filter(|c| !c.is_empty()).collect();
@@ -37,7 +37,7 @@ impl Mounts {
             let Ok(rest) = RelativePath::try_from(components[mount.len()..].join("/")) else {
                 continue;
             };
-            let target = TargetPath {
+            let target = PartitionPath {
                 partition: partition.clone(),
                 path: rest,
             };
@@ -81,7 +81,7 @@ impl Mounts {
     }
 
     /// The device path of `path` in `partition`, if the partition is mounted.
-    pub fn device_path(&self, target: &TargetPath) -> Option<DevicePath> {
+    pub fn device_path(&self, target: &PartitionPath) -> Option<DevicePath> {
         let (mount, _) = self.0.iter().find(|(_, p)| *p == target.partition)?;
         DevicePath::try_from(format!("{}/{}", mount.trim_end_matches('/'), target.path)).ok()
     }
