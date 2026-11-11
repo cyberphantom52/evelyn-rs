@@ -37,6 +37,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "am-lz4-flex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e99a8b1acf1c1749062af7f82b410d72b36c15def030f7e2b6e3454f235aa57"
+
+[[package]]
 name = "android-firmware"
 version = "0.1.0"
 dependencies = [
@@ -667,7 +673,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1431,16 +1437,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lz4-sys"
-version = "1.11.1+lz4-1.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bd8c0d6c6ed0cd30b3652886bb8711dc4bb01d637a68105a3d5158039b418e6"
-dependencies = [
- "cc",
- "libc",
-]
-
-[[package]]
 name = "lz4_flex"
 version = "0.11.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2050,19 +2046,20 @@ dependencies = [
 
 [[package]]
 name = "rust-fs-core"
-version = "0.4.2"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99cba8c4b7edb9f69654c0220c8064d938dcd1c929fbd3cb026b7d1578950cbc"
+checksum = "9bd7693404cc43fc8f3c5f92f3808c30277e2e2682440513d58f10e3d9bac815"
 
 [[package]]
 name = "rust-fs-erofs"
-version = "0.5.0"
-source = "git+https://github.com/cyberphantom52/rust-fs-erofs?rev=88a3858f1d0f1f9b58ac2443c48fa935c55c1da6#88a3858f1d0f1f9b58ac2443c48fa935c55c1da6"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20497b079a994e4ce4dccd2f4d5026eec88be9fb5901e7912ace59037ddf3b85"
 dependencies = [
+ "am-lz4-flex",
  "crc32c",
  "flate2",
  "lru",
- "lz4-sys",
  "lz4_flex",
  "lzma-rs",
  "rust-fs-core",
@@ -2110,7 +2107,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2167,7 +2164,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2414,7 +2411,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2546,10 +2543,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

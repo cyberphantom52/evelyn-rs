@@ -30,7 +30,7 @@ impl<'a> Store<'a> {
         Self { images, root: None }
     }
 
-    pub fn open(&self, content: &Content, size: u64) -> Result<Box<dyn Read + 'a>, Error> {
+    pub fn open(&self, content: &Content, size: u64) -> Result<Box<dyn Read + Send + 'a>, Error> {
         match content {
             Content::Image { source, inode } => self
                 .images
