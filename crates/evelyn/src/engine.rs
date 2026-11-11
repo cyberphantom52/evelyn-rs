@@ -29,8 +29,6 @@ pub enum Error {
     Zip(#[from] zip::result::ZipError),
     #[error(transparent)]
     Android(#[from] android::Error),
-    #[error(transparent)]
-    Toolchain(#[from] crate::toolchain::Error),
     #[error("workspace IO: {0}")]
     Io(#[from] std::io::Error),
     #[error(transparent)]
