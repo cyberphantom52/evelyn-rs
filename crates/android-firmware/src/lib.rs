@@ -257,41 +257,11 @@ impl Sha256Digest {
     }
 }
 
-/// A path in a target partition, written `partition:path`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
+/// A path in a target partition.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TargetPath {
     pub partition: Name,
     pub path: RelativePath,
-}
-
-impl TryFrom<String> for TargetPath {
-    type Error = Error;
-
-    fn try_from(value: String) -> Result<Self, Error> {
-        let Some((partition, path)) = value.split_once(':') else {
-            return Err(Error::Invalid {
-                kind: "partition:path",
-                value,
-            });
-        };
-        Ok(Self {
-            partition: partition.to_owned().try_into()?,
-            path: path.to_owned().try_into()?,
-        })
-    }
-}
-
-impl From<TargetPath> for String {
-    fn from(value: TargetPath) -> Self {
-        format!("{}:{}", value.partition, value.path)
-    }
-}
-
-impl fmt::Display for TargetPath {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.partition, self.path)
-    }
 }
 
 /// The two firmwares a port is built from: the ROM being ported, which supplies the
