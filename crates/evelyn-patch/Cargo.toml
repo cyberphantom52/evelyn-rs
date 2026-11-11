@@ -14,7 +14,6 @@ recipe.workspace = true
 smali.workspace = true
 sepolicy.workspace = true
 serde.workspace = true
-ron.workspace = true
 thiserror.workspace = true
 diffy.workspace = true
 xot.workspace = true
