@@ -7,12 +7,6 @@
 //! preserves the text up to the value and the original line ending, and an append
 //! uses the file's own line ending.
 
-/// Whether a file at `path` is named as a property file is, `*.prop`. Init loads
-/// only some of them: `android_firmware::PROPERTY_FILES` and their imports.
-pub fn is_property_file(path: &str) -> bool {
-    path.ends_with(".prop")
-}
-
 /// Set every assignment of `key`; with none, append one with `create`, in the
 /// file's own line ending (LF by default), else leave the text as it was.
 pub fn set(input: &str, key: &str, value: &str, create: bool) -> String {
