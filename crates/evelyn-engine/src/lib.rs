@@ -14,7 +14,6 @@ pub use profile::{Profile, init};
 use android_firmware::Firmware as Source;
 use android_firmware::{Filesystem, Mounts, Name, SourceRef};
 use android_firmware::{STANDARD_SYSTEM, VENDOR_SIDE};
-use android_fs::Artifact;
 use firmware::Firmware;
 use recipe::Recipe;
 use serde::Serialize;
@@ -105,7 +104,7 @@ pub enum Output {
 #[derive(Debug, Serialize)]
 pub struct PlannedSource {
     pub source: SourceRef,
-    pub artifact: Artifact,
+    pub image: PathBuf,
 }
 
 #[derive(Debug, Serialize)]
@@ -324,7 +323,7 @@ impl Plan {
                 continue;
             };
             sources.push(PlannedSource {
-                artifact: Artifact::inspect(image)?,
+                image: image.to_path_buf(),
                 source,
             });
         }

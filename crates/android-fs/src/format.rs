@@ -1,16 +1,13 @@
 //! Identifying an image file from its magic bytes.
 
 use crate::Error;
-use android_firmware::Sha256Digest;
-use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
     io::{self, Read},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImageFormat {
     Erofs,
     Ext4,
@@ -51,39 +48,4 @@ fn header(file: &mut File) -> io::Result<Vec<u8>> {
     let mut prefix = Vec::with_capacity(2048);
     file.take(2048).read_to_end(&mut prefix)?;
     Ok(prefix)
-}
-
-#[derive(Debug, Serialize)]
-pub struct Artifact {
-    pub path: PathBuf,
-    pub size: u64,
-    pub sha256: Sha256Digest,
-    pub format: ImageFormat,
-}
-
-impl Artifact {
-    /// Hash a file and identify its format from magic bytes.
-    pub fn inspect(path: &Path) -> Result<Self, Error> {
-        let inspect = || -> io::Result<(u64, ImageFormat, Sha256Digest)> {
-            let mut file = File::open(path)?;
-            let metadata = file.metadata()?;
-            if !metadata.is_file() {
-                return Err(io::Error::other("expected a regular file"));
-            }
-            let prefix = header(&mut file)?;
-            let format = ImageFormat::of(&prefix);
-            let digest = Sha256Digest::reader(prefix.as_slice().chain(file))?;
-            Ok((metadata.len(), format, digest))
-        };
-        let (size, format, sha256) = inspect().map_err(|source| Error::Read {
-            path: path.into(),
-            source,
-        })?;
-        Ok(Self {
-            path: path.into(),
-            size,
-            sha256,
-            format,
-        })
-    }
 }

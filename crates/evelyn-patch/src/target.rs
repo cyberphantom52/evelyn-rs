@@ -95,16 +95,14 @@ pub struct Target {
 }
 
 impl Target {
-    /// Start a new target at `output` from a source tree, under a new partition identity.
+    /// Start a new target at `output` from a source tree, built as `filesystem`.
     /// Nothing is copied: entries keep referring to their source image until edited.
     pub fn create(
         output: &Path,
         tree: PartitionTree,
-        partition: Name,
         filesystem: Filesystem,
     ) -> Result<Self, Error> {
         let mut tree = tree.map(|_, _, metadata| Ok::<_, Error>(EntryMetadata::Set(metadata)))?;
-        tree.partition = partition;
         tree.filesystem = filesystem;
         fs::create_dir_all(output.join("content"))?;
         Ok(Self {

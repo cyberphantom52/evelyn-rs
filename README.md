@@ -21,7 +21,7 @@ patches/<topic>/<name>/patch.ron  one patch, with its assets beside it
 firmware/stock/        the device's stock firmware: a full OTA package or <partition>.img images
 firmware/rom/          the ROM being ported, likewise
 out/<port>/            what a build writes
-.evelyn/               scans kept between builds, and each build's working space
+.evelyn/               each build's working space
 ```
 
 A build takes the port the ROM matches: each port says which builds it is for
