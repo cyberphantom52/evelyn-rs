@@ -37,8 +37,6 @@ pub enum Error {
     Profile(#[from] profile::Error),
     #[error(transparent)]
     Firmware(#[from] android_firmware::Error),
-    #[error("step IDs must be unique across recipes: {0}")]
-    DuplicateStep(Name),
     #[error("{fstab} mounts {partition}, which this build does not have")]
     FstabPartition { fstab: String, partition: String },
     #[error("{fstab} mounts {partition} as {accepted:?}, but it is built as {filesystem}")]

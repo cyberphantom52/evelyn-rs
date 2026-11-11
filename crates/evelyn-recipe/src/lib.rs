@@ -1,28 +1,18 @@
-//! The recipe language: versioned declarative patch recipes, desugared into a
-//! primitive tree whose types and partitions are checked before any firmware is read.
-//!
-//! Where checks belong: loading a profile or recipe checks everything knowable
-//! without firmware (references between steps, which partitions a port can
-//! have, well-formed operation parameters); a build adds the partitions the
-//! firmware supplies. Applying a recipe checks only what depends on firmware
-//! content and assets: conditions, assertions, the entries an operation names and
-//! the assets it reads.
+//! The recipe language: steps of operations, applied in dependency order, whose
+//! strings can name the values a step binds. A recipe is evaluated as it is
+//! written; what is wrong with one is found when it is applied.
 
-mod desugar;
 mod expr;
 mod location;
-pub mod tree;
 pub mod value;
-pub mod visit;
 mod xml;
-pub use expr::{Expr, substitute, written_out};
-use location::Kind;
+pub use expr::{Expr, Pattern, substitute, written_out};
 pub use location::Location;
 pub use xml::{
     XmlEdit, XmlMatch, XmlName, XmlOp, XmlPath, XmlPredicate, XmlStep, escape_attribute,
 };
 
-use android_firmware::{DevicePath, Firmware, Name, RelativePath, Sha256Digest};
+use android_firmware::{Firmware, Name, Sha256Digest};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -100,7 +90,7 @@ pub enum Operation {
         /// Where it goes, a device path, if not to the same path. A glob keeps its path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<Expr>,
-        metadata: tree::Metadata,
+        metadata: Metadata,
         #[serde(default, skip_serializing_if = "is_false")]
         overwrite: bool,
         #[serde(default, skip_serializing_if = "is_false")]
@@ -239,6 +229,17 @@ pub enum Feature {
     },
 }
 
+/// What a copy gives what it writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Metadata {
+    /// What its source has: the firmware's or the build's, the same directory's
+    /// for a directory made. A source without it (an asset, or no such
+    /// directory) is an error.
+    Source,
+    /// Android's defaults for where it is on the device.
+    Default,
+}
+
 /// What a stubbed method returns: nothing (`V`), zero/false/null, or one/true.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Returns {
@@ -295,167 +296,49 @@ impl Operation {
         }
     }
 
-    /// The smali edits, which need a package's classes.
-    fn package_only(&self) -> bool {
-        matches!(
-            self,
-            Self::ReplaceMethod { .. } | Self::InsertMethod { .. } | Self::StubMethod { .. }
-        )
-    }
-
     /// What can run on a package's files: content edits, copies of assets and
     /// removals by path, and the smali edits.
     pub fn in_package(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::Remove {
                 origin: None,
                 partition: None,
                 ..
-            }
-            | Self::ApplyDiff { .. }
-            | Self::WriteBytes { .. }
-            | Self::EditXml { .. }
-            | Self::Copy { .. }
-            | Self::Install { .. }
-            | Self::Append { .. }
-            | Self::Assert { .. }
-            | Self::AssertHash { .. } => true,
-            other => other.package_only(),
-        }
+            } | Self::ApplyDiff { .. }
+                | Self::WriteBytes { .. }
+                | Self::EditXml { .. }
+                | Self::Copy { .. }
+                | Self::Install { .. }
+                | Self::Append { .. }
+                | Self::Assert { .. }
+                | Self::AssertHash { .. }
+                | Self::ReplaceMethod { .. }
+                | Self::InsertMethod { .. }
+                | Self::StubMethod { .. }
+        )
     }
 
-    /// Checks that can fail before any image is touched; the patch crate checks the
-    /// rest on apply. Inside a package, the files an operation names are the
-    /// package's, `Package("/…")`; elsewhere the build's, `Build("/…")`.
-    fn validate(&self, in_package: bool) -> Result<(), Error> {
-        let name = self.name();
-        // Paths written out are checked now; one naming a bound value when it is used.
-        let device = |path: &String| expr::written::<DevicePath>(path);
-        let asset = |path: &String| expr::written::<RelativePath>(path);
-        // Where a copy goes: a device path, or what an expression gives.
-        let destination = |to: &Expr| match to {
-            Expr::Text(to) => device(to),
-            to => to.check(in_package),
-        };
+    /// Every location it names, in its expressions and in the operations inside
+    /// it included.
+    pub fn locations(&self) -> Vec<&Location> {
+        let mut found = Vec::new();
         match self {
-            Self::ApplyDiff { target, patch } => {
-                device(target)?;
-                asset(patch)?;
+            Self::Copy { from, to, .. } => {
+                found.push(from);
+                found.extend(to.iter().flat_map(Expr::locations));
             }
-            Self::WriteBytes { target, .. }
-            | Self::AssertHash { target, .. }
-            | Self::Append { target, .. } => device(target)?,
-            Self::AddPolicy { target, policies } => {
-                device(target)?;
-                policies.iter().try_for_each(asset)?;
+            Self::Import(from) => found.push(from),
+            Self::SetProperty { target, .. } | Self::RemoveProperty { target, .. } => {
+                found.extend(target)
             }
-            Self::SetMetadata { pattern, .. } => device(pattern)?,
-            // An edit written out is parsed now; one naming a bound value when applied.
-            Self::EditXml { target, edits } => {
-                device(target)?;
-                for edit in edits {
-                    if let Ok(edit) = edit.map(|text| expr::written_out(text).ok_or(())) {
-                        edit.parse().map_err(Error::Invalid)?;
-                    }
-                }
-            }
-            Self::ReplaceMethod { body, .. } | Self::InsertMethod { body, .. } => asset(body)?,
-            Self::EnableFeature(Feature::App { file, .. }) => device(file)?,
+            Self::Install { to, .. } => found.extend(to.locations()),
+            Self::Append { content, .. } => found.extend(content.locations()),
+            Self::Assert { condition, .. } => found.extend(condition.locations()),
+            Self::Package { edits, .. } => found.extend(edits.iter().flat_map(Self::locations)),
             _ => {}
         }
-        match self {
-            Self::SetProperty { key, value, .. }
-                if !expr::written_or(key, property_key)
-                    || !expr::written_or(value, |value| !value.contains('\n')) =>
-            {
-                Err(Error::Invalid(format!("invalid property {key:?}")))
-            }
-            Self::RemoveProperty { key, .. } if !expr::written_or(key, property_key) => {
-                Err(Error::Invalid(format!("invalid property key {key:?}")))
-            }
-            Self::SetProperty { target, .. } | Self::RemoveProperty { target, .. } => target
-                .iter()
-                .try_for_each(|target| target.check(&[Kind::Build, Kind::Partition], name)),
-            Self::AddPolicy { policies, .. } if policies.is_empty() => {
-                Err(Error::Invalid("AddPolicy needs at least one policy".into()))
-            }
-            Self::Copy {
-                from, to, metadata, ..
-            } => {
-                let sources: &[Kind] = match in_package {
-                    true => &[Kind::Asset],
-                    false => &[Kind::Build, Kind::Rom, Kind::Stock, Kind::Asset],
-                };
-                from.check(sources, name)?;
-                if from.kind() == Kind::Asset && to.is_none() {
-                    return Err(Error::Invalid("copying an asset needs a to:".into()));
-                }
-                if from.kind() == Kind::Asset && *metadata == tree::Metadata::Source {
-                    return Err(Error::Invalid(
-                        "an asset has no metadata of its own; copy it with metadata: Default"
-                            .into(),
-                    ));
-                }
-                to.iter().try_for_each(destination)
-            }
-            Self::Remove {
-                partition, pattern, ..
-            } => {
-                if let Some(partition) = partition
-                    && (partition.is_empty()
-                        || !partition
-                            .bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || b"_-*?".contains(&b)))
-                {
-                    return Err(Error::Invalid(format!("invalid partition {partition:?}")));
-                }
-                expr::pattern(pattern)
-            }
-            Self::Import(from) => from.check(&[Kind::Rom, Kind::Stock], name),
-            Self::Install { asset: file, to } => {
-                asset(file)?;
-                destination(to)
-            }
-            Self::SetMetadata { .. } => set(self).validate(),
-            Self::StubMethod { class, .. }
-            | Self::ReplaceMethod { class, .. }
-            | Self::InsertMethod { class, .. }
-                if !expr::written_or(class, |class| {
-                    class.starts_with('L') && class.ends_with(';') && class.len() > 2
-                }) =>
-            {
-                Err(Error::Invalid(format!(
-                    "class {class:?} is not written as Lcom/example/Name;"
-                )))
-            }
-            Self::WriteBytes { edits, .. } => {
-                let mut end = 0;
-                for (offset, bytes) in edits {
-                    if *offset < end {
-                        return Err(Error::Invalid(format!(
-                            "binary edit at {offset} overlaps the one before it"
-                        )));
-                    }
-                    end = offset + bytes.0.len() as u64;
-                }
-                Ok(())
-            }
-            Self::Append { content, .. } => content.check(in_package),
-            Self::Assert { condition, .. } => condition.check(in_package),
-            Self::Package { target, edits } => {
-                device(target)?;
-                edits.iter().try_for_each(|edit| {
-                    if !edit.in_package() {
-                        return Err(Error::Invalid(format!(
-                            "{} does not work inside a Package",
-                            edit.name()
-                        )));
-                    }
-                    edit.validate(true)
-                })
-            }
-            _ => Ok(()),
-        }
+        found
     }
 }
 
@@ -480,35 +363,10 @@ impl Recipe {
 
     /// A recipe from its text, with `path` naming it in errors.
     pub fn parse(text: &str, path: &Path) -> Result<Self, Error> {
-        let recipe: Self = ron_options().from_str(text).map_err(|source| Error::Ron {
+        ron_options().from_str(text).map_err(|source| Error::Ron {
             path: path.into(),
             source: Box::new(source),
-        })?;
-        recipe.validate()?;
-        Ok(recipe)
-    }
-
-    fn validate(&self) -> Result<(), Error> {
-        let mut ids = BTreeSet::new();
-        for step in &self.steps {
-            if !ids.insert(&step.id) {
-                return Err(Error::Invalid(format!("duplicate step {}", step.id)));
-            }
-            for value in step.bindings.values().chain(&step.when) {
-                value.check(false)?;
-            }
-            for operation in &step.operations {
-                if operation.package_only() {
-                    return Err(Error::Invalid(format!(
-                        "{} works only inside a Package",
-                        operation.name()
-                    )));
-                }
-                operation.validate(false)?;
-            }
-        }
-        self.tree()?.walk(&mut visit::Check)?;
-        Ok(())
+        })
     }
 
     /// Stable topological order; declaration order breaks ties.
@@ -537,25 +395,5 @@ impl Recipe {
             ordered.push(step);
         }
         Ok(ordered)
-    }
-}
-
-/// What a `SetMetadata` sets.
-pub(crate) fn set(operation: &Operation) -> tree::Overrides {
-    let Operation::SetMetadata {
-        uid,
-        gid,
-        mode,
-        selinux,
-        ..
-    } = operation
-    else {
-        panic!("only SetMetadata sets metadata")
-    };
-    tree::Overrides {
-        uid: *uid,
-        gid: *gid,
-        mode: *mode,
-        selinux: selinux.as_deref().map(desugar::text),
     }
 }

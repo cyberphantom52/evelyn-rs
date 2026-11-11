@@ -195,59 +195,40 @@ impl From<XmlPath> for String {
     }
 }
 
-/// An XML edit. A recipe writes its paths, selectors, names and values as strings,
-/// `S` = `String`, in which `{name}` is a bound value; the tree holds them as
-/// expressions. They are parsed when the recipe loads if written out, else when
-/// the edit is applied.
+/// An XML edit. Its paths, selectors, names and values are strings, in which
+/// `{name}` is a bound value; they are parsed when the edit is applied.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub enum XmlEdit<S = String> {
+pub enum XmlEdit {
     /// Replace the text of every match.
-    SetText { path: S, value: S },
+    SetText { path: String, value: String },
     /// Set the attribute `name` of every match that has it to `value`; with
     /// `create`, add it to those that do not.
     SetAttribute {
-        path: S,
-        name: S,
-        value: S,
+        path: String,
+        name: String,
+        value: String,
         #[serde(default, skip_serializing_if = "is_false")]
         create: bool,
     },
     /// Remove every match.
-    Remove { path: S },
+    Remove { path: String },
     /// Put `element`, one element, in place of the children `key` matches under
     /// every match of `parent`; with `create`, append it where none match.
     PutChild {
-        parent: S,
-        key: S,
-        element: S,
+        parent: String,
+        key: String,
+        element: String,
         #[serde(default, skip_serializing_if = "is_false")]
         create: bool,
     },
 }
 
-impl<S> XmlEdit<S> {
-    /// Its strings, in order.
-    pub fn strings(&self) -> Vec<&S> {
-        match self {
-            Self::SetText { path, value } => vec![path, value],
-            Self::SetAttribute {
-                path, name, value, ..
-            } => vec![path, name, value],
-            Self::Remove { path } => vec![path],
-            Self::PutChild {
-                parent,
-                key,
-                element,
-                ..
-            } => vec![parent, key, element],
-        }
-    }
-
+impl XmlEdit {
     /// The edit with each string made into what `f` makes of it.
-    pub fn map<T, E>(&self, mut f: impl FnMut(&S) -> Result<T, E>) -> Result<XmlEdit<T>, E> {
+    pub fn map<E>(&self, mut f: impl FnMut(&str) -> Result<String, E>) -> Result<Self, E> {
         Ok(match self {
-            Self::SetText { path, value } => XmlEdit::SetText {
+            Self::SetText { path, value } => Self::SetText {
                 path: f(path)?,
                 value: f(value)?,
             },
@@ -256,19 +237,19 @@ impl<S> XmlEdit<S> {
                 name,
                 value,
                 create,
-            } => XmlEdit::SetAttribute {
+            } => Self::SetAttribute {
                 path: f(path)?,
                 name: f(name)?,
                 value: f(value)?,
                 create: *create,
             },
-            Self::Remove { path } => XmlEdit::Remove { path: f(path)? },
+            Self::Remove { path } => Self::Remove { path: f(path)? },
             Self::PutChild {
                 parent,
                 key,
                 element,
                 create,
-            } => XmlEdit::PutChild {
+            } => Self::PutChild {
                 parent: f(parent)?,
                 key: f(key)?,
                 element: f(element)?,
@@ -302,7 +283,7 @@ pub enum XmlOp {
     },
 }
 
-impl XmlEdit<String> {
+impl XmlEdit {
     /// The edit with its selectors parsed.
     pub fn parse(&self) -> Result<XmlOp, String> {
         let path = |path: &String| XmlPath::try_from(path.clone());

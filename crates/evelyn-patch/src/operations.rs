@@ -8,8 +8,7 @@ use crate::{
 };
 use android_firmware::{DevicePath, Firmware, RelativePath, Sha256Digest};
 use recipe::{
-    Expr, Feature, Hex, Location, Operation, Returns, XmlEdit, escape_attribute,
-    tree::Metadata,
+    Expr, Feature, Hex, Location, Metadata, Operation, Returns, XmlEdit, escape_attribute,
     value::{Located, Place},
 };
 use std::collections::BTreeMap;
@@ -75,7 +74,7 @@ impl Composition {
                 };
                 if selinux
                     .as_deref()
-                    .is_some_and(|label| !recipe::tree::selinux_label(label))
+                    .is_some_and(|label| !selinux_label(label))
                 {
                     return Err(Error::Unsupported("a label is user:role:type:level"));
                 }
@@ -645,4 +644,10 @@ fn appended(old: &str, added: &str) -> String {
         text.push('\n');
     }
     text
+}
+
+/// A label as SELinux writes one: `user:role:type:level`, without whitespace.
+fn selinux_label(label: &str) -> bool {
+    label.splitn(4, ':').filter(|part| !part.is_empty()).count() == 4
+        && !label.contains(|c: char| c == '\0' || c.is_whitespace())
 }

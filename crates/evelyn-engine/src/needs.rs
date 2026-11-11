@@ -1,28 +1,30 @@
-//! The firmware partitions a recipe reads, gathered by walking its primitive tree.
+//! The firmware partitions a recipe reads.
 
 use android_firmware::{DevicePath, Firmware};
-use recipe::{
-    Error,
-    tree::{Expr, Source},
-    visit::Visitor,
-};
+use recipe::{Expr, Location, Operation, Recipe};
 
-/// Every selection that looks inside a firmware: which firmware, and the device
-/// path it looks for.
-#[derive(Default)]
-pub(crate) struct Sources {
-    pub reads: Vec<(Firmware, DevicePath)>,
-}
-
-impl Visitor for Sources {
-    fn expr(&mut self, expr: &Expr, _bound: &[&recipe::tree::Binding]) -> Result<(), Error> {
-        if let Expr::Select { pattern, scope } = expr
-            && let Some(firmware) = scope.inside.and_then(Source::firmware)
-            && let Some(pattern) = pattern.literal_str()
-        {
-            self.reads
-                .push((firmware, DevicePath::try_from(pattern.to_owned())?));
+/// Every path a recipe looks for in a firmware, `Rom("/…")` or `Stock("/…")`
+/// written out: which firmware, and the device path. One naming a bound value is
+/// not known until the recipe is applied.
+pub(crate) fn reads(
+    recipe: &Recipe,
+) -> Result<Vec<(Firmware, DevicePath)>, android_firmware::Error> {
+    let locations = recipe.steps.iter().flat_map(|step| {
+        let exprs = step.bindings.values().chain(&step.when);
+        exprs
+            .flat_map(Expr::locations)
+            .chain(step.operations.iter().flat_map(Operation::locations))
+    });
+    let mut reads = Vec::new();
+    for location in locations {
+        let firmware = match location {
+            Location::Rom(_) => Firmware::Rom,
+            Location::Stock(_) => Firmware::Stock,
+            _ => continue,
+        };
+        if let Some(path) = recipe::written_out(location.path()) {
+            reads.push((firmware, DevicePath::try_from(path)?));
         }
-        Ok(())
     }
+    Ok(reads)
 }
