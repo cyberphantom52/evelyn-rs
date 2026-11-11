@@ -1,4 +1,4 @@
-use crate::firmware::AndroidMetadata;
+use crate::metadata::AndroidMetadata;
 use crate::{EntryKind, PartitionTree};
 use crate::{Error, Region, Store, mode};
 use fs_erofs::mkfs::{self, BuildOptions, Compression, Content, Node, NodeMeta, XattrSpec};

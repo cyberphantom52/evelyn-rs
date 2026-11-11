@@ -99,3 +99,12 @@ fn has_meta(path: &str) -> bool {
     }
     false
 }
+
+/// The `file_contexts` files, in the order Android loads them.
+pub const FILE_CONTEXTS: [&str; 5] = [
+    "/system/etc/selinux/plat_file_contexts",
+    "/system_ext/etc/selinux/system_ext_file_contexts",
+    "/product/etc/selinux/product_file_contexts",
+    "/vendor/etc/selinux/vendor_file_contexts",
+    "/odm/etc/selinux/odm_file_contexts",
+];

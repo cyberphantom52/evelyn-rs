@@ -6,11 +6,16 @@ pub mod defaults;
 mod device;
 pub mod firmware;
 mod format;
+pub mod hash;
 mod image;
 pub mod lp;
+pub mod metadata;
+pub mod partition;
+pub mod path;
 pub mod property;
 mod region;
 mod scan;
+pub mod sepolicy;
 mod store;
 mod tree;
 
@@ -25,7 +30,7 @@ pub(crate) mod mode {
 use std::{io, path::PathBuf};
 use thiserror::Error;
 
-pub use format::ImageFormat;
+pub use format::{Filesystem, ImageFormat};
 pub use image::Image;
 pub use region::Region;
 pub use scan::scan;
@@ -35,9 +40,9 @@ pub use tree::{Content, Entry, EntryKind, File, PartitionTree};
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("no entry {0}")]
-    Missing(crate::firmware::RelativePath),
+    Missing(crate::path::RelativePath),
     #[error("{0} is not a regular file")]
-    NotAFile(crate::firmware::RelativePath),
+    NotAFile(crate::path::RelativePath),
     #[error("cannot read {path}: {source}")]
     Read {
         path: PathBuf,

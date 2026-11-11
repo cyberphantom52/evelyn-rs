@@ -1,4 +1,4 @@
-use crate::firmware::AndroidMetadata;
+use crate::metadata::AndroidMetadata;
 use crate::{EntryKind, PartitionTree, Region};
 use crate::{Error, Store};
 use std::{

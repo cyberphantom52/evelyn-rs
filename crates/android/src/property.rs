@@ -140,3 +140,48 @@ fn edit(input: &str, key: &str, value: Option<&str>) -> String {
     }
     output
 }
+
+/// The property files init loads at boot, in the order it loads them, an assignment
+/// in a later one overriding one in an earlier one. Of a group of several, init
+/// loads the first if the device has it, else the legacy files after it.
+pub const PROPERTY_FILES: [&[&str]; 9] = [
+    &["/system/build.prop"],
+    &[
+        "/system_ext/etc/build.prop",
+        "/system_ext/default.prop",
+        "/system_ext/build.prop",
+    ],
+    &["/system_dlkm/etc/build.prop"],
+    &["/vendor/default.prop"],
+    &["/vendor/build.prop"],
+    &["/vendor_dlkm/etc/build.prop"],
+    &["/odm_dlkm/etc/build.prop"],
+    &[
+        "/odm/etc/build.prop",
+        "/odm/default.prop",
+        "/odm/build.prop",
+    ],
+    &[
+        "/product/etc/build.prop",
+        "/product/default.prop",
+        "/product/build.prop",
+    ],
+];
+
+/// Where in a partition its own properties are, the one a new key goes to first.
+pub const PARTITION_PROPERTY_FILES: [&str; 3] =
+    ["system/build.prop", "etc/build.prop", "build.prop"];
+
+/// Keys init does not take from a property file.
+pub fn loadable_property(key: &str) -> bool {
+    !key.starts_with("ctl.") && key != "sys.powerctl" && key != "selinux.restorecon_recursive"
+}
+
+/// The `ro.product.*` properties init derives, when a property file leaves one unset
+/// or empty, from the first of `ro.product.<source>.*` that is set, by
+/// `ro.product.property_source_order` or, without it or with a source not listed
+/// here, in this order of sources.
+pub const DERIVED_PRODUCT_PROPERTIES: [&str; 5] =
+    ["brand", "device", "manufacturer", "model", "name"];
+pub const PRODUCT_PROPERTY_SOURCES: [&str; 5] =
+    ["product", "odm", "vendor", "system_ext", "system"];

@@ -1,7 +1,9 @@
 //! Identifying an image file from its magic bytes.
 
 use crate::Error;
+use serde::{Deserialize, Serialize};
 use std::{
+    fmt,
     fs::File,
     io::{self, Read},
     path::Path,
@@ -48,4 +50,20 @@ fn header(file: &mut File) -> io::Result<Vec<u8>> {
     let mut prefix = Vec::with_capacity(2048);
     file.take(2048).read_to_end(&mut prefix)?;
     Ok(prefix)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Filesystem {
+    Erofs,
+    Ext4,
+}
+
+impl fmt::Display for Filesystem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Erofs => "erofs",
+            Self::Ext4 => "ext4",
+        })
+    }
 }

@@ -3,7 +3,9 @@
 
 use crate::patch::layout;
 use crate::recipe::Metadata;
-use android::firmware::{AndroidMetadata, Filesystem, Name, RelativePath};
+use android::Filesystem;
+use android::metadata::AndroidMetadata;
+use android::path::{Name, RelativePath};
 use android::{Content, Entry, EntryKind, File, PartitionTree};
 use android::{Image, Store};
 use std::{
@@ -67,7 +69,7 @@ pub enum Error {
     #[error("a scope selects no partition of this build")]
     EmptyScope,
     #[error("{0} is in no partition this build has")]
-    AbsentPath(android::firmware::DevicePath),
+    AbsentPath(android::path::DevicePath),
     #[error("source {0} was not extracted")]
     UnknownSource(android::firmware::SourceRef),
     #[error(transparent)]
@@ -392,13 +394,13 @@ impl Target {
     pub(crate) fn resolve(
         self,
         partition: &Name,
-        mounts: &android::firmware::Mounts,
+        mounts: &android::partition::Mounts,
         defaults: Option<&crate::patch::defaults::Defaults>,
     ) -> Result<PartitionTree, Error> {
         self.tree.map(|path, kind, metadata| match metadata {
             EntryMetadata::Set(metadata) => Ok(metadata),
             EntryMetadata::Default(overrides) => {
-                let at = android::firmware::TargetPath {
+                let at = android::partition::TargetPath {
                     partition: partition.clone(),
                     path: path.clone(),
                 };

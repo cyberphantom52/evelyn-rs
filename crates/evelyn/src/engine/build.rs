@@ -16,9 +16,12 @@ use crate::engine::properties::{check_fingerprint, port_for, rom_properties};
 use crate::engine::{Error, Output, Profile, profile};
 use crate::recipe::Recipe;
 use crate::toolchain::Tools;
+use android::Filesystem;
 use android::firmware::Firmware as Source;
-use android::firmware::{Filesystem, Mounts, Name, STANDARD_SYSTEM, SourceRef, VENDOR_SIDE};
+use android::firmware::SourceRef;
 use android::lp::SuperImage;
+use android::partition::{Mounts, STANDARD_SYSTEM, VENDOR_SIDE};
+use android::path::Name;
 use android::{Image, PartitionTree};
 use serde::Serialize;
 use std::{
@@ -277,16 +280,18 @@ fn partition(
         .unwrap_or_default();
     let mount_point = match settings
         .mount_point
-        .or_else(|| android::firmware::default_mount_point(name.as_ref()))
+        .or_else(|| android::partition::default_mount_point(name.as_ref()))
     {
         Some(mount_point) => mount_point,
         None => {
             let image = firmware.image(name).expect("the system side is extracted");
             let found = Image::detect(image)?
                 .read_files(|path| path == "system/build.prop" || path == "build.prop")?;
-            android::firmware::system_mount_point(|path| found.iter().any(|(file, _)| file == path))
-                .ok_or(Error::SystemLayout)?
-                .to_owned()
+            android::partition::system_mount_point(|path| {
+                found.iter().any(|(file, _)| file == path)
+            })
+            .ok_or(Error::SystemLayout)?
+            .to_owned()
         }
     };
     Ok(Partition {

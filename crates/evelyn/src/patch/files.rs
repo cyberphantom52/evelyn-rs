@@ -12,7 +12,9 @@ use crate::recipe::{
     value::{Located, Place},
 };
 use android::EntryKind;
-use android::firmware::{DevicePath, Firmware, Name, RelativePath, SourceRef, TargetPath};
+use android::firmware::{Firmware, SourceRef};
+use android::partition::TargetPath;
+use android::path::{DevicePath, Name, RelativePath};
 
 impl Composition {
     /// What a location selects; a partition is the property files init loads
@@ -145,7 +147,7 @@ impl Composition {
                 .keys()
                 .filter(|name| origin.is_none_or(|origin| self.origins.get(*name) == Some(&origin)))
                 .filter(|name| {
-                    partition.is_none_or(|glob| android::firmware::glob(glob, name.as_ref()))
+                    partition.is_none_or(|glob| android::path::glob(glob, name.as_ref()))
                 })
                 .collect();
             if selected.is_empty() {
@@ -209,7 +211,7 @@ impl Composition {
         &self,
         entry: &Located,
         context: &Context<'_>,
-    ) -> Result<android::firmware::Sha256Digest, Error> {
+    ) -> Result<android::hash::Sha256Digest, Error> {
         match entry.place {
             Place::Build => {
                 let target = self
@@ -220,7 +222,7 @@ impl Composition {
                     .store(context.images)
                     .sha256(&target.file(&entry.path)?)?)
             }
-            _ => Ok(android::firmware::Sha256Digest::bytes(
+            _ => Ok(android::hash::Sha256Digest::bytes(
                 &self.content(entry, context)?,
             )),
         }
@@ -323,7 +325,7 @@ impl Composition {
     /// followed: only the device can expand it.
     pub(crate) fn loaded(&self, context: &Context<'_>) -> Result<Loaded, Error> {
         let mut loaded = Loaded::default();
-        for group in android::firmware::PROPERTY_FILES {
+        for group in android::property::PROPERTY_FILES {
             let mut files = Vec::new();
             for path in group {
                 files.push(self.property_file(path, context)?);
@@ -368,7 +370,7 @@ impl Composition {
                 }
                 android::property::Line::Import { .. } => {}
                 android::property::Line::Assignment(entry) => {
-                    if android::firmware::loadable_property(entry.key)
+                    if android::property::loadable_property(entry.key)
                         && filter
                             .is_none_or(|filter| android::property::filtered(filter, entry.key))
                     {
@@ -436,11 +438,11 @@ impl Loaded {
         };
         let derived = key
             .strip_prefix("ro.product.")
-            .filter(|name| android::firmware::DERIVED_PRODUCT_PROPERTIES.contains(name));
+            .filter(|name| android::property::DERIVED_PRODUCT_PROPERTIES.contains(name));
         let (Some(name), None | Some("")) = (derived, value(key).as_deref()) else {
             return value(key);
         };
-        let sources = android::firmware::PRODUCT_PROPERTY_SOURCES;
+        let sources = android::property::PRODUCT_PROPERTY_SOURCES;
         let order = value("ro.product.property_source_order").filter(|order| !order.is_empty());
         let order: Vec<String> = match order {
             Some(order) if order.split(',').all(|source| sources.contains(&source)) => {

@@ -13,7 +13,9 @@ pub use xml::{
     XmlEdit, XmlMatch, XmlName, XmlOp, XmlPath, XmlPredicate, XmlStep, escape_attribute,
 };
 
-use android::firmware::{Firmware, Name, Sha256Digest};
+use android::firmware::Firmware;
+use android::hash::Sha256Digest;
+use android::path::Name;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -275,7 +277,7 @@ impl TryFrom<String> for Hex {
     type Error = String;
 
     fn try_from(text: String) -> Result<Self, String> {
-        android::firmware::unhex(&text)
+        android::hash::unhex(&text)
             .filter(|bytes| !bytes.is_empty())
             .map(Self)
             .ok_or_else(|| format!("invalid hex bytes {text:?}"))
@@ -284,7 +286,7 @@ impl TryFrom<String> for Hex {
 
 impl From<Hex> for String {
     fn from(hex: Hex) -> Self {
-        android::firmware::hex(&hex.0)
+        android::hash::hex(&hex.0)
     }
 }
 

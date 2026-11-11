@@ -5,8 +5,8 @@
 mod file_contexts;
 mod fs_config;
 
-pub use file_contexts::FileContexts;
-pub use fs_config::{FsConfig, Ownership, capability_xattr};
+pub use file_contexts::{FILE_CONTEXTS, FileContexts};
+pub use fs_config::{FS_CONFIG, FsConfig, Ownership, capability_xattr};
 
 use thiserror::Error;
 

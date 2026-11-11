@@ -456,3 +456,14 @@ pub fn capability_xattr(capabilities: u64) -> Option<Vec<u8>> {
     }
     Some(value)
 }
+
+/// The partitions whose `etc/fs_config_files` and `etc/fs_config_dirs` Android reads,
+/// in the order it reads them.
+pub const FS_CONFIG: [&str; 6] = [
+    "/system",
+    "/vendor",
+    "/oem",
+    "/odm",
+    "/product",
+    "/system_ext",
+];

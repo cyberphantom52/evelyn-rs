@@ -13,7 +13,9 @@ pub use build::{Build, Built, Composed, build};
 pub use firmware::{Extracted, Given, extract_in_place};
 pub use profile::{Profile, init};
 
-use android::firmware::{Filesystem, Name, SourceRef};
+use android::Filesystem;
+use android::firmware::SourceRef;
+use android::path::Name;
 use std::path::PathBuf;
 use thiserror::Error;
 
