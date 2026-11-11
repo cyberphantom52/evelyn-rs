@@ -86,21 +86,6 @@ impl Value {
         }
     }
 
-    /// Equal strings or booleans; an unset value equals nothing.
-    pub fn equals(&self, other: &Self) -> Result<Self, ValueError> {
-        match (self, other) {
-            (Self::Str(a), Self::Str(b)) => Ok(Self::Bool(a == b)),
-            (Self::Bool(a), Self::Bool(b)) => Ok(Self::Bool(a == b)),
-            (Self::Unset, Self::Str(_) | Self::Unset) | (Self::Str(_), Self::Unset) => {
-                Ok(Self::Bool(false))
-            }
-            (a, b) => Err(Self::undefined(
-                "Eq",
-                format!("{} and {}", a.kind(), b.kind()),
-            )),
-        }
-    }
-
     /// A string's lines; an unset value has none.
     pub fn lines(&self) -> Result<Self, ValueError> {
         match self {

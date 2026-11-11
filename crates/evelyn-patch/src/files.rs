@@ -202,6 +202,28 @@ impl Composition {
         }
     }
 
+    /// The SHA-256 of a selected file.
+    pub(crate) fn sha256(
+        &self,
+        entry: &Located,
+        context: &Context<'_>,
+    ) -> Result<android_firmware::Sha256Digest, Error> {
+        match entry.place {
+            Place::Build => {
+                let target = self
+                    .targets
+                    .get(&entry.partition)
+                    .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?;
+                Ok(target
+                    .store(context.images)
+                    .sha256(&target.file(&entry.path)?)?)
+            }
+            _ => Ok(android_firmware::Sha256Digest::bytes(
+                &self.content(entry, context)?,
+            )),
+        }
+    }
+
     /// The content of a selected file, as text.
     pub(crate) fn text(&self, entry: &Located, context: &Context<'_>) -> Result<String, Error> {
         String::from_utf8(self.content(entry, context)?)
