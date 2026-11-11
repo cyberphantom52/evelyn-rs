@@ -19,14 +19,14 @@ enum Backend {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
+pub enum InodeKind {
     File,
     Directory,
     Symlink,
 }
 
 pub struct Inode {
-    pub kind: Kind,
+    pub kind: InodeKind,
     pub size: u64,
     pub links: u32,
     pub metadata: AndroidMetadata,
@@ -76,8 +76,8 @@ impl Image {
                 let path = format!("{dir}{}", String::from_utf8_lossy(&name));
                 let inode = self.inode(child)?;
                 match inode.kind {
-                    Kind::Directory => pending.push((format!("{path}/"), child)),
-                    Kind::File if wanted(&path) => {
+                    InodeKind::Directory => pending.push((format!("{path}/"), child)),
+                    InodeKind::File if wanted(&path) => {
                         let mut data = Vec::with_capacity(inode.size as usize);
                         self.file(child, inode.size)?.read_to_end(&mut data)?;
                         found.push((path, data));
@@ -145,9 +145,9 @@ impl Image {
             }
         };
         let kind = match mode & crate::mode::TYPE {
-            crate::mode::FILE => Kind::File,
-            crate::mode::DIRECTORY => Kind::Directory,
-            crate::mode::SYMLINK => Kind::Symlink,
+            crate::mode::FILE => InodeKind::File,
+            crate::mode::DIRECTORY => InodeKind::Directory,
+            crate::mode::SYMLINK => InodeKind::Symlink,
             _ => {
                 return Err(Error::Unsupported(format!(
                     "special or unknown inode {id}, mode {mode:#o}"
@@ -198,12 +198,12 @@ impl Image {
         Ok(match &self.0 {
             Backend::Erofs(fs) => {
                 let inode = fs.read_inode(id)?;
-                Box::new(File::new(size, move |offset, output| {
+                Box::new(Reader::new(size, move |offset, output| {
                     fs.read_file(&inode, offset, output)?;
                     Ok(output.len())
                 }))
             }
-            Backend::Ext4(fs) => Box::new(File::new(size, move |offset, output| {
+            Backend::Ext4(fs) => Box::new(Reader::new(size, move |offset, output| {
                 Ok(fs.read_ino(id as u32, offset, output)?)
             })),
         })
@@ -211,13 +211,13 @@ impl Image {
 }
 
 /// The first `size` bytes of a file, read from an image at increasing offsets.
-struct File<F> {
+struct Reader<F> {
     read_at: F,
     size: u64,
     offset: u64,
 }
 
-impl<F: FnMut(u64, &mut [u8]) -> Result<usize, Error>> File<F> {
+impl<F: FnMut(u64, &mut [u8]) -> Result<usize, Error>> Reader<F> {
     fn new(size: u64, read_at: F) -> Self {
         Self {
             read_at,
@@ -227,7 +227,7 @@ impl<F: FnMut(u64, &mut [u8]) -> Result<usize, Error>> File<F> {
     }
 }
 
-impl<F: FnMut(u64, &mut [u8]) -> Result<usize, Error>> Read for File<F> {
+impl<F: FnMut(u64, &mut [u8]) -> Result<usize, Error>> Read for Reader<F> {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         let count = (self.size - self.offset).min(output.len() as u64) as usize;
         if count == 0 {

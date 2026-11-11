@@ -1,5 +1,5 @@
 use crate::Error;
-use crate::image::{Image, Kind};
+use crate::image::{Image, InodeKind};
 use crate::path::RelativePath;
 use crate::{Content, Entry, EntryKind, PartitionTree};
 use std::collections::{BTreeMap, btree_map};
@@ -25,7 +25,7 @@ impl Scan<'_> {
             })?;
             let inode = self.image.inode(id)?;
             let kind = match (inode.kind, self.links.entry(id)) {
-                (Kind::Directory, _) => EntryKind::Directory,
+                (InodeKind::Directory, _) => EntryKind::Directory,
                 (_, btree_map::Entry::Occupied(mut link)) => {
                     let (first, seen, _) = link.get_mut();
                     *seen += 1;
@@ -35,7 +35,7 @@ impl Scan<'_> {
                 }
                 (kind, btree_map::Entry::Vacant(link)) => {
                     link.insert((path.clone(), 1, inode.links));
-                    if kind == Kind::Symlink {
+                    if kind == InodeKind::Symlink {
                         EntryKind::Symlink {
                             target: self.image.link(id)?,
                         }
@@ -57,7 +57,7 @@ impl Scan<'_> {
                     metadata: inode.metadata,
                 },
             );
-            if inode.kind == Kind::Directory {
+            if inode.kind == InodeKind::Directory {
                 self.directory(id, path.as_ref())?;
             }
         }

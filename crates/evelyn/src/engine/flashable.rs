@@ -27,13 +27,13 @@ const TEMPLATE: [(&str, &[u8]); 3] = [
     ),
 ];
 
-pub(crate) struct Package<'a> {
+pub(crate) struct Contents<'a> {
     pub device: &'a str,
     pub super_image: &'a Path,
     pub firmware: &'a [PathBuf],
 }
 
-pub(crate) fn write(package: &Package<'_>, output: &Path) -> Result<(), Error> {
+pub(crate) fn write(contents: &Contents<'_>, output: &Path) -> Result<(), Error> {
     let mut zip = ZipWriter::new(fs::File::create(output)?);
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Stored)
@@ -41,21 +41,21 @@ pub(crate) fn write(package: &Package<'_>, output: &Path) -> Result<(), Error> {
     for (name, bytes) in TEMPLATE {
         zip.start_file(name, options)?;
         if name == UPDATE_BINARY {
-            let text = String::from_utf8_lossy(bytes).replace("INSERT_DEVICE_ID", package.device);
+            let text = String::from_utf8_lossy(bytes).replace("INSERT_DEVICE_ID", contents.device);
             zip.write_all(text.as_bytes())?;
         } else {
             zip.write_all(bytes)?;
         }
     }
-    compress(&mut zip, package.super_image, "super.img.zst")?;
+    compress(&mut zip, contents.super_image, "super.img.zst")?;
     let mut names = String::new();
-    for image in package.firmware {
+    for image in contents.firmware {
         let name = image.file_stem().unwrap_or_default().to_string_lossy();
         compress(&mut zip, image, &format!("firmware-update/{name}.img.zst"))?;
         names.push_str(&name);
         names.push('\n');
     }
-    if !package.firmware.is_empty() {
+    if !contents.firmware.is_empty() {
         zip.start_file("firmware-update/partition_list.txt", options)?;
         zip.write_all(names.as_bytes())?;
     }

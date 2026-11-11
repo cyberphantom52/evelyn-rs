@@ -11,9 +11,9 @@
 //!   packages/                           decoded APK/JAR workspaces
 //!   images/<partition>.img              built filesystem images
 
-use crate::Firmware as Source;
+use crate::Firmware;
 use crate::SourceRef;
-use crate::engine::firmware::{Firmware, Given};
+use crate::engine::firmware::{Given, OpenFirmware};
 use crate::engine::properties::{check_fingerprint, port_for, rom_properties};
 use crate::engine::{Error, Output, Profile, profile};
 use crate::recipe::Recipe;
@@ -74,7 +74,7 @@ pub struct Built {
 pub struct Composed {
     pub name: Name,
     /// The firmware it is built from.
-    pub from: Source,
+    pub from: Firmware,
     pub filesystem: Filesystem,
     pub mount_point: String,
 }
@@ -82,7 +82,7 @@ pub struct Composed {
 /// A partition this build composes and builds into an image.
 struct Partition {
     name: Name,
-    from: Source,
+    from: Firmware,
     /// The port's override; otherwise the base image's filesystem.
     filesystem: Option<Filesystem>,
     mount_point: String,
@@ -90,7 +90,7 @@ struct Partition {
 
 /// A recipe, and the directory its assets are in, `None` for a recipe built into
 /// Evelyn, whose assets are in the tools.
-struct Loaded {
+struct Patch {
     recipe: Recipe,
     assets: Option<PathBuf>,
 }
@@ -114,8 +114,8 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
             .unwrap_or_else(|| Given::Path(build.root.join("firmware").join(default)))
     };
     let scratch = build.work_dir.join("firmware");
-    let mut rom = Firmware::open(&given(&build.rom, "rom"), &scratch.join("rom"))?;
-    let mut stock = Firmware::open(&given(&build.stock, "stock"), &scratch.join("stock"))?;
+    let mut rom = OpenFirmware::open(&given(&build.rom, "rom"), &scratch.join("rom"))?;
+    let mut stock = OpenFirmware::open(&given(&build.stock, "stock"), &scratch.join("stock"))?;
 
     let system: Vec<Name> = rom
         .names()
@@ -143,21 +143,21 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
     let recipes = recipes(&profile, build.extra_patches)?;
 
     let read = read(&partitions, &recipes, &mounts)?;
-    let of = |source: Source| -> Vec<Name> {
+    let of = |source: Firmware| -> Vec<Name> {
         read.iter()
             .filter(|read| read.source == source)
             .map(|read| read.partition.clone())
             .collect()
     };
-    rom.extract(&of(Source::Rom))?;
-    stock.extract(&of(Source::Stock))?;
+    rom.extract(&of(Firmware::Rom))?;
+    stock.extract(&of(Firmware::Stock))?;
 
     let mut images = crate::patch::Images::new();
     let mut sources = crate::patch::Sources::new();
     for source in read {
         let firmware = match source.source {
-            Source::Rom => &rom,
-            Source::Stock => &stock,
+            Firmware::Rom => &rom,
+            Firmware::Stock => &stock,
         };
         // Steps that run check their imports; a skipped step needs none.
         let Some(path) = firmware.image(&source.partition) else {
@@ -215,12 +215,15 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
 
 /// The ROM's partitions the port takes, the standard system side first, and
 /// those it leaves out.
-fn rom_partitions(profile: &Profile, rom: &Firmware) -> Result<(Vec<Partition>, Vec<Name>), Error> {
+fn rom_partitions(
+    profile: &Profile,
+    rom: &OpenFirmware,
+) -> Result<(Vec<Partition>, Vec<Name>), Error> {
     let mut partitions = Vec::new();
     let mut ignored = Vec::new();
     for name in STANDARD_SYSTEM {
         if let Some(name) = rom.names().find(|key| key.as_ref() == name) {
-            partitions.push(partition(profile, name, Source::Rom, rom)?);
+            partitions.push(partition(profile, name, Firmware::Rom, rom)?);
         }
     }
     for name in rom.names() {
@@ -228,7 +231,7 @@ fn rom_partitions(profile: &Profile, rom: &Firmware) -> Result<(Vec<Partition>, 
             continue;
         }
         if profile.takes_from_rom(name.as_ref()) {
-            partitions.push(partition(profile, name, Source::Rom, rom)?);
+            partitions.push(partition(profile, name, Firmware::Rom, rom)?);
         } else {
             tracing::warn!(partition = %name, "the ROM's partition is not in port.toml; leaving it out");
             ignored.push(name.clone());
@@ -239,7 +242,7 @@ fn rom_partitions(profile: &Profile, rom: &Firmware) -> Result<(Vec<Partition>, 
 
 /// The device's partitions: the vendor side the stock firmware has, and any other
 /// partition `evelyn.toml` sets, each extracted and checked to be the pinned build.
-fn device_partitions(profile: &Profile, stock: &mut Firmware) -> Result<Vec<Partition>, Error> {
+fn device_partitions(profile: &Profile, stock: &mut OpenFirmware) -> Result<Vec<Partition>, Error> {
     if let Some(missing) = profile
         .device
         .partitions
@@ -261,7 +264,7 @@ fn device_partitions(profile: &Profile, stock: &mut Firmware) -> Result<Vec<Part
     for name in &device {
         let image = stock.image(name).expect("extracted");
         check_fingerprint(name, image, &profile.device.stock.fingerprint)?;
-        partitions.push(partition(profile, name, Source::Stock, stock)?);
+        partitions.push(partition(profile, name, Firmware::Stock, stock)?);
     }
     Ok(partitions)
 }
@@ -271,8 +274,8 @@ fn device_partitions(profile: &Profile, stock: &mut Firmware) -> Result<Vec<Part
 fn partition(
     profile: &Profile,
     name: &Name,
-    from: Source,
-    firmware: &Firmware,
+    from: Firmware,
+    firmware: &OpenFirmware,
 ) -> Result<Partition, Error> {
     let settings = profile
         .settings(name.as_ref())?
@@ -304,11 +307,11 @@ fn partition(
 
 /// The recipes built into Evelyn, the port's patches, then the `extra` patch
 /// directories'.
-fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Loaded>, Error> {
+fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Patch>, Error> {
     let mut recipes = Vec::new();
     for (name, text) in BUILT_IN {
         let recipe = Recipe::parse(text, Path::new(name))?;
-        recipes.push(Loaded {
+        recipes.push(Patch {
             recipe,
             assets: None,
         });
@@ -317,7 +320,7 @@ fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Loaded>, Error> {
     for path in profile.patches().into_iter().chain(extra) {
         let assets = path.parent().unwrap_or(Path::new(".")).to_path_buf();
         let recipe = Recipe::load(&path)?;
-        recipes.push(Loaded {
+        recipes.push(Patch {
             recipe,
             assets: Some(assets),
         });
@@ -329,7 +332,7 @@ fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Loaded>, Error> {
 /// partition of every path a recipe looks for in one.
 fn read(
     partitions: &[Partition],
-    recipes: &[Loaded],
+    recipes: &[Patch],
     mounts: &Mounts,
 ) -> Result<BTreeSet<SourceRef>, Error> {
     let mut read: BTreeSet<SourceRef> = partitions
@@ -368,7 +371,7 @@ pub(crate) type Targets = BTreeMap<Name, (PathBuf, PartitionTree)>;
 fn compose(
     build: &Build<'_>,
     partitions: &[Partition],
-    recipes: &[Loaded],
+    recipes: &[Patch],
     sources: &crate::patch::Sources,
     images: &crate::patch::Images,
     mounts: &Mounts,

@@ -1,7 +1,7 @@
 //! Publish built images in the requested output format.
 
 use crate::engine::build::Written;
-use crate::engine::firmware::Firmware;
+use crate::engine::firmware::OpenFirmware;
 use crate::engine::{Error, Output, Profile};
 use std::{
     fs,
@@ -14,7 +14,7 @@ pub(crate) fn publish(
     output_dir: &Path,
     profile: &Profile,
     output: Output,
-    stock: &Firmware,
+    stock: &OpenFirmware,
     images: Written,
 ) -> Result<Vec<PathBuf>, Error> {
     fs::create_dir_all(output_dir)?;
@@ -35,7 +35,7 @@ pub(crate) fn publish(
         Written::Super(super_image) => {
             let output = output_dir.join(format!("{}.zip", profile.device.name));
             crate::engine::flashable::write(
-                &crate::engine::flashable::Package {
+                &crate::engine::flashable::Contents {
                     device: &profile.device.product_ids[0],
                     super_image: &super_image,
                     firmware: &stock.firmware_images()?,

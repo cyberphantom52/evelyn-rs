@@ -52,16 +52,16 @@ impl std::fmt::Display for Given {
 }
 
 /// A firmware's partitions, each image there once found or extracted.
-pub(crate) struct Firmware {
+pub(crate) struct OpenFirmware {
     /// Every filesystem partition it has, with its image once there.
     images: BTreeMap<Name, Option<PathBuf>>,
     /// Where a directory of images keeps those a flashable ZIP flashes.
     firmware_dir: Option<PathBuf>,
-    package: Option<Package>,
+    ota: Option<Ota>,
 }
 
 /// An OTA package, open for extracting partitions from.
-struct Package {
+struct Ota {
     given: Given,
     runtime: tokio::runtime::Runtime,
     manifest: DeltaArchiveManifest,
@@ -81,20 +81,20 @@ struct Remote {
     payload_offset: u64,
 }
 
-impl Drop for Package {
+impl Drop for Ota {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.scratch);
     }
 }
 
-impl Firmware {
+impl OpenFirmware {
     /// Open the firmware `given` is or holds, extracting a package's partitions
     /// into `scratch` as they are asked for.
     pub(crate) fn open(given: &Given, scratch: &Path) -> Result<Self, Error> {
         let given = match given {
             Given::Url(_) => given.clone(),
-            Given::Path(path) => match package(path)? {
-                Some(package) => Given::Path(package),
+            Given::Path(path) => match ota(path)? {
+                Some(ota) => Given::Path(ota),
                 None => {
                     let mut images = BTreeMap::new();
                     for (name, image) in image_files(path)? {
@@ -105,7 +105,7 @@ impl Firmware {
                     return Ok(Self {
                         images,
                         firmware_dir: Some(path.join("firmware")),
-                        package: None,
+                        ota: None,
                     });
                 }
             },
@@ -149,7 +149,7 @@ impl Firmware {
         let mut firmware = Self {
             images,
             firmware_dir: None,
-            package: Some(Package {
+            ota: Some(Ota {
                 given,
                 runtime,
                 manifest,
@@ -183,7 +183,7 @@ impl Firmware {
         self.images.keys().any(|key| key.as_ref() == name)
     }
 
-    /// The image of `name`, once [`Firmware::extract`] has it there.
+    /// The image of `name`, once [`OpenFirmware::extract`] has it there.
     pub(crate) fn image(&self, name: &Name) -> Option<&Path> {
         self.images.get(name)?.as_deref()
     }
@@ -191,7 +191,7 @@ impl Firmware {
     /// Have the images of `names` there, extracting those of a package that are
     /// not yet; names the firmware lacks are left out.
     pub(crate) fn extract(&mut self, names: &[Name]) -> Result<(), Error> {
-        let Some(package) = &self.package else {
+        let Some(ota) = &self.ota else {
             return Ok(());
         };
         let wanted: Vec<&str> = names
@@ -199,7 +199,7 @@ impl Firmware {
             .filter(|name| matches!(self.images.get(*name), Some(None)))
             .map(|name| name.as_ref())
             .collect();
-        for (name, image) in package.dump(&wanted, &package.scratch)? {
+        for (name, image) in ota.dump(&wanted, &ota.scratch)? {
             if let Ok(name) = Name::try_from(name) {
                 self.images.insert(name, Some(image));
             }
@@ -210,11 +210,11 @@ impl Firmware {
     /// The images of the partitions outside `super`, which a flashable ZIP
     /// flashes: a directory's `firmware/`, or a package's, extracted.
     pub(crate) fn firmware_images(&self) -> Result<Vec<PathBuf>, Error> {
-        if let Some(package) = &self.package {
-            let other: Vec<&str> = package.other.iter().map(String::as_str).collect();
-            let into = package.scratch.join("firmware");
+        if let Some(ota) = &self.ota {
+            let other: Vec<&str> = ota.other.iter().map(String::as_str).collect();
+            let into = ota.scratch.join("firmware");
             fs::create_dir_all(&into)?;
-            return Ok(package
+            return Ok(ota
                 .dump(&other, &into)?
                 .into_iter()
                 .map(|(_, image)| image)
@@ -228,7 +228,7 @@ impl Firmware {
     }
 }
 
-impl Package {
+impl Ota {
     /// Extract the partitions named `names` into `into`, each on a task of its
     /// own, and check each against the hash the manifest records: each name with
     /// its image.
@@ -330,7 +330,7 @@ impl Package {
 
 /// What opening a payload gives: its manifest, where its data starts, a reader
 /// of it, and for one at a URL, what downloads its data.
-type Opened = (
+type Payload = (
     DeltaArchiveManifest,
     u64,
     Arc<dyn AsyncPayloadRead>,
@@ -338,7 +338,7 @@ type Opened = (
 );
 
 /// Open the payload `given` is or holds.
-async fn open_payload(given: &Given) -> Result<Opened, Error> {
+async fn open_payload(given: &Given) -> Result<Payload, Error> {
     let mut magic = [0; 4];
     match given {
         Given::Path(path) => {
@@ -402,12 +402,12 @@ pub struct Extracted {
 /// `super` too, into `firmware/`. Any images an earlier extraction left there
 /// go first. A directory without a package is left as it is.
 pub fn extract_in_place(dir: &Path, firmware: bool) -> Result<Option<Extracted>, Error> {
-    let Some(package) = packages(dir)?.pop() else {
+    let Some(package) = otas(dir)?.pop() else {
         return Ok(None);
     };
     let staging = dir.join(".extracting");
-    let opened = Firmware::open(&Given::Path(package.clone()), &staging)?;
-    let open = opened.package.as_ref().expect("a package");
+    let opened = OpenFirmware::open(&Given::Path(package.clone()), &staging)?;
+    let open = opened.ota.as_ref().expect("a package");
     let all: Vec<&str> = open
         .manifest
         .partitions
@@ -445,11 +445,11 @@ pub fn extract_in_place(dir: &Path, firmware: bool) -> Result<Option<Extracted>,
 
 /// The OTA package `given` is or holds, if any. A directory holding none is one
 /// of images; one holding a package and images, or two packages, is refused.
-fn package(given: &Path) -> Result<Option<PathBuf>, Error> {
+fn ota(given: &Path) -> Result<Option<PathBuf>, Error> {
     if !given.is_dir() {
         return Ok(Some(given.to_path_buf()));
     }
-    let mut packages = packages(given)?;
+    let mut packages = otas(given)?;
     if !packages.is_empty() && !image_files(given)?.is_empty() {
         return Err(Error::MixedFirmware(given.to_path_buf()));
     }
@@ -457,7 +457,7 @@ fn package(given: &Path) -> Result<Option<PathBuf>, Error> {
 }
 
 /// The OTA packages in `dir`; more than one is refused.
-fn packages(dir: &Path) -> Result<Vec<PathBuf>, Error> {
+fn otas(dir: &Path) -> Result<Vec<PathBuf>, Error> {
     let mut packages = Vec::new();
     for entry in fs::read_dir(dir)? {
         let path = entry?.path();

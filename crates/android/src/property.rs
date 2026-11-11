@@ -11,7 +11,7 @@
 /// file's own line ending (LF by default), else leave the text as it was.
 pub fn set(input: &str, key: &str, value: &str, create: bool) -> String {
     let mut output = edit(input, key, Some(value));
-    if create && !entries(input).any(|entry| entry.key == key) {
+    if create && !assignments(input).any(|entry| entry.key == key) {
         let eol = newline(input);
         if !output.is_empty() && !output.ends_with('\n') {
             output.push_str(eol);
@@ -36,7 +36,7 @@ pub fn remove(input: &str, key: &str) -> String {
 
 /// One assignment, in file order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Entry<'a> {
+pub struct Assignment<'a> {
     pub key: &'a str,
     pub value: &'a str,
 }
@@ -44,7 +44,7 @@ pub struct Entry<'a> {
 /// What a line is to init.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Line<'a> {
-    Assignment(Entry<'a>),
+    Assignment(Assignment<'a>),
     /// Load the file at `path`, a device path, here; with a filter, only its keys
     /// equal to the filter or, for `prefix.*`, starting with `prefix.`.
     Import {
@@ -68,7 +68,7 @@ pub fn lines(text: &str) -> impl Iterator<Item = Line<'_>> {
 }
 
 /// Every assignment in `text`, in order.
-pub fn entries(text: &str) -> impl Iterator<Item = Entry<'_>> {
+pub fn assignments(text: &str) -> impl Iterator<Item = Assignment<'_>> {
     lines(text).filter_map(|line| match line {
         Line::Assignment(entry) => Some(entry),
         Line::Import { .. } => None,
@@ -84,7 +84,7 @@ pub fn filtered(filter: &str, key: &str) -> bool {
 }
 
 /// The assignment on `line`, if it is one, and the text before its value.
-fn assignment(line: &str) -> Option<(Entry<'_>, &str)> {
+fn assignment(line: &str) -> Option<(Assignment<'_>, &str)> {
     let line = body(line);
     let start = line.trim_start();
     if start.starts_with('#') || start.starts_with("import ") {
@@ -95,7 +95,7 @@ fn assignment(line: &str) -> Option<(Entry<'_>, &str)> {
     let right = right.trim_start();
     let prefix = &line[..line.len() - right.len()];
     (!key.is_empty()).then_some((
-        Entry {
+        Assignment {
             key,
             value: right.trim_end(),
         },
@@ -105,7 +105,7 @@ fn assignment(line: &str) -> Option<(Entry<'_>, &str)> {
 
 /// The value `key` ends up with after loading `text` alone: its last assignment.
 pub fn get<'a>(text: &'a str, key: &str) -> Option<&'a str> {
-    entries(text)
+    assignments(text)
         .filter(|entry| entry.key == key)
         .last()
         .map(|entry| entry.value)

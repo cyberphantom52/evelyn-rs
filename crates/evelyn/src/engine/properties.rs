@@ -1,7 +1,7 @@
 //! What the firmware's property files set: the port the ROM matches, and whether
 //! the stock partitions are the build `evelyn.toml` pins.
 
-use crate::engine::{Error, firmware::Firmware, profile};
+use crate::engine::{Error, firmware::OpenFirmware, profile};
 use android::partition::STANDARD_SYSTEM;
 use android::path::Name;
 use std::{
@@ -33,7 +33,7 @@ pub(crate) fn check_fingerprint(
 
 /// The properties the ROM's standard system side sets, in the order init loads
 /// them, a later assignment of a key winning.
-pub(crate) fn rom_properties(rom: &Firmware) -> Result<BTreeMap<String, String>, Error> {
+pub(crate) fn rom_properties(rom: &OpenFirmware) -> Result<BTreeMap<String, String>, Error> {
     let mut properties = BTreeMap::new();
     for name in STANDARD_SYSTEM {
         if let Some(partition) = rom.names().find(|key| key.as_ref() == name)
@@ -109,7 +109,7 @@ fn loaded(partition: &Name, image: &Path) -> Result<BTreeMap<String, String>, Er
             None => legacy.iter().filter_map(|file| read.get(*file)).collect(),
         };
         for bytes in loaded {
-            for entry in android::property::entries(&String::from_utf8_lossy(bytes)) {
+            for entry in android::property::assignments(&String::from_utf8_lossy(bytes)) {
                 assigned.insert(entry.key.to_owned(), entry.value.to_owned());
             }
         }

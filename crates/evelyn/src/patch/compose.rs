@@ -8,7 +8,7 @@ use crate::recipe::{Expr, Metadata, Operation, Recipe, value::Located};
 use crate::toolchain::Tools;
 use crate::{Firmware, SourceRef};
 use android::PartitionTree;
-use android::partition::{Mounts, STANDARD_SYSTEM, TargetPath, VENDOR_SIDE};
+use android::partition::{Mounts, PartitionPath, STANDARD_SYSTEM, VENDOR_SIDE};
 use android::path::{DevicePath, Name, RelativePath};
 use serde::Serialize;
 use std::{
@@ -172,7 +172,7 @@ impl Composition {
         let tree = context.source(&source)?;
         let to = match to {
             Some(to) => self.resolve_one(to, context)?,
-            None => TargetPath {
+            None => PartitionPath {
                 partition: entry.partition.clone(),
                 path: entry.path.clone(),
             },
@@ -274,7 +274,7 @@ impl Composition {
         targets: &BTreeMap<Name, Target>,
         mounts: &Mounts,
         path: &DevicePath,
-    ) -> Vec<TargetPath> {
+    ) -> Vec<PartitionPath> {
         let first = path.components().next().unwrap_or_default();
         let standard = VENDOR_SIDE.contains(&first) || STANDARD_SYSTEM.contains(&first);
         if standard && first != "system" && !targets.keys().any(|name| name.as_ref() == first) {
@@ -288,7 +288,7 @@ impl Composition {
         &self,
         path: &DevicePath,
         context: &Context<'_>,
-    ) -> Result<TargetPath, Error> {
+    ) -> Result<PartitionPath, Error> {
         let mut found = Self::resolve(&self.targets, context.mounts, path);
         match found.len() {
             1 => Ok(found.remove(0)),
