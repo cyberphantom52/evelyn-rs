@@ -591,8 +591,7 @@ impl Composition {
 
     /// Give the entries waiting for them Android's defaults, from the finished
     /// build's own policy as the device labels with it, then what was set over
-    /// them; write every target's manifest and return the finished trees, with the
-    /// steps that were skipped.
+    /// them; the finished trees, with the steps that were skipped.
     pub fn finish(
         mut self,
         mounts: &Mounts,
@@ -611,8 +610,8 @@ impl Composition {
         let trees = self
             .targets
             .into_iter()
-            .map(|(name, target)| Ok((name, target.finish()?)))
-            .collect::<Result<_, Error>>()?;
+            .map(|(name, target)| (name, target.tree))
+            .collect();
         Ok((trees, self.skipped))
     }
 }

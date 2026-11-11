@@ -181,30 +181,6 @@ impl Target {
         Ok(destination.accept(changed, step))
     }
 
-    /// Write the manifest and drop blobs no longer referenced by the tree.
-    pub fn finish(self) -> Result<PartitionTree, Error> {
-        android_fs::write_tree(&self.root, &self.tree)?;
-        let live: BTreeSet<_> = self
-            .tree
-            .entries
-            .values()
-            .filter_map(|entry| match &entry.kind {
-                EntryKind::File {
-                    content: Content::Blob(blob),
-                    ..
-                } => Some(blob.as_ref()),
-                _ => None,
-            })
-            .collect();
-        for entry in fs::read_dir(self.root.join("content"))? {
-            let entry = entry?;
-            if !live.contains(entry.file_name().to_string_lossy().as_ref()) {
-                fs::remove_file(entry.path())?;
-            }
-        }
-        Ok(self.tree)
-    }
-
     /// Give `canonical` new content and record the step on it and all of its hardlinks.
     pub(crate) fn accept_content(
         &mut self,
