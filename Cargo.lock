@@ -720,7 +720,6 @@ dependencies = [
  "android-property",
  "diffy",
  "evelyn-recipe",
- "ron",
  "sepolicy-inject-rs",
  "serde",
  "smali",
