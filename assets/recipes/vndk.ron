@@ -1,6 +1,6 @@
-// The VNDK APEX matching the vendor's VNDK version, when the ROM lacks it, from
-// apex/ in the tools, where tools/manager.py fetches them: any other VNDK APEX is
-// removed first. Vendors without VNDK (Android 15+) skip it.
+// The VNDK APEX matching the vendor's VNDK version, when the ROM lacks it: one of
+// the files Evelyn downloads. Any other VNDK APEX is removed first. Vendors without
+// VNDK (Android 15+) skip it.
 Recipe(
     name: "vndk",
     steps: [
