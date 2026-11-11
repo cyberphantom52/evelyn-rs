@@ -2,15 +2,17 @@
 //! the build, a firmware, the recipe's assets or the open package, their content,
 //! and the property files init loads.
 
-use crate::{Composition, Error, compose::Context, layout};
+use crate::{
+    Composition, Error,
+    compose::{Bound, Context},
+    layout,
+};
 use android_firmware::{DevicePath, Firmware, Name, RelativePath, SourceRef, TargetPath};
 use android_fs::EntryKind;
 use recipe::{
     Location,
     value::{Located, Place},
 };
-
-use crate::compose::Bound;
 
 impl Composition {
     /// What a location selects; a partition is the property files init loads
