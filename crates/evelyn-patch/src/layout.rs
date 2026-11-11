@@ -1,10 +1,10 @@
-//! Pure, same-partition layout edits. The partition root is implicit and cannot be moved.
+//! Same-partition layout edits. The partition root is implicit and cannot be moved.
 //! Every edit keeps hardlink groups intact: when a group's canonical entry is dropped,
 //! its lexicographically first surviving member is promoted to canonical.
 
 use android_firmware::{RelativePath, SourceRef};
 use android_fs::{Entry, EntryKind, PartitionTree, Provenance};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -22,14 +22,14 @@ pub enum Error {
 }
 
 /// Recursively remove an existing entry.
-pub fn remove(tree: &PartitionTree, path: &RelativePath) -> Result<PartitionTree, Error> {
+pub fn remove(tree: &mut PartitionTree, path: &RelativePath) -> Result<(), Error> {
     exists(tree, path)?;
-    let mut output = tree.clone();
-    output
+    let removed: BTreeMap<_, _> = tree
         .entries
-        .retain(|candidate, _| !within(candidate, path));
-    promote(tree, &mut output.entries, |target| within(target, path));
-    Ok(output)
+        .extract_if(.., |candidate, _| within(candidate, path))
+        .collect();
+    promote(&removed, &mut tree.entries, |target| within(target, path));
+    Ok(())
 }
 
 /// Copy `from` and its descendants out of `source`, mapped to `to`. Image provenance
@@ -73,7 +73,9 @@ pub(crate) fn subtree(
         .filter(|(path, _)| within(path, from))
         .map(|(path, entry)| (path.clone(), entry.clone()))
         .collect();
-    promote(source, &mut selected, |target| !within(target, from));
+    promote(&source.entries, &mut selected, |target| {
+        !within(target, from)
+    });
     rebase(selected, from, to)
 }
 
@@ -139,13 +141,15 @@ pub(crate) fn walk(
     found
 }
 
-/// Create any missing directories above `path`. Each takes the metadata of the same
-/// directory in `like` when it has one, else of its nearest existing ancestor.
+/// Create any missing directories above `path`; those made. Each takes the metadata
+/// of the same directory in `like` when it has one, else of its nearest existing
+/// ancestor.
 pub(crate) fn create_parents(
     tree: &mut PartitionTree,
     path: &RelativePath,
     like: Option<&PartitionTree>,
-) -> Result<(), Error> {
+) -> Result<BTreeSet<RelativePath>, Error> {
+    let mut made = BTreeSet::new();
     let mut inherited = tree.root.clone();
     let mut prefix = String::new();
     let components: Vec<_> = path.as_ref().split('/').collect();
@@ -166,6 +170,7 @@ pub(crate) fn create_parents(
                     .filter(|entry| matches!(entry.kind, EntryKind::Directory))
                     .map_or_else(|| inherited.clone(), |entry| entry.metadata.clone());
                 inherited = metadata.clone();
+                made.insert(dir.clone());
                 tree.entries.insert(
                     dir,
                     Entry {
@@ -177,7 +182,7 @@ pub(crate) fn create_parents(
             }
         }
     }
-    Ok(())
+    Ok(made)
 }
 
 fn exists(tree: &PartitionTree, path: &RelativePath) -> Result<(), Error> {
@@ -189,9 +194,10 @@ fn exists(tree: &PartitionTree, path: &RelativePath) -> Result<(), Error> {
 }
 
 /// Re-point hardlinks whose canonical entry was `dropped`: the first remaining
-/// member of each group takes the canonical's kind and the rest link to it.
+/// member of each group takes the canonical's kind, as `source` has it, and the
+/// rest link to it.
 fn promote(
-    source: &PartitionTree,
+    source: &BTreeMap<RelativePath, Entry>,
     entries: &mut BTreeMap<RelativePath, Entry>,
     dropped: impl Fn(&RelativePath) -> bool,
 ) {
@@ -204,7 +210,7 @@ fn promote(
                 .entry(target.clone())
                 .or_insert_with(|| path.clone());
             entry.kind = if path == promoted {
-                source.entries[target].kind.clone()
+                source[target].kind.clone()
             } else {
                 EntryKind::Hardlink {
                     target: promoted.clone(),

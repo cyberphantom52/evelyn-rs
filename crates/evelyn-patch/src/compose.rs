@@ -191,7 +191,7 @@ impl Composition {
                 for entry in selected {
                     match (entry.place, &self.package) {
                         (Place::Build, _) => {
-                            self.target(&entry.partition)?.remove(&entry.path, step)?;
+                            self.target(&entry.partition)?.remove(&entry.path)?;
                         }
                         (Place::Package, Some(package)) => {
                             let path = entry.path.resolve(&package.decoded);
@@ -497,8 +497,7 @@ impl Composition {
         let target = self.target(&partition)?;
         let mut written = BTreeSet::new();
         for (to, file, asset) in files {
-            let changed = target.install(&file, &asset, &to, placing)?;
-            written.extend(target.accept(changed, step));
+            written.extend(target.install(&file, &asset, &to, placing, step)?);
         }
         target.copied(written, placing.metadata, Vec::new());
         Ok(())
