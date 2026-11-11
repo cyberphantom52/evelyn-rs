@@ -10,19 +10,13 @@ use std::{collections::BTreeSet, path::Path};
 
 impl Target {
     /// Remove `path` (or every entry a glob matches) and its contents.
-    pub(crate) fn remove(&mut self, path: &RelativePath, step: &Name) -> Result<(), Error> {
-        let matches = layout::matches(&self.tree, path);
-        if matches.is_empty() {
-            return Ok(());
-        }
-        let mut changed = self.tree.clone();
-        for path in matches {
+    pub(crate) fn remove(&mut self, path: &RelativePath) -> Result<(), Error> {
+        for path in layout::matches(&self.tree, path) {
             // A match may already be gone with a directory matched before it.
-            if changed.entries.contains_key(&path) {
-                changed = layout::remove(&changed, &path)?;
+            if self.tree.entries.contains_key(&path) {
+                layout::remove(&mut self.tree, &path)?;
             }
         }
-        self.accept(changed, step);
         Ok(())
     }
 
@@ -54,31 +48,32 @@ impl Target {
         let mut written = BTreeSet::new();
         for (from_path, to_path) in pairs {
             let selected = layout::select(source, &from_path, &to_path, from)?;
-            let mut changed = self.destination(&to_path, placing, Some(source))?;
+            let made = self.destination(&to_path, placing, Some(source))?;
             if placing.metadata == Metadata::Source
-                && let Some(made) = changed.entries.keys().find(|path| {
-                    !self.tree.entries.contains_key(*path)
-                        && !selected.contains_key(*path)
-                        && !source.entries.contains_key(*path)
-                })
+                && let Some(made) = made.iter().find(|path| !source.entries.contains_key(*path))
             {
                 return Err(layout::Error::MissingPath(made.clone()).into());
             }
-            changed.entries.extend(self.adopt(None, selected)?);
-            written.extend(self.accept(changed, step));
+            written.extend(made);
+            written.extend(selected.keys().cloned());
+            let adopted = self.adopt(None, selected)?;
+            self.tree.entries.extend(adopted);
         }
+        self.wrote(&written, step);
         Ok(written)
     }
 
-    /// Write `file` at `to`. This replaces the directory entry, not every alias of
-    /// its old inode. The file has no metadata of its own: the copy gives it some.
+    /// Write `file` at `to`; the paths written. This replaces the directory entry,
+    /// not every alias of its old inode. The file has no metadata of its own: the
+    /// copy gives it some.
     pub(crate) fn install(
         &mut self,
         file: &Path,
         asset: &RelativePath,
         to: &RelativePath,
         placing: Placing,
-    ) -> Result<PartitionTree, Error> {
+        step: &Name,
+    ) -> Result<BTreeSet<RelativePath>, Error> {
         let previous = self.tree.entries.get(to);
         if previous.is_some_and(|entry| matches!(entry.kind, EntryKind::Directory)) {
             return Err(Error::Unsupported(
@@ -88,21 +83,24 @@ impl Target {
         // What it replaces is its history; its metadata is the copy's to give.
         let mut lineage = previous.map_or_else(Vec::new, |entry| entry.provenance.clone());
         let metadata = self.tree.root.clone();
-        let mut changed = self.destination(to, placing, None)?;
+        let mut written = self.destination(to, placing, None)?;
         let bytes = std::fs::read(file)?;
         lineage.push(Provenance::Asset {
             path: asset.clone(),
             sha256: Sha256Digest::bytes(&bytes),
         });
-        changed.entries.insert(
+        let kind = self.write_blob(bytes.as_slice())?;
+        self.tree.entries.insert(
             to.clone(),
             Entry {
-                kind: self.write_blob(bytes.as_slice())?,
+                kind,
                 metadata,
                 provenance: lineage,
             },
         );
-        Ok(changed)
+        written.insert(to.clone());
+        self.wrote(&written, step);
+        Ok(written)
     }
 
     /// Set what `overrides` sets on the entry at `path`; for an entry waiting for
@@ -187,55 +185,39 @@ impl Target {
         Ok(())
     }
 
-    /// The tree with `path` cleared for a new entry: an entry there is removed
-    /// only to `overwrite` it, and missing parent directories are made, like
-    /// `like`'s, only to `create_parent`.
+    /// Clear `path` for a new entry: an entry there is removed only to `overwrite`
+    /// it, and missing parent directories are made, like `like`'s, only to
+    /// `create_parent`; the directories made.
     pub(crate) fn destination(
-        &self,
+        &mut self,
         path: &RelativePath,
         placing: Placing,
         like: Option<&PartitionTree>,
-    ) -> Result<PartitionTree, Error> {
-        let mut changed = if self.tree.entries.contains_key(path) {
+    ) -> Result<BTreeSet<RelativePath>, Error> {
+        if self.tree.entries.contains_key(path) {
             if !placing.overwrite {
                 return Err(layout::Error::DestinationExists(path.clone()).into());
             }
-            layout::remove(&self.tree, path)?
-        } else {
-            self.tree.clone()
-        };
+            layout::remove(&mut self.tree, path)?;
+        }
         if !placing.create_parent
             && let Some((parent, _)) = path.as_ref().rsplit_once('/')
         {
             let parent = RelativePath::try_from(parent.to_owned())?;
-            if !changed.entries.contains_key(&parent) {
+            if !self.tree.entries.contains_key(&parent) {
                 return Err(layout::Error::MissingParent(parent).into());
             }
         }
-        layout::create_parents(&mut changed, path, like)?;
-        Ok(changed)
+        Ok(layout::create_parents(&mut self.tree, path, like)?)
     }
 
-    /// Adopt `changed`, recording the step on every new or altered entry; those
-    /// paths.
-    pub(crate) fn accept(
-        &mut self,
-        mut changed: PartitionTree,
-        step: &Name,
-    ) -> BTreeSet<RelativePath> {
-        let mut written = BTreeSet::new();
-        for (path, entry) in &mut changed.entries {
-            if !self.tree.entries.get(path).is_some_and(|previous| {
-                previous.kind == entry.kind
-                    && previous.metadata == entry.metadata
-                    && previous.provenance == entry.provenance
-            }) {
+    /// Record the step on every entry written.
+    pub(crate) fn wrote(&mut self, written: &BTreeSet<RelativePath>, step: &Name) {
+        for path in written {
+            if let Some(entry) = self.tree.entries.get_mut(path) {
                 entry.provenance.push(Provenance::Step { id: step.clone() });
-                written.insert(path.clone());
             }
         }
-        self.tree = changed;
-        written
     }
 
     /// Give what a copy wrote the metadata it states: what the entries came with,

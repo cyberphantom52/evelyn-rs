@@ -157,9 +157,12 @@ impl Target {
         step: &Name,
     ) -> Result<BTreeSet<RelativePath>, Error> {
         let selected = crate::layout::subtree(&self.tree, from, to)?;
-        let mut changed = self.destination(to, placing, Some(&self.tree))?;
-        changed.entries.extend(selected);
-        Ok(self.accept(changed, step))
+        // The directories made for it are not in the tree, so not like its own.
+        let mut written = self.destination(to, placing, None)?;
+        written.extend(selected.keys().cloned());
+        self.tree.entries.extend(selected);
+        self.wrote(&written, step);
+        Ok(written)
     }
 
     /// Copy a subtree into another target, with the metadata it has there; file
@@ -174,11 +177,12 @@ impl Target {
         step: &Name,
     ) -> Result<BTreeSet<RelativePath>, Error> {
         let selected = crate::layout::subtree(&self.tree, from, to)?;
-        let mut changed = destination.destination(to, placing, Some(&self.tree))?;
-        changed
-            .entries
-            .extend(destination.adopt(Some(&self.root), selected)?);
-        Ok(destination.accept(changed, step))
+        let mut written = destination.destination(to, placing, Some(&self.tree))?;
+        written.extend(selected.keys().cloned());
+        let adopted = destination.adopt(Some(&self.root), selected)?;
+        destination.tree.entries.extend(adopted);
+        destination.wrote(&written, step);
+        Ok(written)
     }
 
     /// Give `canonical` new content and record the step on it and all of its hardlinks.
