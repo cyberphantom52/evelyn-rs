@@ -13,8 +13,8 @@ pub use build::{Build, Built, Composed, build};
 pub use firmware::{Extracted, Given, extract_in_place};
 pub use profile::{Profile, init};
 
+use crate::SourceRef;
 use android::Filesystem;
-use android::firmware::SourceRef;
 use android::path::Name;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -37,8 +37,6 @@ pub enum Error {
     Recipe(#[from] crate::recipe::Error),
     #[error(transparent)]
     Profile(#[from] profile::Error),
-    #[error(transparent)]
-    Firmware(#[from] android::firmware::Error),
     #[error("{fstab} mounts {partition}, which this build does not have")]
     FstabPartition { fstab: String, partition: String },
     #[error("{fstab} mounts {partition} as {accepted:?}, but it is built as {filesystem}")]

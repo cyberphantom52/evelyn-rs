@@ -13,7 +13,7 @@ pub use xml::{
     XmlEdit, XmlMatch, XmlName, XmlOp, XmlPath, XmlPredicate, XmlStep, escape_attribute,
 };
 
-use android::firmware::Firmware;
+use crate::Firmware;
 use android::hash::Sha256Digest;
 use android::path::Name;
 use serde::{Deserialize, Serialize};
@@ -41,7 +41,7 @@ pub enum Error {
     #[error("invalid configuration: {0}")]
     Invalid(String),
     #[error(transparent)]
-    Firmware(#[from] android::firmware::Error),
+    Android(#[from] android::Error),
 }
 
 fn read(path: &Path) -> Result<String, Error> {

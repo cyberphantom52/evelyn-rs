@@ -1,7 +1,7 @@
 //! The metadata Android gives a file: its owner, group, mode and xattrs, the
 //! SELinux label among them.
 
-use crate::firmware::Error;
+use crate::Error;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

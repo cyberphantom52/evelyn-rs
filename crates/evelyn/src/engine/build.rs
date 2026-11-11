@@ -11,14 +11,14 @@
 //!   packages/                           decoded APK/JAR workspaces
 //!   images/<partition>.img              built filesystem images
 
+use crate::Firmware as Source;
+use crate::SourceRef;
 use crate::engine::firmware::{Firmware, Given};
 use crate::engine::properties::{check_fingerprint, port_for, rom_properties};
 use crate::engine::{Error, Output, Profile, profile};
 use crate::recipe::Recipe;
 use crate::toolchain::Tools;
 use android::Filesystem;
-use android::firmware::Firmware as Source;
-use android::firmware::SourceRef;
 use android::lp::SuperImage;
 use android::partition::{Mounts, STANDARD_SYSTEM, VENDOR_SIDE};
 use android::path::Name;

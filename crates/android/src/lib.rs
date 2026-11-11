@@ -4,7 +4,6 @@
 pub mod build;
 pub mod defaults;
 mod device;
-pub mod firmware;
 mod format;
 pub mod hash;
 mod image;
@@ -49,8 +48,8 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[error(transparent)]
-    Firmware(#[from] crate::firmware::Error),
+    #[error("invalid {kind}: {value:?}")]
+    Invalid { kind: &'static str, value: String },
     #[error("ext4 backend: {0}")]
     Ext4(#[from] fs_ext4::Error),
     #[error("filesystem IO: {0}")]
