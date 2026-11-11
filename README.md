@@ -164,15 +164,13 @@ partitions left out and the steps skipped.
 ## Layout
 
 - `crates/`: the Rust workspace
-  - `android-firmware`: partition names and paths, mount points, Treble sides, the `super` layout and Android file metadata
-  - `android-fs`: EROFS and ext4 images (raw or sparse) read in place, scanned into partition trees and built back, alone or straight into a `super` image
-  - `android-property`: `.prop` files
+  - `android`: what is true of Android whatever ports it: EROFS and ext4 images (raw or sparse) read in place, scanned into partition trees and built back, alone or straight into a `super` image; partition paths, mount points and Treble sides; Android file metadata and its defaults; `.prop` files
   - `smali`: smali parser and method edits
-  - `evelyn-recipe`: the recipe language and its kits
-  - `evelyn-patch`: applies recipes to partition trees
-  - `evelyn-engine`: device repositories and the build pipeline
-  - `toolchain`: the files Evelyn downloads, pinned by SHA-256, and its signing key
-  - `evelyn-cli`: the `evelyn` binary
+  - `evelyn`: the `evelyn` binary, and the library it is built on:
+    - `recipe`: the recipe language and its kits
+    - `patch`: applies recipes to partition trees
+    - `engine`: device repositories and the build pipeline
+    - `toolchain`: the files Evelyn downloads, pinned by SHA-256, and its signing key
 - `assets/`: files compiled into Evelyn: the recipes every build applies, the kits and the ZIP installer
 
 ## TODO
