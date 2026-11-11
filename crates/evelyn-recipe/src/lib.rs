@@ -3,6 +3,7 @@
 //! written; what is wrong with one is found when it is applied.
 
 mod expr;
+pub mod kit;
 mod location;
 pub mod value;
 mod xml;
@@ -48,14 +49,14 @@ fn read(path: &Path) -> Result<String, Error> {
     })
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recipe {
     pub name: Name,
     pub steps: Vec<Step>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Step {
     pub id: Name,
@@ -64,10 +65,10 @@ pub struct Step {
     /// Names bound to string expressions, evaluated against the tree composed so far,
     /// for the step's condition and operations to use as `{name}` in any string. One
     /// that has no value skips the step.
-    #[serde(rename = "let", default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(rename = "let", default)]
     pub bindings: BTreeMap<Name, Expr>,
     /// A boolean expression; the step applies only when it holds.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub when: Option<Expr>,
     pub operations: Vec<Operation>,
 }
@@ -75,8 +76,11 @@ pub struct Step {
 /// Operations change the build: the partitions being produced.
 /// Paths are device paths (`/vendor/etc/fstab.qcom`), resolved to a partition by its
 /// mount point; `system` is mounted at `/` on system-as-root devices.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+///
+/// A kit's operation is called as a built-in one is: one with one parameter
+/// takes it bare, `DisableFeature("x")`, one with several by name.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
 pub enum Operation {
     /// Copy what `from` names into the build, at the same path or at `to`:
     /// `Rom("/…")` or `Stock("/…")`, a device path in a
@@ -88,12 +92,12 @@ pub enum Operation {
     Copy {
         from: Location,
         /// Where it goes, a device path, if not to the same path. A glob keeps its path.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         to: Option<Expr>,
         metadata: Metadata,
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default)]
         overwrite: bool,
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default)]
         create_parent: bool,
     },
     /// Copy what a firmware has, `Rom("/…")` or `Stock("/…")`, to the same path in
@@ -111,22 +115,22 @@ pub enum Operation {
     /// error; a scope that selects no partition is an error.
     Remove {
         pattern: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         origin: Option<Firmware>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         partition: Option<String>,
     },
     /// Set metadata Android's defaults do not give, on every entry `pattern` (a
     /// device path, globs allowed) matches in the build.
     SetMetadata {
         pattern: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         uid: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         gid: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         mode: Option<u16>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         selinux: Option<String>,
     },
     /// Set a property everywhere it is defined, else add it. Without a target, in
@@ -136,14 +140,14 @@ pub enum Operation {
     SetProperty {
         key: String,
         value: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         target: Option<Location>,
     },
     /// Remove every definition in the same scope as `SetProperty`. Where none is,
-    /// the step is skipped and reported.
+    /// that is reported, not an error.
     RemoveProperty {
         key: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         target: Option<Location>,
     },
     /// Apply a unified diff (an asset) to a file and its hardlinks.
@@ -186,17 +190,19 @@ pub enum Operation {
     },
     /// The condition must hold, or the build fails with `message`.
     Assert { condition: Expr, message: String },
-    /// The file's content must have this SHA-256: an `Assert` that its `Hash`
-    /// is.
+    /// The file's content must have this SHA-256.
     AssertHash {
         target: String,
         sha256: Sha256Digest,
     },
-    /// Declare a feature, in its kind's file: added there, or replaced if it is.
-    EnableFeature(Feature),
-    /// Remove a feature (`feature`, `oplus-feature` or `app_feature`) from every
-    /// permissions and extension XML in the build.
-    DisableFeature(String),
+    /// Apply `operations` for each string of a list, or each entry of a
+    /// selection, with `{name}` bound to it: the string, or the entry's device
+    /// path. One over nothing is reported.
+    ForEach {
+        over: Expr,
+        name: Name,
+        operations: Vec<Operation>,
+    },
     /// Add `content` at the end of a file, on a line of its own.
     Append {
         target: String,
@@ -210,24 +216,36 @@ pub enum Operation {
         target: String,
         policies: Vec<String>,
     },
-}
-
-/// A feature `EnableFeature` declares, by the element it is.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum Feature {
-    /// `<feature name=…>`, in `/my_product/etc/permissions/com.oplus.android-features.xml`.
-    Android(String),
-    /// `<oplus-feature name=…>`, in `/my_product/etc/permissions/oplus.feature.android.xml`.
-    Oplus(String),
-    /// `<app_feature name=… args=…>`, in `file`.
-    App {
-        name: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        args: Option<String>,
-        file: String,
+    /// An operation of a kit, by name, with the strings its parameters are given.
+    #[serde(skip)]
+    Call {
+        name: Name,
+        args: BTreeMap<Name, String>,
     },
 }
+
+/// The built-in operations' names.
+pub(crate) const BUILT_IN: [&str; 19] = [
+    "Copy",
+    "Import",
+    "Install",
+    "Remove",
+    "SetMetadata",
+    "SetProperty",
+    "RemoveProperty",
+    "ApplyDiff",
+    "WriteBytes",
+    "EditXml",
+    "Package",
+    "ReplaceMethod",
+    "InsertMethod",
+    "StubMethod",
+    "Assert",
+    "AssertHash",
+    "ForEach",
+    "Append",
+    "AddPolicy",
+];
 
 /// What a copy gives what it writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -271,7 +289,7 @@ impl From<Hex> for String {
 }
 
 impl Operation {
-    pub fn name(&self) -> &'static str {
+    pub fn name(&self) -> &str {
         match self {
             Self::Copy { .. } => "Copy",
             Self::Import(..) => "Import",
@@ -289,10 +307,10 @@ impl Operation {
             Self::StubMethod { .. } => "StubMethod",
             Self::Assert { .. } => "Assert",
             Self::AssertHash { .. } => "AssertHash",
-            Self::EnableFeature(..) => "EnableFeature",
-            Self::DisableFeature(..) => "DisableFeature",
+            Self::ForEach { .. } => "ForEach",
             Self::Append { .. } => "Append",
             Self::AddPolicy { .. } => "AddPolicy",
+            Self::Call { name, .. } => name.as_ref(),
         }
     }
 
@@ -316,6 +334,7 @@ impl Operation {
                 | Self::ReplaceMethod { .. }
                 | Self::InsertMethod { .. }
                 | Self::StubMethod { .. }
+                | Self::ForEach { .. }
         )
     }
 
@@ -336,18 +355,30 @@ impl Operation {
             Self::Append { content, .. } => found.extend(content.locations()),
             Self::Assert { condition, .. } => found.extend(condition.locations()),
             Self::Package { edits, .. } => found.extend(edits.iter().flat_map(Self::locations)),
+            Self::ForEach {
+                over, operations, ..
+            } => {
+                found.extend(over.locations());
+                found.extend(operations.iter().flat_map(Self::locations));
+            }
+            // What a kit's operation names is in the kit, written out or naming its
+            // parameters.
+            Self::Call { name, .. } => found.extend(
+                kit::OPERATIONS
+                    .get()
+                    .and_then(|operations| operations.get(name))
+                    .into_iter()
+                    .flat_map(|definition| definition.operations.iter())
+                    .flat_map(Self::locations),
+            ),
             _ => {}
         }
         found
     }
 }
 
-fn is_false(value: &bool) -> bool {
-    !value
-}
-
 /// Optional fields are given as plain values, without `Some(...)`.
-fn ron_options() -> ron::Options {
+pub(crate) fn ron_options() -> ron::Options {
     ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
 }
 
@@ -363,6 +394,8 @@ impl Recipe {
 
     /// A recipe from its text, with `path` naming it in errors.
     pub fn parse(text: &str, path: &Path) -> Result<Self, Error> {
+        // A recipe can call the kits' operations.
+        kit::operations()?;
         ron_options().from_str(text).map_err(|source| Error::Ron {
             path: path.into(),
             source: Box::new(source),

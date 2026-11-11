@@ -6,10 +6,10 @@ use crate::{
     compose::{Bound, Context},
     target::{Overrides, Placing},
 };
-use android_firmware::{DevicePath, Firmware, RelativePath, Sha256Digest};
+use android_firmware::{DevicePath, Firmware, Name, RelativePath, Sha256Digest};
 use recipe::{
-    Expr, Feature, Hex, Location, Metadata, Operation, Returns, XmlEdit, escape_attribute,
-    value::{Located, Place},
+    Expr, Hex, Location, Metadata, Operation, Returns, XmlEdit,
+    value::{Located, Place, Value, ValueError},
 };
 use std::collections::BTreeMap;
 
@@ -22,7 +22,7 @@ impl Composition {
         context: &Context<'_>,
     ) -> Result<(), Error> {
         if self.package.is_some() && !operation.in_package() {
-            return Err(Error::OutsidePackage(operation.name()));
+            return Err(Error::OutsidePackage(operation.name().to_owned()));
         }
         match operation {
             Operation::Copy {
@@ -155,80 +155,81 @@ impl Composition {
             Operation::AddPolicy { target, policies } => {
                 self.add_policy(target, policies, bound, context)
             }
-            Operation::EnableFeature(feature) => {
-                let (file, root, element, name, args) = match feature {
-                    Feature::Android(name) => (
-                        "/my_product/etc/permissions/com.oplus.android-features.xml",
-                        "permissions",
-                        "feature",
-                        name,
-                        None,
-                    ),
-                    Feature::Oplus(name) => (
-                        "/my_product/etc/permissions/oplus.feature.android.xml",
-                        "oplus-config",
-                        "oplus-feature",
-                        name,
-                        None,
-                    ),
-                    Feature::App { name, args, file } => (
-                        file.as_str(),
-                        "extend_features",
-                        "app_feature",
-                        name,
-                        args.as_deref(),
-                    ),
-                };
-                let args = args.map_or(String::new(), |args| {
-                    format!(" args=\"{}\"", escape_attribute(args))
-                });
-                // Declared once: one already there is replaced.
-                let edit = XmlEdit::PutChild {
-                    parent: root.to_owned(),
-                    key: feature_match(element, name),
-                    element: format!("<{element} name=\"{}\"{args}/>", escape_attribute(name)),
-                    create: true,
-                };
-                self.edit_xml(file, &[edit], bound, context)
+            Operation::ForEach {
+                over,
+                name,
+                operations,
+            } => self.for_each(over, name, operations, bound, context),
+            Operation::Call { name, args } => self.call(name, args, bound, context),
+        }
+    }
+
+    /// Apply `operations` for each string of a list, or with each device path of
+    /// a selection.
+    fn for_each(
+        &mut self,
+        over: &Expr,
+        name: &Name,
+        operations: &[Operation],
+        bound: &Bound,
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
+        let each = match self.eval(over, bound, context)? {
+            Value::List(items) => items,
+            Value::Selection(entries) => entries
+                .iter()
+                .map(|entry| self.device_path(entry, context))
+                .collect(),
+            other => {
+                return Err(ValueError {
+                    op: "ForEach",
+                    found: other.kind().to_owned(),
+                }
+                .into());
             }
-            // Only the files that mention a feature written out: one that cannot
-            // hold it is not touched, or even parsed.
-            Operation::DisableFeature(name) => {
-                let mut files: Vec<Located> = Vec::new();
-                for pattern in ["/*/etc/permissions/*.xml", "/*/etc/extension/*.xml"] {
-                    for file in self.select_build(pattern, None, None, context)? {
-                        if !files.contains(&file) {
-                            files.push(file);
-                        }
-                    }
-                }
-                if let Some(name) = recipe::written_out(name) {
-                    let mut mentioning = Vec::new();
-                    for file in files {
-                        let text = String::from_utf8(self.content(&file, context)?)
-                            .map_err(|_| Error::Unsupported("Read reads UTF-8 text"))?;
-                        if text.contains(&name) {
-                            mentioning.push(file);
-                        }
-                    }
-                    files = mentioning;
-                }
-                if files.is_empty() {
-                    self.skip(format!("feature {name} is not declared"));
-                    return Ok(());
-                }
-                let edits: Vec<XmlEdit> = ["feature", "oplus-feature", "app_feature"]
-                    .into_iter()
-                    .map(|element| XmlEdit::Remove {
-                        path: format!("//{}", feature_match(element, name)),
-                    })
-                    .collect();
-                let edits = xml_ops(&edits, bound)?;
-                self.edit(&files, context, |bytes| {
-                    Ok(crate::xml::apply(bytes, &edits)?)
-                })
+        };
+        if each.is_empty() {
+            self.skip(format!("no {name} to apply to"));
+        }
+        for value in each {
+            let mut bound = bound.clone();
+            bound.insert(name.clone(), value);
+            for operation in operations {
+                self.run(operation, &bound, context)?;
             }
         }
+        Ok(())
+    }
+
+    /// Apply a kit's operation, its parameters bound to the strings it is given.
+    /// What it reports skipping, and its errors, name the call.
+    fn call(
+        &mut self,
+        name: &Name,
+        args: &BTreeMap<Name, String>,
+        bound: &Bound,
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
+        let definition = &recipe::kit::operations()?[name];
+        let mut given = Bound::new();
+        for (parameter, value) in args {
+            given.insert(parameter.clone(), recipe::substitute(value, bound)?);
+        }
+        let shown = shown(name, args);
+        let skipped = self.skips.len();
+        let applied = self.body(
+            (&definition.bindings, definition.when.as_ref()),
+            &definition.operations,
+            given,
+            context,
+        );
+        for reason in &mut self.skips[skipped..] {
+            *reason = format!("{shown}: {reason}");
+        }
+        applied.map_err(|source| Error::Call {
+            call: shown,
+            source: Box::new(source),
+        })
     }
 
     /// A recipe asset's text.
@@ -249,7 +250,7 @@ impl Composition {
     ) -> Result<(), Error> {
         let selected = self.select(from, bound, context)?;
         if selected.is_empty() {
-            let path = from.path();
+            let path = recipe::substitute(from.path(), bound)?;
             return Err(Error::Assertion(match from {
                 Location::Rom(_) => format!("{path} is not in the ROM"),
                 Location::Stock(_) => format!("{path} is not in the stock firmware"),
@@ -327,6 +328,7 @@ impl Composition {
     ) -> Result<(), Error> {
         let selected = self.named(pattern, bound, context)?;
         if selected.is_empty() {
+            let pattern = recipe::substitute(pattern, bound)?;
             return Err(Error::Assertion(format!("{pattern} is not there")));
         }
         for entry in selected {
@@ -372,13 +374,13 @@ impl Composition {
     /// target the one init loads last, so it takes effect.
     fn set_property(
         &mut self,
-        written: &str,
+        key: &str,
         value: &str,
         target: Option<&Location>,
         bound: &Bound,
         context: &Context<'_>,
     ) -> Result<(), Error> {
-        let key = recipe::substitute(written, bound)?;
+        let key = recipe::substitute(key, bound)?;
         let value = recipe::substitute(value, bound)?;
         if !recipe::property_key(&key) || value.contains('\n') {
             return Err(Error::Unsupported(
@@ -394,9 +396,7 @@ impl Composition {
         }
         let new = self.new_property_file(target, bound, context)?;
         if new.is_empty() {
-            return Err(Error::Assertion(format!(
-                "no property file to hold {written}"
-            )));
+            return Err(Error::Assertion(format!("no property file to hold {key}")));
         }
         self.edit(&new, context, |bytes| {
             Ok(android_property::set(&text(bytes)?, &key, &value, true).into_bytes())
@@ -542,7 +542,8 @@ impl Composition {
         match self.sha256(file, context)? == *sha256 {
             true => Ok(()),
             false => Err(Error::Assertion(format!(
-                "{target} does not have SHA-256 {sha256}"
+                "{} does not have SHA-256 {sha256}",
+                recipe::substitute(target, bound)?
             ))),
         }
     }
@@ -607,21 +608,19 @@ fn xml_ops(edits: &[XmlEdit], bound: &Bound) -> Result<Vec<recipe::XmlOp>, Error
         .collect()
 }
 
-/// `<element name="name">`, as an XML selector written as a string.
-fn feature_match(element: &str, name: &str) -> String {
-    String::from(recipe::XmlMatch {
-        name: recipe::XmlName {
-            namespace: None,
-            local: element.to_owned(),
-        },
-        predicate: Some(recipe::XmlPredicate::Attribute {
-            name: recipe::XmlName {
-                namespace: None,
-                local: "name".to_owned(),
-            },
-            value: name.to_owned(),
-        }),
-    })
+/// A kit's operation as it is called: `DisableFeature("x")`, or with several
+/// parameters, by name.
+fn shown(name: &Name, args: &BTreeMap<Name, String>) -> String {
+    match args.values().collect::<Vec<_>>()[..] {
+        [value] => format!("{name}({value:?})"),
+        _ => {
+            let args: Vec<String> = args
+                .iter()
+                .map(|(parameter, value)| format!("{parameter}: {value:?}"))
+                .collect();
+            format!("{name}({})", args.join(", "))
+        }
+    }
 }
 
 fn text(bytes: &[u8]) -> Result<String, Error> {

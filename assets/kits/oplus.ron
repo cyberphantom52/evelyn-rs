@@ -1,0 +1,65 @@
+// Oplus ROMs (ColorOS, OxygenOS): the features their permissions and extension
+// XML declare.
+Kit(
+    operations: {
+        // `<feature name=…>`, in the Android features' file; one already declared is
+        // replaced.
+        "EnableAndroidFeature": (
+            parameters: ["name"],
+            operations: [
+                EditXml(target: "/my_product/etc/permissions/com.oplus.android-features.xml", edits: [
+                    PutChild(parent: "permissions", key: "feature[@name='{name}']", element: "<feature name=\"{name}\"/>", create: true),
+                ]),
+            ],
+        ),
+        // `<oplus-feature name=…>`, in the Oplus features' file.
+        "EnableOplusFeature": (
+            parameters: ["name"],
+            operations: [
+                EditXml(target: "/my_product/etc/permissions/oplus.feature.android.xml", edits: [
+                    PutChild(parent: "oplus-config", key: "oplus-feature[@name='{name}']", element: "<oplus-feature name=\"{name}\"/>", create: true),
+                ]),
+            ],
+        ),
+        // `<app_feature name=…>`, in an extension file.
+        "EnableAppFeature": (
+            parameters: ["name", "file"],
+            operations: [
+                EditXml(target: "{file}", edits: [
+                    PutChild(parent: "extend_features", key: "app_feature[@name='{name}']", element: "<app_feature name=\"{name}\"/>", create: true),
+                ]),
+            ],
+        ),
+        // `<app_feature name=… args=…>`, in an extension file.
+        "EnableAppFeatureWithArgs": (
+            parameters: ["name", "args", "file"],
+            operations: [
+                EditXml(target: "{file}", edits: [
+                    PutChild(parent: "extend_features", key: "app_feature[@name='{name}']", element: "<app_feature name=\"{name}\" args=\"{args}\"/>", create: true),
+                ]),
+            ],
+        ),
+        // Remove a feature of any kind from every permissions and extension XML that
+        // mentions it; the others are not touched, or even parsed.
+        "DisableFeature": (
+            parameters: ["name"],
+            operations: [
+                ForEach(
+                    over: Filter(
+                        over: Union([Build("/*/etc/permissions/*.xml"), Build("/*/etc/extension/*.xml")]),
+                        name: "file",
+                        keep: Contains(Read(Build("{file}")), "{name}"),
+                    ),
+                    name: "file",
+                    operations: [
+                        EditXml(target: "{file}", edits: [
+                            Remove(path: "//feature[@name='{name}']"),
+                            Remove(path: "//oplus-feature[@name='{name}']"),
+                            Remove(path: "//app_feature[@name='{name}']"),
+                        ]),
+                    ],
+                ),
+            ],
+        ),
+    },
+)

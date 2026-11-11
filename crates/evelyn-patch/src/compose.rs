@@ -73,13 +73,13 @@ pub struct Composition {
     pub(crate) origins: BTreeMap<Name, Firmware>,
     skipped: Vec<Skipped>,
     /// What the step being applied reported skipping.
-    skips: Vec<String>,
+    pub(crate) skips: Vec<String>,
     /// The package a `Package` has open.
     pub(crate) package: Option<Opened>,
 }
 
 /// The values the strings of an operation can name as `{name}`: a step's `let:`,
-/// and what a `Filter` binds.
+/// a kit operation's parameters, and what a `Filter` or `ForEach` binds.
 pub(crate) type Bound = BTreeMap<Name, String>;
 
 impl Composition {
@@ -118,7 +118,7 @@ impl Composition {
     /// operations. A value that is not set, or a condition that does not hold,
     /// skips them, and is reported. A bound string is a token, `[A-Za-z0-9._-]`:
     /// it comes from firmware and goes into paths.
-    fn body(
+    pub(crate) fn body(
         &mut self,
         (bindings, when): (&BTreeMap<Name, Expr>, Option<&Expr>),
         operations: &[Operation],

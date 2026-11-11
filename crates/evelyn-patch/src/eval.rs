@@ -106,6 +106,11 @@ impl Composition {
             }
             Expr::Lines(inner) => eval(inner)?.lines()?,
             Expr::Join(inner) => eval(inner)?.join()?,
+            Expr::Contains(text, part) => {
+                let part = recipe::substitute(part, bound)?;
+                let text = eval(text)?;
+                Value::Bool(text.as_str()?.is_some_and(|text| text.contains(&part)))
+            }
             Expr::Matches(text, pattern) => {
                 let text = eval(text)?;
                 Value::Bool(text.as_str()?.is_some_and(|text| pattern.is_match(text)))
