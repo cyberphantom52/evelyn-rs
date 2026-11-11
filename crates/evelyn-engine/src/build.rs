@@ -5,7 +5,6 @@
 //! stream straight from it into the new image, and only edited files are written.
 //!
 //! Work directory layout (reused across builds):
-//!   sources/<source>.<partition>/       scanned trees, reused while the image hash matches
 //!   targets/<partition>/                the blobs edits wrote
 //!   packages/                           decoded APK/JAR workspaces
 //!   images/<partition>.img              built filesystem images
@@ -13,8 +12,8 @@
 use crate::{Error, Output, Plan};
 use android_firmware::{Mounts, Name, RelativePath, SourceRef};
 use android_fs::Image;
+use android_fs::PartitionTree;
 use android_fs::lp::SuperImage;
-use android_fs::{Artifact, PartitionTree};
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
@@ -47,7 +46,7 @@ pub fn build(request: &BuildRequest<'_>) -> Result<Built, Error> {
     let mut images = patch::Images::new();
     let mut sources = patch::Sources::new();
     for source in &plan.sources {
-        let (image, tree) = open(request, &source.source, &source.artifact)?;
+        let (image, tree) = open(&source.source, &source.image)?;
         images.insert(source.source.clone(), image);
         sources.insert(source.source.clone(), tree);
     }
@@ -126,29 +125,11 @@ fn reset(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-/// Open a source image for reading; sparse images are read as the raw image they hold.
-pub(crate) fn open_image(source: &SourceRef, artifact: &Artifact) -> Result<Image, Error> {
-    Image::detect(&artifact.path).map_err(|_| Error::SourceFilesystem(source.clone()))
-}
-
-/// Open a source image and its scanned tree, scanning only when the image changed.
-fn open(
-    request: &BuildRequest<'_>,
-    source: &SourceRef,
-    artifact: &Artifact,
-) -> Result<(Image, PartitionTree), Error> {
-    let image = open_image(source, artifact)?;
-    let cache = request.work_dir.join("sources").join(source.to_string());
-    if let Ok(tree) = android_fs::read_tree(&cache)
-        && tree.source_sha256 == artifact.sha256
-        && tree.partition == source.partition
-    {
-        return Ok((image, tree));
-    }
+/// Open a source image and scan it; sparse images are read as the raw image they hold.
+fn open(source: &SourceRef, path: &Path) -> Result<(Image, PartitionTree), Error> {
+    let image = Image::detect(path).map_err(|_| Error::SourceFilesystem(source.clone()))?;
     tracing::info!(%source, "scanning source image");
-    let tree = android_fs::scan(&image, source, artifact.sha256.clone())?;
-    fs::create_dir_all(&cache)?;
-    android_fs::write_tree(&cache, &tree)?;
+    let tree = android_fs::scan(&image, source)?;
     Ok((image, tree))
 }
 
@@ -209,12 +190,7 @@ fn compose(
     for partition in &plan.partitions {
         let base = sources[&partition.base].clone();
         let filesystem = partition.filesystem.unwrap_or(base.filesystem);
-        let target = patch::Target::create(
-            &root.join(partition.name.as_ref()),
-            base,
-            partition.name.clone(),
-            filesystem,
-        )?;
+        let target = patch::Target::create(&root.join(partition.name.as_ref()), base, filesystem)?;
         targets.insert(partition.name.clone(), target);
     }
     let packages = request.work_dir.join("packages");

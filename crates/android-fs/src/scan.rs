@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::image::{Image, Kind};
 use crate::{Content, Entry, EntryKind, PartitionTree};
-use android_firmware::{RelativePath, Sha256Digest, SourceRef};
+use android_firmware::{RelativePath, SourceRef};
 use std::collections::{BTreeMap, btree_map};
 
 struct Scan<'a> {
@@ -66,21 +66,14 @@ impl Scan<'_> {
 
 /// Describe a source image as a tree whose file contents stay in the image: every
 /// entry with its Android metadata. Only metadata is read, no file's content.
-pub fn scan(
-    image: &Image,
-    identity: &SourceRef,
-    source_sha256: Sha256Digest,
-) -> Result<PartitionTree, Error> {
+pub fn scan(image: &Image, identity: &SourceRef) -> Result<PartitionTree, Error> {
     let root_id = image.root()?;
     let root = image.inode(root_id)?;
     let mut extraction = Scan {
         image,
         identity,
         tree: PartitionTree {
-            schema: crate::SCHEMA,
-            partition: identity.partition.clone(),
             filesystem: image.filesystem(),
-            source_sha256,
             root: root.metadata,
             entries: BTreeMap::new(),
         },

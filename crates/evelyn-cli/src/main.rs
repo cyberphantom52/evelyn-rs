@@ -38,7 +38,7 @@ enum Command {
         /// [default: super with a super layout in evelyn.toml, else partitions]
         #[arg(long, value_enum)]
         output: Option<OutputArg>,
-        /// Reusable scan and composition workspace [default: .evelyn in the repository].
+        /// The build's working space [default: .evelyn in the repository].
         #[arg(long)]
         work_dir: Option<PathBuf>,
         /// Where the built images or ZIP are written [default: out/<port> in the repository].

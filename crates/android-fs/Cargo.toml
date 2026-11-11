@@ -7,8 +7,6 @@ publish.workspace = true
 
 [dependencies]
 android-firmware.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 regex.workspace = true
 thiserror.workspace = true
 fs-core.workspace = true
