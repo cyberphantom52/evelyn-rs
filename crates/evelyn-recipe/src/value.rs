@@ -3,7 +3,7 @@
 //! a silent result.
 
 use crate::Firmware;
-use android_firmware::{Name, RelativePath};
+use android::firmware::{Name, RelativePath};
 use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

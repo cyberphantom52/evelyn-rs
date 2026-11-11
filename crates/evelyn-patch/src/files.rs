@@ -7,8 +7,8 @@ use crate::{
     compose::{Bound, Context},
     layout,
 };
-use android_firmware::{DevicePath, Firmware, Name, RelativePath, SourceRef, TargetPath};
-use android_fs::EntryKind;
+use android::EntryKind;
+use android::firmware::{DevicePath, Firmware, Name, RelativePath, SourceRef, TargetPath};
 use recipe::{
     Location,
     value::{Located, Place},
@@ -145,7 +145,7 @@ impl Composition {
                 .keys()
                 .filter(|name| origin.is_none_or(|origin| self.origins.get(*name) == Some(&origin)))
                 .filter(|name| {
-                    partition.is_none_or(|glob| android_firmware::glob(glob, name.as_ref()))
+                    partition.is_none_or(|glob| android::firmware::glob(glob, name.as_ref()))
                 })
                 .collect();
             if selected.is_empty() {
@@ -199,7 +199,7 @@ impl Composition {
             }
             Place::Firmware(firmware) => {
                 let tree = context.source(&source_of(firmware, &entry.partition))?;
-                Ok(android_fs::Store::sources(context.images).read(&tree.file(&entry.path)?)?)
+                Ok(android::Store::sources(context.images).read(&tree.file(&entry.path)?)?)
             }
         }
     }
@@ -209,7 +209,7 @@ impl Composition {
         &self,
         entry: &Located,
         context: &Context<'_>,
-    ) -> Result<android_firmware::Sha256Digest, Error> {
+    ) -> Result<android::firmware::Sha256Digest, Error> {
         match entry.place {
             Place::Build => {
                 let target = self
@@ -220,7 +220,7 @@ impl Composition {
                     .store(context.images)
                     .sha256(&target.file(&entry.path)?)?)
             }
-            _ => Ok(android_firmware::Sha256Digest::bytes(
+            _ => Ok(android::firmware::Sha256Digest::bytes(
                 &self.content(entry, context)?,
             )),
         }
@@ -323,7 +323,7 @@ impl Composition {
     /// followed: only the device can expand it.
     pub(crate) fn loaded(&self, context: &Context<'_>) -> Result<Loaded, Error> {
         let mut loaded = Loaded::default();
-        for group in android_firmware::PROPERTY_FILES {
+        for group in android::firmware::PROPERTY_FILES {
             let mut files = Vec::new();
             for path in group {
                 files.push(self.property_file(path, context)?);
@@ -356,9 +356,9 @@ impl Composition {
             loaded.files.push(file.clone());
         }
         let bytes = self.content(file, context)?;
-        for line in android_property::lines(&String::from_utf8_lossy(&bytes)) {
+        for line in android::property::lines(&String::from_utf8_lossy(&bytes)) {
             match line {
-                android_property::Line::Import { path, filter: only } if filter.is_none() => {
+                android::property::Line::Import { path, filter: only } if filter.is_none() => {
                     if path.contains("${") {
                         continue;
                     }
@@ -366,10 +366,11 @@ impl Composition {
                         self.load(&imported, only, depth + 1, loaded, context)?;
                     }
                 }
-                android_property::Line::Import { .. } => {}
-                android_property::Line::Assignment(entry) => {
-                    if android_firmware::loadable_property(entry.key)
-                        && filter.is_none_or(|filter| android_property::filtered(filter, entry.key))
+                android::property::Line::Import { .. } => {}
+                android::property::Line::Assignment(entry) => {
+                    if android::firmware::loadable_property(entry.key)
+                        && filter
+                            .is_none_or(|filter| android::property::filtered(filter, entry.key))
                     {
                         loaded
                             .assignments
@@ -435,11 +436,11 @@ impl Loaded {
         };
         let derived = key
             .strip_prefix("ro.product.")
-            .filter(|name| android_firmware::DERIVED_PRODUCT_PROPERTIES.contains(name));
+            .filter(|name| android::firmware::DERIVED_PRODUCT_PROPERTIES.contains(name));
         let (Some(name), None | Some("")) = (derived, value(key).as_deref()) else {
             return value(key);
         };
-        let sources = android_firmware::PRODUCT_PROPERTY_SOURCES;
+        let sources = android::firmware::PRODUCT_PROPERTY_SOURCES;
         let order = value("ro.product.property_source_order").filter(|order| !order.is_empty());
         let order: Vec<String> = match order {
             Some(order) if order.split(',').all(|source| sources.contains(&source)) => {

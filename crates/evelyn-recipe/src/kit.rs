@@ -3,7 +3,7 @@
 //! called as a built-in one is, by a name no other operation has.
 
 use crate::{BUILT_IN, Error, Expr, Operation, ron_options};
-use android_firmware::Name;
+use android::firmware::Name;
 use serde::{
     Deserialize, Deserializer,
     de::{self, DeserializeSeed, EnumAccess, MapAccess, VariantAccess, Visitor},

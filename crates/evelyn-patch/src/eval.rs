@@ -40,7 +40,7 @@ impl Composition {
                 let mut value = Value::Unset;
                 for file in self.select(target, bound, context)? {
                     let text = String::from_utf8_lossy(&self.content(&file, context)?).into_owned();
-                    if let Some(assigned) = android_property::get(&text, &key) {
+                    if let Some(assigned) = android::property::get(&text, &key) {
                         value = Value::Str(assigned.to_owned());
                     }
                 }

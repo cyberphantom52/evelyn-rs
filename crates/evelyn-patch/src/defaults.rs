@@ -3,11 +3,11 @@
 //! would label it.
 
 use crate::{Composition, Error, Images, Target};
-use android_firmware::{
+use android::EntryKind;
+use android::defaults::{FileContexts, FileKind, FsConfig, capability_xattr};
+use android::firmware::{
     AndroidMetadata, DevicePath, FILE_CONTEXTS, FS_CONFIG, Mounts, Name, TargetPath,
 };
-use android_fs::EntryKind;
-use android_fs::defaults::{FileContexts, FileKind, FsConfig, capability_xattr};
 use std::collections::BTreeMap;
 
 pub(crate) struct Defaults {

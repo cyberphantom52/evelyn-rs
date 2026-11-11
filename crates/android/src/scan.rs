@@ -1,7 +1,7 @@
 use crate::Error;
+use crate::firmware::RelativePath;
 use crate::image::{Image, Kind};
 use crate::{Content, Entry, EntryKind, PartitionTree};
-use android_firmware::RelativePath;
 use std::collections::{BTreeMap, btree_map};
 
 struct Scan<'a> {

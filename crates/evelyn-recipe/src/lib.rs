@@ -13,7 +13,7 @@ pub use xml::{
     XmlEdit, XmlMatch, XmlName, XmlOp, XmlPath, XmlPredicate, XmlStep, escape_attribute,
 };
 
-use android_firmware::{Firmware, Name, Sha256Digest};
+use android::firmware::{Firmware, Name, Sha256Digest};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -39,7 +39,7 @@ pub enum Error {
     #[error("invalid configuration: {0}")]
     Invalid(String),
     #[error(transparent)]
-    Firmware(#[from] android_firmware::Error),
+    Firmware(#[from] android::firmware::Error),
 }
 
 fn read(path: &Path) -> Result<String, Error> {
@@ -275,7 +275,7 @@ impl TryFrom<String> for Hex {
     type Error = String;
 
     fn try_from(text: String) -> Result<Self, String> {
-        android_firmware::unhex(&text)
+        android::firmware::unhex(&text)
             .filter(|bytes| !bytes.is_empty())
             .map(Self)
             .ok_or_else(|| format!("invalid hex bytes {text:?}"))
@@ -284,7 +284,7 @@ impl TryFrom<String> for Hex {
 
 impl From<Hex> for String {
     fn from(hex: Hex) -> Self {
-        android_firmware::hex(&hex.0)
+        android::firmware::hex(&hex.0)
     }
 }
 

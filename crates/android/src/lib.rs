@@ -4,9 +4,11 @@
 pub mod build;
 pub mod defaults;
 mod device;
+pub mod firmware;
 mod format;
 mod image;
 pub mod lp;
+pub mod property;
 mod region;
 mod scan;
 mod store;
@@ -33,9 +35,9 @@ pub use tree::{Content, Entry, EntryKind, File, PartitionTree};
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("no entry {0}")]
-    Missing(android_firmware::RelativePath),
+    Missing(crate::firmware::RelativePath),
     #[error("{0} is not a regular file")]
-    NotAFile(android_firmware::RelativePath),
+    NotAFile(crate::firmware::RelativePath),
     #[error("cannot read {path}: {source}")]
     Read {
         path: PathBuf,
@@ -43,7 +45,7 @@ pub enum Error {
         source: io::Error,
     },
     #[error(transparent)]
-    Firmware(#[from] android_firmware::Error),
+    Firmware(#[from] crate::firmware::Error),
     #[error("ext4 backend: {0}")]
     Ext4(#[from] fs_ext4::Error),
     #[error("filesystem IO: {0}")]

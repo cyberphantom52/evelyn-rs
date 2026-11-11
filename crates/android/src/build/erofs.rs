@@ -1,6 +1,6 @@
+use crate::firmware::AndroidMetadata;
 use crate::{EntryKind, PartitionTree};
 use crate::{Error, Region, Store, mode};
-use android_firmware::AndroidMetadata;
 use fs_erofs::mkfs::{self, BuildOptions, Compression, Content, Node, NodeMeta, XattrSpec};
 use std::{
     collections::BTreeMap,

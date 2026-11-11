@@ -2,9 +2,9 @@
 //! every edit writes a new blob, and blobs are never changed in place.
 
 use crate::layout;
-use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath};
-use android_fs::{Content, Entry, EntryKind, File, PartitionTree};
-use android_fs::{Image, Store};
+use android::firmware::{AndroidMetadata, Filesystem, Name, RelativePath};
+use android::{Content, Entry, EntryKind, File, PartitionTree};
+use android::{Image, Store};
 use recipe::Metadata;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -19,9 +19,9 @@ pub enum Error {
     #[error(transparent)]
     Recipe(#[from] recipe::Error),
     #[error(transparent)]
-    Firmware(#[from] android_firmware::Error),
+    Firmware(#[from] android::firmware::Error),
     #[error(transparent)]
-    Android(#[from] android_fs::Error),
+    Android(#[from] android::Error),
     #[error(transparent)]
     Align(#[from] crate::align::Error),
     #[error(transparent)]
@@ -67,11 +67,11 @@ pub enum Error {
     #[error("a scope selects no partition of this build")]
     EmptyScope,
     #[error("{0} is in no partition this build has")]
-    AbsentPath(android_firmware::DevicePath),
+    AbsentPath(android::firmware::DevicePath),
     #[error("source {0} was not extracted")]
-    UnknownSource(android_firmware::SourceRef),
+    UnknownSource(android::firmware::SourceRef),
     #[error(transparent)]
-    Defaults(#[from] android_fs::defaults::Error),
+    Defaults(#[from] android::defaults::Error),
     #[error("no file_contexts label for new entry {0}")]
     NoLabel(String),
     #[error("missing target entry {0}")]
@@ -392,13 +392,13 @@ impl Target {
     pub(crate) fn resolve(
         self,
         partition: &Name,
-        mounts: &android_firmware::Mounts,
+        mounts: &android::firmware::Mounts,
         defaults: Option<&crate::defaults::Defaults>,
     ) -> Result<PartitionTree, Error> {
         self.tree.map(|path, kind, metadata| match metadata {
             EntryMetadata::Set(metadata) => Ok(metadata),
             EntryMetadata::Default(overrides) => {
-                let at = android_firmware::TargetPath {
+                let at = android::firmware::TargetPath {
                     partition: partition.clone(),
                     path: path.clone(),
                 };

@@ -1,7 +1,7 @@
 //! Where a recipe names a file, a directory or a partition. A path can name a
 //! bound value as `{name}`.
 
-use android_firmware::Name;
+use android::firmware::Name;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
