@@ -47,8 +47,8 @@ enum Command {
         /// An extra patch directory, applied after the port's.
         #[arg(long = "patch")]
         patches: Vec<PathBuf>,
-        /// Apply every recipe to the firmware but write no images, and print the
-        /// plan with what applied.
+        /// Apply every recipe to the firmware but write no images, and print what
+        /// the build composed.
         #[arg(long)]
         dry_run: bool,
     },
@@ -76,18 +76,6 @@ struct InputArgs {
     /// [default: firmware/stock].
     #[arg(long)]
     stock: Option<String>,
-}
-
-impl InputArgs {
-    /// Plan a build of the repository the current directory is in.
-    fn plan(&self, output: Option<Output>, extra: &[PathBuf]) -> Result<engine::Plan, Error> {
-        let root = engine::profile::find(Path::new("."))?;
-        let inputs = engine::Inputs {
-            rom: self.rom.as_deref().map(engine::Given::parse),
-            stock: self.stock.as_deref().map(engine::Given::parse),
-        };
-        Ok(engine::Plan::load(&root, &inputs, output, extra)?)
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
@@ -176,11 +164,6 @@ fn check(tools: &toolchain::Tools) -> Result<serde_json::Value, Error> {
     Ok(checked)
 }
 
-/// `--work-dir` as given, else `.evelyn` in the port's repository.
-fn resolve_work_dir(flag: Option<PathBuf>, plan: &engine::Plan) -> PathBuf {
-    flag.unwrap_or_else(|| plan.profile.root.join(".evelyn"))
-}
-
 fn print(value: &impl Serialize) -> Result<(), Error> {
     let mut stdout = io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, value)?;
@@ -219,24 +202,18 @@ fn run(cli: Cli) -> Result<(), Error> {
             patches,
             dry_run,
         } => {
-            let plan = inputs.plan(output.map(Output::from), &patches)?;
-            let output_dir = output_dir.unwrap_or_else(|| {
-                plan.profile
-                    .root
-                    .join("out")
-                    .join(plan.profile.name.as_ref())
-            });
-            let built = engine::build(&engine::BuildRequest {
-                tools: &toolchain::Tools::user()?,
-                work_dir: &resolve_work_dir(work_dir, &plan),
-                output_dir: &output_dir,
-                plan: &plan,
+            let root = engine::profile::find(Path::new("."))?;
+            print(&engine::build(&engine::Build {
+                root: &root,
+                rom: inputs.rom.as_deref().map(engine::Given::parse),
+                stock: inputs.stock.as_deref().map(engine::Given::parse),
+                output: output.map(Output::from),
+                work_dir: &work_dir.unwrap_or_else(|| root.join(".evelyn")),
+                output_dir: output_dir.as_deref(),
+                extra_patches: &patches,
                 dry_run,
-            })?;
-            match dry_run {
-                true => print(&serde_json::json!({ "plan": plan, "applied": built })),
-                false => print(&built),
-            }
+                tools: &toolchain::Tools::user()?,
+            })?)
         }
     }
 }

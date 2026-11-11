@@ -141,7 +141,7 @@ impl DevicePath {
 }
 
 /// Where each partition is mounted on the device, for resolving device paths.
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default)]
 pub struct Mounts(Vec<(String, Name)>);
 
 impl Mounts {
@@ -282,8 +282,7 @@ impl fmt::Display for Firmware {
 }
 
 /// A partition image of one of the port's firmwares, written `firmware.partition`.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SourceRef {
     pub source: Firmware,
     pub partition: Name,
@@ -295,8 +294,7 @@ impl fmt::Display for SourceRef {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AndroidMetadata {
     pub uid: u32,
     pub gid: u32,
@@ -381,7 +379,7 @@ pub fn system_mount_point(has: impl Fn(&str) -> bool) -> Option<&'static str> {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SuperLayout {
     pub size: u64,
@@ -391,7 +389,7 @@ pub struct SuperLayout {
     pub group: Name,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SlotScheme {
     Single,

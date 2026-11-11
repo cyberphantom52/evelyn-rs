@@ -14,7 +14,6 @@ android-property.workspace = true
 payload-dumper.workspace = true
 tokio.workspace = true
 patch.workspace = true
-serde_json.workspace = true
 tracing.workspace = true
 toolchain.workspace = true
 recipe.workspace = true

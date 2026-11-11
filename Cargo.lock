@@ -699,7 +699,6 @@ dependencies = [
  "evelyn-recipe",
  "payload_dumper",
  "serde",
- "serde_json",
  "thiserror",
  "tokio",
  "toml",
