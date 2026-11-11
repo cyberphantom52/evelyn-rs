@@ -6,7 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-android-firmware.workspace = true
+android.workspace = true
 serde.workspace = true
 regex.workspace = true
 ron.workspace = true

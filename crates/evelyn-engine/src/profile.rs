@@ -15,7 +15,7 @@
 //! the standard system side always comes from the ROM, and any other ROM partition
 //! only when `port.toml` lists it (by name or glob).
 
-use android_firmware::{
+use android::firmware::{
     Filesystem, Name, RelativePath, STANDARD_SYSTEM, SuperLayout, VENDOR_SIDE, glob,
 };
 use serde::{Deserialize, Serialize};

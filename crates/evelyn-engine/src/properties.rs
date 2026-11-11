@@ -2,7 +2,7 @@
 //! the stock partitions are the build `evelyn.toml` pins.
 
 use crate::{Error, firmware::Firmware, profile};
-use android_firmware::{Name, STANDARD_SYSTEM};
+use android::firmware::{Name, STANDARD_SYSTEM};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -86,7 +86,7 @@ fn loaded(partition: &Name, image: &Path) -> Result<BTreeMap<String, String>, Er
         "system" => "/".to_owned(),
         other => format!("/{other}/"),
     };
-    let groups: Vec<Vec<&str>> = android_firmware::PROPERTY_FILES
+    let groups: Vec<Vec<&str>> = android::firmware::PROPERTY_FILES
         .iter()
         .map(|group| {
             group
@@ -96,7 +96,7 @@ fn loaded(partition: &Name, image: &Path) -> Result<BTreeMap<String, String>, Er
         })
         .filter(|group| !group.is_empty())
         .collect();
-    let read: BTreeMap<String, Vec<u8>> = android_fs::Image::detect(image)?
+    let read: BTreeMap<String, Vec<u8>> = android::Image::detect(image)?
         .read_files(|path| groups.iter().flatten().any(|file| *file == path))?
         .into_iter()
         .collect();
@@ -108,7 +108,7 @@ fn loaded(partition: &Name, image: &Path) -> Result<BTreeMap<String, String>, Er
             None => legacy.iter().filter_map(|file| read.get(*file)).collect(),
         };
         for bytes in loaded {
-            for entry in android_property::entries(&String::from_utf8_lossy(bytes)) {
+            for entry in android::property::entries(&String::from_utf8_lossy(bytes)) {
                 assigned.insert(entry.key.to_owned(), entry.value.to_owned());
             }
         }

@@ -2,11 +2,11 @@
 //! then its operations, each a function in [`crate::operations`].
 
 use crate::{Error, Images, Target, defaults::Defaults, layout, package::Opened, target::Placing};
-use android_firmware::{
+use android::PartitionTree;
+use android::firmware::{
     DevicePath, Firmware, Mounts, Name, RelativePath, STANDARD_SYSTEM, SourceRef, TargetPath,
     VENDOR_SIDE,
 };
-use android_fs::PartitionTree;
 use recipe::{Expr, Metadata, Operation, Recipe, value::Located};
 use serde::Serialize;
 use std::{
@@ -134,7 +134,7 @@ impl Composition {
                 self.skip(format!("{name} is not set: {value}"));
                 return Ok(());
             };
-            if !android_firmware::is_token(&text) {
+            if !android::firmware::is_token(&text) {
                 return Err(recipe::Error::Invalid(format!(
                     "{name} is bound to {text:?}, which is not [A-Za-z0-9._-]"
                 ))

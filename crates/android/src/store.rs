@@ -1,7 +1,7 @@
 //! Where file contents are read from: source images and a tree's own blobs.
 
+use crate::firmware::{Name, Sha256Digest};
 use crate::{Content, Error, File, Image, PartitionTree};
-use android_firmware::{Name, Sha256Digest};
 use std::{
     fs,
     io::Read,

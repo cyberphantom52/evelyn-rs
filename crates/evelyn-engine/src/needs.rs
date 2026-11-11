@@ -1,6 +1,6 @@
 //! The firmware partitions a recipe reads.
 
-use android_firmware::{DevicePath, Firmware};
+use android::firmware::{DevicePath, Firmware};
 use recipe::{Expr, Location, Operation, Recipe};
 
 /// Every path a recipe looks for in a firmware, `Rom("/…")` or `Stock("/…")`
@@ -8,7 +8,7 @@ use recipe::{Expr, Location, Operation, Recipe};
 /// not known until the recipe is applied.
 pub(crate) fn reads(
     recipe: &Recipe,
-) -> Result<Vec<(Firmware, DevicePath)>, android_firmware::Error> {
+) -> Result<Vec<(Firmware, DevicePath)>, android::firmware::Error> {
     let locations = recipe.steps.iter().flat_map(|step| {
         let exprs = step.bindings.values().chain(&step.when);
         exprs

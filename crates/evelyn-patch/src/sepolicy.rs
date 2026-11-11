@@ -1,7 +1,7 @@
 //! SELinux CIL policies patched with TE rules, through libsepol.
 
 use crate::Context;
-use android_firmware::RelativePath;
+use android::firmware::RelativePath;
 use std::fs;
 use thiserror::Error;
 

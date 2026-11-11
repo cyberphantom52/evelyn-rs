@@ -6,7 +6,7 @@ use crate::{
     compose::{Bound, Context},
     target::{Overrides, Placing},
 };
-use android_firmware::{DevicePath, Firmware, Name, RelativePath, Sha256Digest};
+use android::firmware::{DevicePath, Firmware, Name, RelativePath, Sha256Digest};
 use recipe::{
     Expr, Hex, Location, Metadata, Operation, Returns, XmlEdit,
     value::{Located, Place, Value, ValueError},
@@ -362,7 +362,7 @@ impl Composition {
         let mut defining = Vec::new();
         for file in files {
             let text = String::from_utf8_lossy(&self.content(&file, context)?).into_owned();
-            if android_property::get(&text, key).is_some() {
+            if android::property::get(&text, key).is_some() {
                 defining.push(file);
             }
         }
@@ -391,7 +391,7 @@ impl Composition {
         let defining = self.defining(files, &key, context)?;
         if !defining.is_empty() {
             return self.edit(&defining, context, |bytes| {
-                Ok(android_property::set(&text(bytes)?, &key, &value, false).into_bytes())
+                Ok(android::property::set(&text(bytes)?, &key, &value, false).into_bytes())
             });
         }
         let new = self.new_property_file(target, bound, context)?;
@@ -399,7 +399,7 @@ impl Composition {
             return Err(Error::Assertion(format!("no property file to hold {key}")));
         }
         self.edit(&new, context, |bytes| {
-            Ok(android_property::set(&text(bytes)?, &key, &value, true).into_bytes())
+            Ok(android::property::set(&text(bytes)?, &key, &value, true).into_bytes())
         })
     }
 
@@ -411,14 +411,14 @@ impl Composition {
         context: &Context<'_>,
     ) -> Result<Vec<Located>, Error> {
         let candidates: Vec<(&str, Option<&str>)> = match target {
-            Some(Location::Partition(partition)) => android_firmware::PARTITION_PROPERTY_FILES
+            Some(Location::Partition(partition)) => android::firmware::PARTITION_PROPERTY_FILES
                 .iter()
                 .map(|path| (*path, Some(partition.as_ref())))
                 .collect(),
             Some(file) => return self.select(file, bound, context),
             // Last loaded first: within a group the canonical file, else the legacy
             // ones from the last loaded.
-            None => android_firmware::PROPERTY_FILES
+            None => android::firmware::PROPERTY_FILES
                 .iter()
                 .rev()
                 .flat_map(|group| {
@@ -453,7 +453,7 @@ impl Composition {
             self.skip(format!("property {written} is not defined there"));
         }
         self.edit(&defining, context, |bytes| {
-            Ok(android_property::remove(&text(bytes)?, &key).into_bytes())
+            Ok(android::property::remove(&text(bytes)?, &key).into_bytes())
         })
     }
 
@@ -558,7 +558,7 @@ impl Composition {
         bound: &Bound,
         context: &Context<'_>,
     ) -> Result<(), Error> {
-        let named = self.select_build(android_firmware::SEPOLICY_VERSION, None, None, context)?;
+        let named = self.select_build(android::firmware::SEPOLICY_VERSION, None, None, context)?;
         let [named] = &named[..] else {
             return Err(Error::Assertion(
                 "the vendor does not name the platform policy version".into(),
@@ -567,7 +567,7 @@ impl Composition {
         let version = self.text(named, context)?.trim().to_owned();
         let patched = recipe::substitute(target, bound)?;
         let mut files = Vec::new();
-        for (path, suffix) in android_firmware::SEPOLICY_FILES {
+        for (path, suffix) in android::firmware::SEPOLICY_FILES {
             let path = match suffix {
                 None if path == patched => continue,
                 None => path.to_owned(),

@@ -1,4 +1,4 @@
-use crate::Sha256Digest;
+use crate::firmware::Sha256Digest;
 use sha2::{Digest, Sha256};
 use std::io::{self, Write};
 

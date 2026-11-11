@@ -13,7 +13,7 @@ name = "evelyn"
 path = "src/main.rs"
 
 [dependencies]
-android-firmware.workspace = true
+android.workspace = true
 clap.workspace = true
 engine.workspace = true
 serde.workspace = true

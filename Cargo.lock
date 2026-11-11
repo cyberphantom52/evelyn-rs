@@ -43,29 +43,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e99a8b1acf1c1749062af7f82b410d72b36c15def030f7e2b6e3454f235aa57"
 
 [[package]]
-name = "android-firmware"
+name = "android"
 version = "0.1.0"
 dependencies = [
- "serde",
- "sha2",
- "thiserror",
-]
-
-[[package]]
-name = "android-fs"
-version = "0.1.0"
-dependencies = [
- "android-firmware",
  "regex",
  "rust-fs-core",
  "rust-fs-erofs",
  "rust-fs-ext4",
+ "serde",
+ "sha2",
  "thiserror",
 ]
-
-[[package]]
-name = "android-property"
-version = "0.1.0"
 
 [[package]]
 name = "anstream"
@@ -678,7 +666,7 @@ dependencies = [
 name = "evelyn-cli"
 version = "0.1.0"
 dependencies = [
- "android-firmware",
+ "android",
  "clap",
  "evelyn-engine",
  "serde",
@@ -692,9 +680,7 @@ dependencies = [
 name = "evelyn-engine"
 version = "0.1.0"
 dependencies = [
- "android-firmware",
- "android-fs",
- "android-property",
+ "android",
  "evelyn-patch",
  "evelyn-recipe",
  "payload_dumper",
@@ -712,9 +698,7 @@ dependencies = [
 name = "evelyn-patch"
 version = "0.1.0"
 dependencies = [
- "android-firmware",
- "android-fs",
- "android-property",
+ "android",
  "diffy",
  "evelyn-recipe",
  "sepolicy-inject-rs",
@@ -730,7 +714,7 @@ dependencies = [
 name = "evelyn-recipe"
 version = "0.1.0"
 dependencies = [
- "android-firmware",
+ "android",
  "regex",
  "ron",
  "serde",

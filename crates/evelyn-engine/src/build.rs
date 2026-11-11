@@ -14,10 +14,10 @@
 use crate::firmware::{Firmware, Given};
 use crate::properties::{check_fingerprint, port_for, rom_properties};
 use crate::{Error, Output, Profile, profile};
-use android_firmware::Firmware as Source;
-use android_firmware::{Filesystem, Mounts, Name, STANDARD_SYSTEM, SourceRef, VENDOR_SIDE};
-use android_fs::lp::SuperImage;
-use android_fs::{Image, PartitionTree};
+use android::firmware::Firmware as Source;
+use android::firmware::{Filesystem, Mounts, Name, STANDARD_SYSTEM, SourceRef, VENDOR_SIDE};
+use android::lp::SuperImage;
+use android::{Image, PartitionTree};
 use recipe::Recipe;
 use serde::Serialize;
 use std::{
@@ -160,7 +160,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
         };
         let image = Image::detect(path).map_err(|_| Error::SourceFilesystem(source.clone()))?;
         tracing::info!(%source, "scanning source image");
-        sources.insert(source, android_fs::scan(&image, images.len())?);
+        sources.insert(source, android::scan(&image, images.len())?);
         images.push(image);
     }
 
@@ -275,14 +275,14 @@ fn partition(
         .unwrap_or_default();
     let mount_point = match settings
         .mount_point
-        .or_else(|| android_firmware::default_mount_point(name.as_ref()))
+        .or_else(|| android::firmware::default_mount_point(name.as_ref()))
     {
         Some(mount_point) => mount_point,
         None => {
             let image = firmware.image(name).expect("the system side is extracted");
             let found = Image::detect(image)?
                 .read_files(|path| path == "system/build.prop" || path == "build.prop")?;
-            android_firmware::system_mount_point(|path| found.iter().any(|(file, _)| file == path))
+            android::firmware::system_mount_point(|path| found.iter().any(|(file, _)| file == path))
                 .ok_or(Error::SystemLayout)?
                 .to_owned()
         }
@@ -411,7 +411,7 @@ fn compose(
 
 /// Where a partition is built.
 enum To<'a> {
-    Region(android_fs::Region),
+    Region(android::Region),
     File(&'a Path),
 }
 
@@ -437,14 +437,14 @@ fn images_of(
     let build = |partition: &Partition, to: To| {
         let (root, tree) = &targets[&partition.name];
         tracing::info!(partition = %partition.name, filesystem = ?tree.filesystem, "building image");
-        let store = android_fs::Store::new(images, root);
+        let store = android::Store::new(images, root);
         let (name, filesystem, mount) = (&partition.name, tree.filesystem, &partition.mount_point);
         Ok::<_, Error>(match to {
             To::Region(region) => {
-                android_fs::build::image(tree, &store, region, filesystem, name, mount)?
+                android::build::image(tree, &store, region, filesystem, name, mount)?
             }
             To::File(image) => {
-                android_fs::build::image_file(tree, &store, image, filesystem, name, mount)?
+                android::build::image_file(tree, &store, image, filesystem, name, mount)?
             }
         })
     };

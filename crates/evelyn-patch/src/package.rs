@@ -3,7 +3,7 @@
 //! edit leaves the directory partially changed; the next decode replaces it.
 
 use crate::{Target, compose::Context};
-use android_firmware::{Name, RelativePath, TargetPath};
+use android::firmware::{Name, RelativePath, TargetPath};
 use recipe::{Expr, Location, Operation};
 use std::{
     fs,

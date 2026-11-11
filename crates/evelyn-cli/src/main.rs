@@ -104,7 +104,7 @@ impl From<OutputArg> for Output {
 #[derive(Debug, Error)]
 enum Error {
     #[error(transparent)]
-    Firmware(#[from] android_firmware::Error),
+    Firmware(#[from] android::firmware::Error),
     #[error(transparent)]
     Engine(#[from] engine::Error),
     #[error(transparent)]

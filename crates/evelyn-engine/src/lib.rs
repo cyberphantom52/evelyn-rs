@@ -13,7 +13,7 @@ pub use build::{Build, Built, Composed, build};
 pub use firmware::{Extracted, Given, extract_in_place};
 pub use profile::{Profile, init};
 
-use android_firmware::{Filesystem, Name, SourceRef};
+use android::firmware::{Filesystem, Name, SourceRef};
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -26,7 +26,7 @@ pub enum Error {
     #[error(transparent)]
     Zip(#[from] zip::result::ZipError),
     #[error(transparent)]
-    Android(#[from] android_fs::Error),
+    Android(#[from] android::Error),
     #[error(transparent)]
     Toolchain(#[from] toolchain::Error),
     #[error("workspace IO: {0}")]
@@ -36,7 +36,7 @@ pub enum Error {
     #[error(transparent)]
     Profile(#[from] profile::Error),
     #[error(transparent)]
-    Firmware(#[from] android_firmware::Error),
+    Firmware(#[from] android::firmware::Error),
     #[error("{fstab} mounts {partition}, which this build does not have")]
     FstabPartition { fstab: String, partition: String },
     #[error("{fstab} mounts {partition} as {accepted:?}, but it is built as {filesystem}")]

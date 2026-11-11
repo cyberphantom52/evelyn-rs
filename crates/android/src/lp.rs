@@ -6,8 +6,8 @@
 //! twice, then a primary and a backup copy of every slot's metadata, and partitions from
 //! the next 1 MiB boundary on, each starting at the next one after the last.
 
+use crate::firmware::{Name, Sha256Digest, SlotScheme, SuperLayout};
 use crate::{Error, Region};
-use android_firmware::{Name, Sha256Digest, SlotScheme, SuperLayout};
 use std::{
     fs::{self, File},
     os::unix::fs::FileExt,

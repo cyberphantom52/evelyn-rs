@@ -6,11 +6,9 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-android-firmware.workspace = true
+android.workspace = true
 zip.workspace = true
 zstd.workspace = true
-android-fs.workspace = true
-android-property.workspace = true
 payload-dumper.workspace = true
 tokio.workspace = true
 patch.workspace = true

@@ -23,7 +23,7 @@ pub(crate) fn check(targets: &Targets, images: &patch::Images) -> Result<(), Err
         tracing::warn!("no vendor partition; its fstab cannot be checked");
         return Ok(());
     };
-    let store = android_fs::Store::new(images, root);
+    let store = android::Store::new(images, root);
     let mut checked = false;
     for path in tree.entries.keys() {
         let Some(name) = path.as_ref().strip_prefix("etc/fstab.") else {

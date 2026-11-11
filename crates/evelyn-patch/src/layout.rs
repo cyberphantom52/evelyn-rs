@@ -3,15 +3,15 @@
 //! its lexicographically first surviving member is promoted to canonical.
 
 use crate::target::{EntryMetadata, Tree};
-use android_firmware::RelativePath;
-use android_fs::{Entry, EntryKind, PartitionTree};
+use android::firmware::RelativePath;
+use android::{Entry, EntryKind, PartitionTree};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("invalid path: {0}")]
-    Firmware(#[from] android_firmware::Error),
+    Firmware(#[from] android::firmware::Error),
     #[error("path does not exist: {0}")]
     MissingPath(RelativePath),
     #[error("destination already exists: {0}")]
@@ -100,7 +100,7 @@ pub(crate) fn walk(
             };
             if segment.contains(['*', '?']) {
                 for name in children(&dir) {
-                    if android_firmware::glob(segment, &name) {
+                    if android::firmware::glob(segment, &name) {
                         next.push(join(&name));
                     }
                 }
