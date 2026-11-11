@@ -2,9 +2,7 @@
 //! each file's bytes are.
 
 use crate::Error;
-use android_firmware::{
-    AndroidMetadata, Filesystem, Firmware, Name, RelativePath, Sha256Digest, SourceRef,
-};
+use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath, Sha256Digest, SourceRef};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -40,29 +38,10 @@ pub enum EntryKind {
 pub struct Entry {
     pub kind: EntryKind,
     pub metadata: AndroidMetadata,
-    pub provenance: Vec<Provenance>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum Provenance {
-    Image {
-        source: Option<Firmware>,
-        partition: Name,
-        path: RelativePath,
-        sha256: Sha256Digest,
-    },
-    Asset {
-        path: RelativePath,
-        sha256: Sha256Digest,
-    },
-    Step {
-        id: Name,
-    },
 }
 
 /// The manifest schema this crate reads and writes.
-pub const SCHEMA: u32 = 2;
+pub const SCHEMA: u32 = 3;
 
 /// A regular file, at its canonical path: a hardlink's target.
 pub struct File<'a> {

@@ -56,11 +56,10 @@ pub(crate) fn close(
     path: &RelativePath,
     opened: Opened,
     context: &Context<'_>,
-    step: &Name,
 ) -> Result<(), crate::Error> {
     let sign = path.as_ref().ends_with(".apk");
     crate::apktool::build(context.tools, &opened.decoded, &opened.rebuilt, sign)?;
-    target.replace_file(path, &opened.rebuilt, step)
+    target.replace_file(path, &opened.rebuilt)
 }
 
 /// Whether statements reach resources or the manifest, which need decoding.

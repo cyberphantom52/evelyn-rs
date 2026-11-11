@@ -31,7 +31,7 @@ pub use image::Image;
 pub use region::Region;
 pub use scan::scan;
 pub use store::Store;
-pub use tree::{Content, Entry, EntryKind, File, PartitionTree, Provenance, SCHEMA};
+pub use tree::{Content, Entry, EntryKind, File, PartitionTree, SCHEMA};
 
 #[derive(Debug, Error)]
 pub enum Error {

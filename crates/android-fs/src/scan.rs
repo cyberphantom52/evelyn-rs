@@ -1,6 +1,6 @@
 use crate::Error;
 use crate::image::{Image, Kind};
-use crate::{Content, Entry, EntryKind, PartitionTree, Provenance};
+use crate::{Content, Entry, EntryKind, PartitionTree};
 use android_firmware::{RelativePath, Sha256Digest, Sha256Writer, SourceRef};
 use std::{
     collections::{BTreeMap, btree_map},
@@ -60,18 +60,11 @@ impl Scan<'_> {
                     }
                 }
             };
-            let provenance = Provenance::Image {
-                source: None,
-                partition: self.tree.partition.clone(),
-                path: path.clone(),
-                sha256: self.tree.source_sha256.clone(),
-            };
             self.tree.entries.insert(
                 path.clone(),
                 Entry {
                     kind,
                     metadata: inode.metadata,
-                    provenance: vec![provenance],
                 },
             );
             if inode.kind == Kind::Directory {

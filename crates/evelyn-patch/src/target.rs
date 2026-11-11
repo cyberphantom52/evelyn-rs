@@ -2,7 +2,7 @@
 //! every edit writes a new blob, and blobs are never changed in place.
 
 use android_firmware::{Filesystem, Name, RelativePath, Sha256Writer, SourceRef};
-use android_fs::{Content, Entry, EntryKind, File, PartitionTree, Provenance};
+use android_fs::{Content, Entry, EntryKind, File, PartitionTree};
 use android_fs::{Image, Store};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -139,11 +139,10 @@ impl Target {
         &mut self,
         path: &RelativePath,
         replacement: &Path,
-        step: &Name,
     ) -> Result<(), Error> {
         let kind = self.write_blob(fs::File::open(replacement)?)?;
         let canonical = self.file(path)?.path.clone();
-        self.accept_content(&canonical, kind, step);
+        self.set_content(&canonical, kind);
         Ok(())
     }
 
@@ -154,14 +153,12 @@ impl Target {
         from: &RelativePath,
         to: &RelativePath,
         placing: crate::operations::Placing,
-        step: &Name,
     ) -> Result<BTreeSet<RelativePath>, Error> {
         let selected = crate::layout::subtree(&self.tree, from, to)?;
         // The directories made for it are not in the tree, so not like its own.
         let mut written = self.destination(to, placing, None)?;
         written.extend(selected.keys().cloned());
         self.tree.entries.extend(selected);
-        self.wrote(&written, step);
         Ok(written)
     }
 
@@ -174,32 +171,19 @@ impl Target {
         from: &RelativePath,
         to: &RelativePath,
         placing: crate::operations::Placing,
-        step: &Name,
     ) -> Result<BTreeSet<RelativePath>, Error> {
         let selected = crate::layout::subtree(&self.tree, from, to)?;
         let mut written = destination.destination(to, placing, Some(&self.tree))?;
         written.extend(selected.keys().cloned());
         let adopted = destination.adopt(Some(&self.root), selected)?;
         destination.tree.entries.extend(adopted);
-        destination.wrote(&written, step);
         Ok(written)
     }
 
-    /// Give `canonical` new content and record the step on it and all of its hardlinks.
-    pub(crate) fn accept_content(
-        &mut self,
-        canonical: &RelativePath,
-        kind: EntryKind,
-        step: &Name,
-    ) {
-        for (path, entry) in &mut self.tree.entries {
-            if path == canonical {
-                entry.kind = kind.clone();
-            } else if !matches!(&entry.kind, EntryKind::Hardlink { target } if target == canonical)
-            {
-                continue;
-            }
-            entry.provenance.push(Provenance::Step { id: step.clone() });
+    /// Give `canonical`, and so all of its hardlinks, new content.
+    pub(crate) fn set_content(&mut self, canonical: &RelativePath, kind: EntryKind) {
+        if let Some(entry) = self.tree.entries.get_mut(canonical) {
+            entry.kind = kind;
         }
     }
 
