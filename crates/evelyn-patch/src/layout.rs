@@ -122,17 +122,6 @@ pub(crate) fn directory<'a, M>(tree: &'a PartitionTree<M>, path: &RelativePath) 
         .map(|entry| &entry.metadata)
 }
 
-/// The paths below `path` in `tree`, not `path` itself.
-pub(crate) fn below<'a, M>(
-    tree: &'a PartitionTree<M>,
-    path: &RelativePath,
-) -> impl Iterator<Item = &'a RelativePath> {
-    let prefix = format!("{path}/");
-    tree.entries
-        .keys()
-        .filter(move |candidate| candidate.as_ref().starts_with(&prefix))
-}
-
 /// Create any missing directories above `path`; those made. Each takes the metadata
 /// `like` gives the same directory when it gives one, else of its nearest existing
 /// ancestor.

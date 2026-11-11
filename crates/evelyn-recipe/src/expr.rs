@@ -13,10 +13,6 @@ use std::{collections::BTreeMap, fmt};
 pub enum Expr {
     /// The text of the one file selected.
     Read(Box<Expr>),
-    /// The SHA-256 of the one file selected.
-    Hash(Box<Expr>),
-    /// The entries selected and everything below them.
-    Below(Box<Expr>),
     /// A property's value, or unset: without a target the value the device ends
     /// up with, as init loads it; with `Partition(…)` or `Build(…)`, from its files.
     Property {
@@ -28,18 +24,8 @@ pub enum Expr {
     Exists(Box<Expr>),
     Not(Box<Expr>),
     All(Vec<Expr>),
-    Any(Vec<Expr>),
     /// What any of the selections selects, in the order they select it.
     Union(Vec<Expr>),
-    Eq(Box<Expr>, Box<Expr>),
-    /// A string is one of these, each of which can name a bound value:
-    /// `In(Property(key: "ro.x"), ["a", "{v}"])`.
-    In(Box<Expr>, Vec<String>),
-    If {
-        condition: Box<Expr>,
-        then: Box<Expr>,
-        otherwise: Box<Expr>,
-    },
     /// The strings of a list, or the entries of a selection, for which `keep`
     /// holds with `{name}` bound to each.
     Filter {
@@ -51,8 +37,6 @@ pub enum Expr {
     Lines(Box<Expr>),
     /// A list's strings, each ending in a newline.
     Join(Box<Expr>),
-    /// The string without the whitespace at its ends.
-    Trim(Box<Expr>),
     /// The string has a match of the regular expression in it.
     Matches(Box<Expr>, Pattern),
     /// The files a location selects: `Build("/…")`, `Rom("/…")` and so on.
@@ -61,8 +45,6 @@ pub enum Expr {
     /// A string, in which `{name}` is the value `name` is bound to.
     #[serde(untagged)]
     Text(String),
-    #[serde(untagged)]
-    Bool(bool),
 }
 
 impl Expr {
@@ -78,20 +60,15 @@ impl Expr {
             Self::At(location) => found.push(location),
             Self::Property { target, .. } => found.extend(target),
             Self::Read(inner)
-            | Self::Hash(inner)
-            | Self::Below(inner)
             | Self::Exists(inner)
             | Self::Not(inner)
             | Self::Lines(inner)
             | Self::Join(inner)
-            | Self::Trim(inner)
-            | Self::Matches(inner, _)
-            | Self::In(inner, _) => inner.collect(found),
-            Self::All(exprs) | Self::Any(exprs) | Self::Union(exprs) => {
+            | Self::Matches(inner, _) => inner.collect(found),
+            Self::All(exprs) | Self::Union(exprs) => {
                 exprs.iter().for_each(|expr| expr.collect(found))
             }
-            Self::Eq(first, second)
-            | Self::Filter {
+            Self::Filter {
                 over: first,
                 keep: second,
                 ..
@@ -99,16 +76,7 @@ impl Expr {
                 first.collect(found);
                 second.collect(found);
             }
-            Self::If {
-                condition,
-                then,
-                otherwise,
-            } => {
-                condition.collect(found);
-                then.collect(found);
-                otherwise.collect(found);
-            }
-            Self::Text(_) | Self::Bool(_) => {}
+            Self::Text(_) => {}
         }
     }
 }
