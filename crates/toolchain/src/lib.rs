@@ -349,37 +349,3 @@ fn command_name(command: &Command) -> String {
         .to_string_lossy()
         .into_owned()
 }
-
-/// The regular files under `root`, as (path relative to `root`, full path), sorted.
-/// Anything other than files and directories is an error.
-pub fn files(root: &Path) -> io::Result<Vec<(String, PathBuf)>> {
-    let mut found = Vec::new();
-    let mut pending = vec![(String::new(), root.to_path_buf())];
-    while let Some((prefix, dir)) = pending.pop() {
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let relative = if prefix.is_empty() {
-                name
-            } else {
-                format!("{prefix}/{name}")
-            };
-            let kind = entry.file_type()?;
-            if kind.is_dir() {
-                pending.push((relative, entry.path()));
-            } else if kind.is_file() {
-                found.push((relative, entry.path()));
-            } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!(
-                        "{} is neither a file nor a directory",
-                        entry.path().display()
-                    ),
-                ));
-            }
-        }
-    }
-    found.sort();
-    Ok(found)
-}
