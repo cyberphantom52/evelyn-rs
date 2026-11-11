@@ -2,7 +2,7 @@
 //! `assets/kits/`. Every operation of every kit is available to every recipe,
 //! called as a built-in one is, by a name no other operation has.
 
-use crate::recipe::{BUILT_IN, Error, Expr, Operation, ron_options};
+use crate::recipe::{BUILT_IN_OPERATIONS, Error, Expr, Operation, ron_options};
 use serde::{
     Deserialize, Deserializer,
     de::{self, DeserializeSeed, EnumAccess, MapAccess, VariantAccess, Visitor},
@@ -52,7 +52,7 @@ pub fn operations() -> Result<&'static BTreeMap<String, Definition>, Error> {
             source: Box::new(source),
         })?;
         for (name, definition) in kit.operations {
-            if BUILT_IN.contains(&name.as_str()) || operations.contains_key(&name) {
+            if BUILT_IN_OPERATIONS.contains(&name.as_str()) || operations.contains_key(&name) {
                 return Err(Error::Invalid(format!(
                     "{path} defines {name}, which is already an operation"
                 )));
@@ -65,7 +65,7 @@ pub fn operations() -> Result<&'static BTreeMap<String, Definition>, Error> {
 
 impl<'de> Deserialize<'de> for Operation {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_enum("Operation", &BUILT_IN, Calls)
+        deserializer.deserialize_enum("Operation", &BUILT_IN_OPERATIONS, Calls)
     }
 }
 
@@ -81,10 +81,10 @@ impl<'de> Visitor<'de> for Calls {
 
     fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> Result<Operation, A::Error> {
         let (Identifier(name), variant) = data.variant()?;
-        if BUILT_IN.contains(&name.as_str()) {
+        if BUILT_IN_OPERATIONS.contains(&name.as_str()) {
             return Operation::deserialize(Replay { name, variant });
         }
-        let unknown = || de::Error::unknown_variant(&name, &BUILT_IN);
+        let unknown = || de::Error::unknown_variant(&name, &BUILT_IN_OPERATIONS);
         let definition = OPERATIONS
             .get()
             .and_then(|operations| operations.get(&name))
