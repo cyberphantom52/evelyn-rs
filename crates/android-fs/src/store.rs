@@ -1,7 +1,7 @@
 //! Where file contents are read from: source images and a tree's own blobs.
 
 use crate::{Content, Error, File, Image, PartitionTree};
-use android_firmware::{Name, SourceRef};
+use android_firmware::{Name, Sha256Digest, SourceRef};
 use std::{
     collections::BTreeMap,
     fs,
@@ -47,6 +47,11 @@ impl<'a> Store<'a> {
         self.open(file.content, file.size)?
             .read_to_end(&mut bytes)?;
         Ok(bytes)
+    }
+
+    /// The SHA-256 of `file`'s content, read to the end.
+    pub fn sha256(&self, file: &File<'_>) -> Result<Sha256Digest, Error> {
+        Ok(Sha256Digest::reader(self.open(file.content, file.size)?)?)
     }
 
     fn blob_path(&self, blob: &Name) -> Result<PathBuf, Error> {

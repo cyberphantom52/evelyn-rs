@@ -1,7 +1,7 @@
 //! Mutable partition trees. Untouched files keep referring to their source image;
 //! every edit writes a new blob, and blobs are never changed in place.
 
-use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath, Sha256Writer, SourceRef};
+use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath, SourceRef};
 use android_fs::{Content, Entry, EntryKind, File, PartitionTree};
 use android_fs::{Image, Store};
 use recipe::tree::Overrides;
@@ -131,14 +131,13 @@ impl Target {
             Content::Blob(blob) => return Ok(self.blob_path(blob)),
             content => content.clone(),
         };
-        let (canonical, sha256, size) = (file.path.clone(), file.sha256.clone(), file.size);
+        let (canonical, size) = (file.path.clone(), file.size);
         let blob = self.new_blob();
         let mut output = fs::File::create_new(self.blob_path(&blob))?;
         io::copy(&mut self.store(images).open(&content, size)?, &mut output)?;
         if let Some(entry) = self.tree.entries.get_mut(&canonical) {
             entry.kind = EntryKind::File {
                 content: Content::Blob(blob.clone()),
-                sha256,
                 size,
             };
         }
@@ -213,12 +212,12 @@ impl Target {
     /// Write a new blob from `reader`.
     pub(crate) fn write_blob(&mut self, mut reader: impl Read) -> Result<EntryKind, Error> {
         let blob = self.new_blob();
-        let mut writer = Sha256Writer::new(fs::File::create_new(self.blob_path(&blob))?);
-        let size = io::copy(&mut reader, &mut writer)?;
-        let (_, sha256) = writer.finish()?;
+        let size = io::copy(
+            &mut reader,
+            &mut fs::File::create_new(self.blob_path(&blob))?,
+        )?;
         Ok(EntryKind::File {
             content: Content::Blob(blob),
-            sha256,
             size,
         })
     }

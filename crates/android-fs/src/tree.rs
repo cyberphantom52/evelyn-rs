@@ -19,18 +19,10 @@ pub enum Content {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EntryKind {
-    File {
-        content: Content,
-        sha256: Sha256Digest,
-        size: u64,
-    },
+    File { content: Content, size: u64 },
     Directory,
-    Symlink {
-        target: Vec<u8>,
-    },
-    Hardlink {
-        target: RelativePath,
-    },
+    Symlink { target: Vec<u8> },
+    Hardlink { target: RelativePath },
 }
 
 /// An entry and its metadata: Android's, or what an editor of the tree keeps in its
@@ -43,13 +35,12 @@ pub struct Entry<M = AndroidMetadata> {
 }
 
 /// The manifest schema this crate reads and writes.
-pub const SCHEMA: u32 = 3;
+pub const SCHEMA: u32 = 4;
 
 /// A regular file, at its canonical path: a hardlink's target.
 pub struct File<'a> {
     pub path: &'a RelativePath,
     pub content: &'a Content,
-    pub sha256: &'a Sha256Digest,
     pub size: u64,
 }
 
@@ -139,14 +130,9 @@ impl<M> PartitionTree<M> {
                 .ok_or_else(|| Error::Missing(target.clone()))?;
         }
         match &entry.kind {
-            EntryKind::File {
-                content,
-                sha256,
-                size,
-            } => Ok(File {
+            EntryKind::File { content, size } => Ok(File {
                 path,
                 content,
-                sha256,
                 size: *size,
             }),
             _ => Err(Error::NotAFile(path.clone())),

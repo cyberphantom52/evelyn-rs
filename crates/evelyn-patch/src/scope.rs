@@ -375,7 +375,8 @@ impl Scope<'_> {
                     .targets
                     .get(&entry.partition)
                     .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?;
-                Value::Str(target.file(&entry.path)?.sha256.to_string())
+                let file = target.file(&entry.path)?;
+                Value::Str(target.store(self.context.images).sha256(&file)?.to_string())
             }
             Expr::Below(inner) => {
                 let mut found = Vec::new();
