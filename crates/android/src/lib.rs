@@ -1,5 +1,7 @@
-//! Android filesystems: EROFS and ext4 images (raw or sparse) read in place, scanned into
-//! partition trees, and written back out.
+//! What is true of Android, whatever ports it: EROFS and ext4 images (raw or sparse)
+//! read in place, scanned into partition trees and written back out, alone or into a
+//! `super` image; partitions, their paths and mount points; the metadata Android gives
+//! a file and its defaults; property files; where the SELinux policy is; and hashes.
 
 pub mod build;
 pub mod defaults;
