@@ -1,12 +1,13 @@
 //! Mutable partition trees. Untouched files keep referring to their source image;
 //! every edit writes a new blob, and blobs are never changed in place.
 
+use crate::layout;
 use android_firmware::{AndroidMetadata, Filesystem, Name, RelativePath};
 use android_fs::{Content, Entry, EntryKind, File, PartitionTree};
 use android_fs::{Image, Store};
-use recipe::tree::Overrides;
+use recipe::tree::Metadata;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Read},
     path::{Path, PathBuf},
@@ -32,7 +33,7 @@ pub enum Error {
     #[error(transparent)]
     Xml(#[from] crate::xml::Error),
     #[error(transparent)]
-    Layout(#[from] crate::layout::Error),
+    Layout(#[from] layout::Error),
     #[error("target IO: {0}")]
     Io(#[from] io::Error),
     #[error(transparent)]
@@ -43,17 +44,24 @@ pub enum Error {
     Tool(#[from] toolchain::Error),
     #[error(transparent)]
     Value(#[from] recipe::value::ValueError),
-    #[error("step {step}: {message}")]
-    Assertion { step: Name, message: String },
+    #[error("step {step}: {source}")]
+    Step {
+        step: Name,
+        #[source]
+        source: Box<Error>,
+    },
+    #[error("{0}")]
+    Assertion(String),
+    #[error("{0} is not set")]
+    Unset(String),
+    #[error("{0} does not work inside a Package")]
+    OutsidePackage(&'static str),
     #[error("no target partition {0}")]
     UnknownPartition(Name),
-    #[error("step {step} removes from a scope that selects no partition of this build")]
-    EmptyScope { step: Name },
-    #[error("step {step} touches {path}, which is in no partition this build has")]
-    AbsentPath {
-        step: Name,
-        path: android_firmware::DevicePath,
-    },
+    #[error("a scope selects no partition of this build")]
+    EmptyScope,
+    #[error("{0} is in no partition this build has")]
+    AbsentPath(android_firmware::DevicePath),
     #[error("source {0} was not extracted")]
     UnknownSource(android_firmware::SourceRef),
     #[error(transparent)]
@@ -142,6 +150,14 @@ impl Target {
         Ok(self.blob_path(&blob))
     }
 
+    /// Give a file (and all of its hardlinks) new content.
+    pub(crate) fn write(&mut self, path: &RelativePath, bytes: &[u8]) -> Result<(), Error> {
+        let canonical = self.file(path)?.path.clone();
+        let kind = self.write_blob(bytes)?;
+        self.set_content(&canonical, kind);
+        Ok(())
+    }
+
     /// Replace a file (and all of its hardlinks) with the contents of `replacement`.
     pub(crate) fn replace_file(
         &mut self,
@@ -160,9 +176,9 @@ impl Target {
         &mut self,
         from: &RelativePath,
         to: &RelativePath,
-        placing: crate::operations::Placing,
+        placing: Placing,
     ) -> Result<(), Error> {
-        let selected = crate::layout::subtree(&self.tree, from, to)?;
+        let selected = layout::subtree(&self.tree, from, to)?;
         // The directories made for it are not in the tree, so not like its own.
         let mut written = self.destination(to, placing, |_| None)?;
         written.extend(selected.keys().cloned());
@@ -178,11 +194,11 @@ impl Target {
         destination: &mut Self,
         from: &RelativePath,
         to: &RelativePath,
-        placing: crate::operations::Placing,
+        placing: Placing,
     ) -> Result<(), Error> {
-        let selected = crate::layout::subtree(&self.tree, from, to)?;
+        let selected = layout::subtree(&self.tree, from, to)?;
         let mut written = destination.destination(to, placing, |dir| {
-            crate::layout::directory(&self.tree, dir).cloned()
+            layout::directory(&self.tree, dir).cloned()
         })?;
         written.extend(selected.keys().cloned());
         let adopted = destination.adopt(&self.root, selected)?;
@@ -251,5 +267,217 @@ impl Target {
 
     fn blob_path(&self, blob: &Name) -> PathBuf {
         self.root.join(PartitionTree::blob_path(blob).as_ref())
+    }
+
+    /// Remove `path` (or every entry a glob matches) and its contents.
+    pub(crate) fn remove(&mut self, path: &RelativePath) -> Result<(), Error> {
+        for path in layout::matches(&self.tree, path) {
+            // A match may already be gone with a directory matched before it.
+            if self.tree.entries.contains_key(&path) {
+                layout::remove(&mut self.tree, &path)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Copy `path` from a firmware's `source` tree, with the metadata the copy
+    /// states. With the source's metadata, a directory made for it must be one the
+    /// source has, whose metadata it takes.
+    pub(crate) fn import(
+        &mut self,
+        source: &PartitionTree,
+        path: &RelativePath,
+        to_path: &RelativePath,
+        placing: Placing,
+    ) -> Result<(), Error> {
+        // A wildcard import keeps every match at its own path.
+        let pairs = if layout::is_glob(path) {
+            if to_path != path {
+                return Err(Error::Unsupported("wildcard imports must keep their path"));
+            }
+            let matches = layout::matches(source, path);
+            if matches.is_empty() {
+                return Err(layout::Error::MissingPath(path.clone()).into());
+            }
+            matches.into_iter().map(|m| (m.clone(), m)).collect()
+        } else {
+            vec![(path.clone(), to_path.clone())]
+        };
+        for (from_path, to_path) in pairs {
+            let selected = layout::subtree(source, &from_path, &to_path)?;
+            let mut written = self.destination(&to_path, placing, |dir| {
+                layout::directory(source, dir)
+                    .cloned()
+                    .map(EntryMetadata::Set)
+            })?;
+            if placing.metadata == Metadata::Source
+                && let Some(made) = written
+                    .iter()
+                    .find(|path| !source.entries.contains_key(*path))
+            {
+                return Err(layout::Error::MissingPath(made.clone()).into());
+            }
+            for (path, entry) in selected {
+                let entry = Entry {
+                    kind: entry.kind,
+                    metadata: EntryMetadata::Set(entry.metadata),
+                };
+                self.tree.entries.insert(path.clone(), entry);
+                written.insert(path);
+            }
+            self.give(written, placing.metadata);
+        }
+        Ok(())
+    }
+
+    /// Write `file` at `to`, with Android's defaults. This replaces the directory
+    /// entry, not every alias of its old inode.
+    pub(crate) fn install(
+        &mut self,
+        file: &Path,
+        to: &RelativePath,
+        placing: Placing,
+    ) -> Result<(), Error> {
+        let previous = self.tree.entries.get(to);
+        if previous.is_some_and(|entry| matches!(entry.kind, EntryKind::Directory)) {
+            return Err(Error::Unsupported(
+                "remove a directory explicitly before installing a file",
+            ));
+        }
+        let made = self.destination(to, placing, |_| None)?;
+        let kind = self.write_blob(std::fs::File::open(file)?)?;
+        let metadata = EntryMetadata::Default(Vec::new());
+        self.tree
+            .entries
+            .insert(to.clone(), Entry { kind, metadata });
+        self.give(made, placing.metadata);
+        Ok(())
+    }
+
+    /// Set what `overrides` sets on the entry at `path`; for an entry waiting for
+    /// Android's defaults, it is set over them.
+    pub(crate) fn set_metadata(
+        &mut self,
+        path: &RelativePath,
+        overrides: &Overrides,
+    ) -> Result<(), Error> {
+        let entry = self
+            .tree
+            .entries
+            .get_mut(path)
+            .ok_or_else(|| Error::Missing(path.clone()))?;
+        match &mut entry.metadata {
+            EntryMetadata::Set(metadata) => set(metadata, overrides),
+            EntryMetadata::Default(over) => over.push(overrides.clone()),
+        }
+        Ok(())
+    }
+
+    /// Have `path` get Android's defaults; what was set on it before no longer
+    /// applies.
+    pub(crate) fn reset(&mut self, path: &RelativePath) {
+        if let Some(entry) = self.tree.entries.get_mut(path) {
+            entry.metadata = EntryMetadata::Default(Vec::new());
+        }
+    }
+
+    /// The finished tree: every entry waiting for them gets Android's defaults
+    /// for where it is on the device, from `defaults`, then what was set over them.
+    pub(crate) fn resolve(
+        self,
+        partition: &Name,
+        mounts: &android_firmware::Mounts,
+        defaults: Option<&crate::defaults::Defaults>,
+    ) -> Result<PartitionTree, Error> {
+        self.tree.map(|path, kind, metadata| match metadata {
+            EntryMetadata::Set(metadata) => Ok(metadata),
+            EntryMetadata::Default(overrides) => {
+                let at = android_firmware::TargetPath {
+                    partition: partition.clone(),
+                    path: path.clone(),
+                };
+                let device = mounts
+                    .device_path(&at)
+                    .ok_or_else(|| Error::UnknownPartition(partition.clone()))?;
+                let defaults = defaults.expect("made when an entry waits for them");
+                let mut metadata = defaults.metadata(&device, kind)?;
+                for overrides in &overrides {
+                    set(&mut metadata, overrides);
+                }
+                Ok(metadata)
+            }
+        })
+    }
+
+    /// Whether an entry waits for Android's defaults.
+    pub(crate) fn waits_for_defaults(&self) -> bool {
+        self.tree
+            .entries
+            .values()
+            .any(|entry| matches!(entry.metadata, EntryMetadata::Default(_)))
+    }
+
+    /// Clear `path` for a new entry: an entry there is removed only to `overwrite`
+    /// it, and missing parent directories are made, with the metadata `like`
+    /// gives them, only to `create_parent`; the directories made.
+    pub(crate) fn destination(
+        &mut self,
+        path: &RelativePath,
+        placing: Placing,
+        like: impl Fn(&RelativePath) -> Option<EntryMetadata>,
+    ) -> Result<BTreeSet<RelativePath>, Error> {
+        if self.tree.entries.contains_key(path) {
+            if !placing.overwrite {
+                return Err(layout::Error::DestinationExists(path.clone()).into());
+            }
+            layout::remove(&mut self.tree, path)?;
+        }
+        if !placing.create_parent
+            && let Some((parent, _)) = path.as_ref().rsplit_once('/')
+        {
+            let parent = RelativePath::try_from(parent.to_owned())?;
+            if !self.tree.entries.contains_key(&parent) {
+                return Err(layout::Error::MissingParent(parent).into());
+            }
+        }
+        Ok(layout::create_parents(&mut self.tree, path, like)?)
+    }
+
+    /// Give what a copy wrote the metadata it states: what the entries came with,
+    /// or Android's defaults.
+    pub(crate) fn give(&mut self, written: BTreeSet<RelativePath>, metadata: Metadata) {
+        if metadata == Metadata::Default {
+            for path in written {
+                self.reset(&path);
+            }
+        }
+    }
+}
+
+/// How a copy writes: the metadata it gives, and whether it may write in place
+/// of an entry and make missing parent directories.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Placing {
+    pub metadata: Metadata,
+    pub overwrite: bool,
+    pub create_parent: bool,
+}
+
+/// The metadata `SetMetadata` sets; what it leaves unset stays.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Overrides {
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
+    pub mode: Option<u16>,
+    pub selinux: Option<String>,
+}
+
+/// Set what `overrides` sets on `metadata`.
+fn set(metadata: &mut AndroidMetadata, overrides: &Overrides) {
+    metadata.uid = overrides.uid.unwrap_or(metadata.uid);
+    metadata.gid = overrides.gid.unwrap_or(metadata.gid);
+    metadata.mode = overrides.mode.unwrap_or(metadata.mode);
+    if let Some(label) = &overrides.selinux {
+        metadata.set_selinux(label);
     }
 }

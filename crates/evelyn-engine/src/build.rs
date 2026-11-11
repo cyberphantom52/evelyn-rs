@@ -85,9 +85,10 @@ struct Partition {
     mount_point: String,
 }
 
-/// A recipe as it is applied: its primitive tree, and the directory its assets
+/// A recipe as it is applied, its primitive tree, and the directory its assets
 /// are in, `None` for a recipe built into Evelyn, whose assets are in the tools.
 struct Loaded {
+    recipe: Recipe,
     tree: recipe::tree::Tree,
     assets: Option<PathBuf>,
 }
@@ -308,7 +309,11 @@ fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Loaded>, Error> {
         }
         let tree = recipe.tree()?;
         profile.validate_recipe(&tree)?;
-        recipes.push(Loaded { tree, assets });
+        recipes.push(Loaded {
+            recipe,
+            tree,
+            assets,
+        });
         Ok(())
     };
     for (name, text) in BUILT_IN {
@@ -391,7 +396,7 @@ fn compose(
         .collect();
     let mut composition = patch::Composition::new(targets, origins);
     for recipe in recipes {
-        tracing::info!(recipe = %recipe.tree.name, "applying recipe");
+        tracing::info!(recipe = %recipe.recipe.name, "applying recipe");
         let context = patch::Context {
             sources,
             images,
@@ -400,7 +405,7 @@ fn compose(
             packages: &packages,
             mounts,
         };
-        composition.apply(&recipe.tree, &context)?;
+        composition.apply(&recipe.recipe, &context)?;
     }
     let (trees, skipped) = composition.finish(mounts, images)?;
     let targets = trees
