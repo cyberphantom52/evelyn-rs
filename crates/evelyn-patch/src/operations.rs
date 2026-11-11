@@ -1,4 +1,4 @@
-use crate::{Error, Target, compose::Context, layout};
+use crate::{Error, Target, compose::Context, layout, target::EntryMetadata};
 use android_firmware::{AndroidMetadata, Name, RelativePath};
 use android_fs::{Entry, EntryKind, PartitionTree};
 use recipe::{
@@ -20,16 +20,16 @@ impl Target {
         Ok(())
     }
 
-    /// Copy `path` from a firmware's `source` tree; the paths written. With the
-    /// source's metadata, a directory made for it must be one the source has,
-    /// whose metadata it takes.
+    /// Copy `path` from a firmware's `source` tree, with the metadata the copy
+    /// states. With the source's metadata, a directory made for it must be one the
+    /// source has, whose metadata it takes.
     pub(crate) fn import(
         &mut self,
         source: &PartitionTree,
         path: &RelativePath,
         to_path: &RelativePath,
         placing: Placing,
-    ) -> Result<BTreeSet<RelativePath>, Error> {
+    ) -> Result<(), Error> {
         // A wildcard import keeps every match at its own path.
         let pairs = if layout::is_glob(path) {
             if to_path != path {
@@ -43,47 +43,55 @@ impl Target {
         } else {
             vec![(path.clone(), to_path.clone())]
         };
-        let mut written = BTreeSet::new();
         for (from_path, to_path) in pairs {
             let selected = layout::subtree(source, &from_path, &to_path)?;
-            let made = self.destination(&to_path, placing, Some(source))?;
+            let mut written = self.destination(&to_path, placing, |dir| {
+                layout::directory(source, dir)
+                    .cloned()
+                    .map(EntryMetadata::Set)
+            })?;
             if placing.metadata == Metadata::Source
-                && let Some(made) = made.iter().find(|path| !source.entries.contains_key(*path))
+                && let Some(made) = written
+                    .iter()
+                    .find(|path| !source.entries.contains_key(*path))
             {
                 return Err(layout::Error::MissingPath(made.clone()).into());
             }
-            written.extend(made);
-            written.extend(selected.keys().cloned());
-            let adopted = self.adopt(None, selected)?;
-            self.tree.entries.extend(adopted);
+            for (path, entry) in selected {
+                let entry = Entry {
+                    kind: entry.kind,
+                    metadata: EntryMetadata::Set(entry.metadata),
+                };
+                self.tree.entries.insert(path.clone(), entry);
+                written.insert(path);
+            }
+            self.give(written, placing.metadata);
         }
-        Ok(written)
+        Ok(())
     }
 
-    /// Write `file` at `to`; the paths written. This replaces the directory entry,
-    /// not every alias of its old inode. The file has no metadata of its own: the
-    /// copy gives it some.
+    /// Write `file` at `to`, with Android's defaults. This replaces the directory
+    /// entry, not every alias of its old inode.
     pub(crate) fn install(
         &mut self,
         file: &Path,
         to: &RelativePath,
         placing: Placing,
-    ) -> Result<BTreeSet<RelativePath>, Error> {
+    ) -> Result<(), Error> {
         let previous = self.tree.entries.get(to);
         if previous.is_some_and(|entry| matches!(entry.kind, EntryKind::Directory)) {
             return Err(Error::Unsupported(
                 "remove a directory explicitly before installing a file",
             ));
         }
-        // Its metadata is the copy's to give.
-        let metadata = self.tree.root.clone();
-        let mut written = self.destination(to, placing, None)?;
+        let made = self.destination(to, placing, |_| None)?;
         let kind = self.write_blob(std::fs::File::open(file)?)?;
+        let metadata = EntryMetadata::Default(Vec::new());
         self.tree
             .entries
             .insert(to.clone(), Entry { kind, metadata });
-        written.insert(to.clone());
-        Ok(written)
+        self.give(made, placing.metadata);
+        Ok(())
     }
 
     /// Set what `overrides` sets on the entry at `path`; for an entry waiting for
@@ -93,54 +101,60 @@ impl Target {
         path: &RelativePath,
         overrides: &Overrides,
     ) -> Result<(), Error> {
-        if let Some(pending) = self.derived.get_mut(path) {
-            pending.push(Pending {
-                overrides: overrides.clone(),
-            });
-            return Ok(());
-        }
         let entry = self
             .tree
             .entries
             .get_mut(path)
             .ok_or_else(|| Error::Missing(path.clone()))?;
-        set(&mut entry.metadata, overrides);
+        match &mut entry.metadata {
+            EntryMetadata::Set(metadata) => set(metadata, overrides),
+            EntryMetadata::Default(over) => over.push(overrides.clone()),
+        }
         Ok(())
     }
 
     /// Have `path` get Android's defaults; what was set on it before no longer
     /// applies.
     pub(crate) fn reset(&mut self, path: &RelativePath) {
-        if self.tree.entries.contains_key(path) {
-            self.derived.insert(path.clone(), Vec::new());
+        if let Some(entry) = self.tree.entries.get_mut(path) {
+            entry.metadata = EntryMetadata::Default(Vec::new());
         }
     }
 
-    /// Give every entry waiting for them Android's defaults for where it is on the
-    /// device, then what was set over them.
-    pub(crate) fn give_defaults(
-        &mut self,
+    /// The finished tree: every entry waiting for them gets Android's defaults
+    /// for where it is on the device, from `defaults`, then what was set over them.
+    pub(crate) fn resolve(
+        self,
         partition: &Name,
         mounts: &android_firmware::Mounts,
-        defaults: &crate::defaults::Defaults,
-    ) -> Result<(), Error> {
-        for (path, pending) in std::mem::take(&mut self.derived) {
-            let Some(entry) = self.tree.entries.get_mut(&path) else {
-                continue;
-            };
-            let at = android_firmware::TargetPath {
-                partition: partition.clone(),
-                path: path.clone(),
-            };
-            let device = mounts
-                .device_path(&at)
-                .ok_or_else(|| Error::UnknownPartition(partition.clone()))?;
-            entry.metadata = defaults.metadata(&device, &entry.kind)?;
-            for pending in pending {
-                set(&mut entry.metadata, &pending.overrides);
+        defaults: Option<&crate::defaults::Defaults>,
+    ) -> Result<PartitionTree, Error> {
+        self.tree.map(|path, kind, metadata| match metadata {
+            EntryMetadata::Set(metadata) => Ok(metadata),
+            EntryMetadata::Default(overrides) => {
+                let at = android_firmware::TargetPath {
+                    partition: partition.clone(),
+                    path: path.clone(),
+                };
+                let device = mounts
+                    .device_path(&at)
+                    .ok_or_else(|| Error::UnknownPartition(partition.clone()))?;
+                let defaults = defaults.expect("made when an entry waits for them");
+                let mut metadata = defaults.metadata(&device, kind)?;
+                for overrides in &overrides {
+                    set(&mut metadata, overrides);
+                }
+                Ok(metadata)
             }
-        }
-        Ok(())
+        })
+    }
+
+    /// Whether an entry waits for Android's defaults.
+    pub(crate) fn waits_for_defaults(&self) -> bool {
+        self.tree
+            .entries
+            .values()
+            .any(|entry| matches!(entry.metadata, EntryMetadata::Default(_)))
     }
 
     /// Transform a file's content for its whole hardlink group, keeping metadata.
@@ -162,13 +176,13 @@ impl Target {
     }
 
     /// Clear `path` for a new entry: an entry there is removed only to `overwrite`
-    /// it, and missing parent directories are made, like `like`'s, only to
-    /// `create_parent`; the directories made.
+    /// it, and missing parent directories are made, with the metadata `like`
+    /// gives them, only to `create_parent`; the directories made.
     pub(crate) fn destination(
         &mut self,
         path: &RelativePath,
         placing: Placing,
-        like: Option<&PartitionTree>,
+        like: impl Fn(&RelativePath) -> Option<EntryMetadata>,
     ) -> Result<BTreeSet<RelativePath>, Error> {
         if self.tree.entries.contains_key(path) {
             if !placing.overwrite {
@@ -188,26 +202,12 @@ impl Target {
     }
 
     /// Give what a copy wrote the metadata it states: what the entries came with,
-    /// and for those still waiting for Android's defaults where they came from,
-    /// `waiting`; or Android's defaults.
-    pub(crate) fn copied(
-        &mut self,
-        written: BTreeSet<RelativePath>,
-        metadata: Metadata,
-        waiting: Vec<(RelativePath, Vec<Pending>)>,
-    ) {
-        for path in written {
-            match metadata {
-                Metadata::Source => {
-                    self.derived.remove(&path);
-                }
-                Metadata::Default => {
-                    self.derived.insert(path, Vec::new());
-                }
+    /// or Android's defaults.
+    pub(crate) fn give(&mut self, written: BTreeSet<RelativePath>, metadata: Metadata) {
+        if metadata == Metadata::Default {
+            for path in written {
+                self.reset(&path);
             }
-        }
-        if metadata == Metadata::Source {
-            self.derived.extend(waiting);
         }
     }
 }
@@ -311,12 +311,6 @@ pub(crate) fn transformed(
             ));
         }
     })
-}
-
-/// A `SetMetadata` on an entry waiting for Android's defaults, set over them.
-#[derive(Clone, Debug)]
-pub(crate) struct Pending {
-    pub overrides: Overrides,
 }
 
 /// Set what `overrides` sets on `metadata`.

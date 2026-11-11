@@ -33,11 +33,13 @@ pub enum EntryKind {
     },
 }
 
+/// An entry and its metadata: Android's, or what an editor of the tree keeps in its
+/// place until it knows it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Entry {
+pub struct Entry<M = AndroidMetadata> {
     pub kind: EntryKind,
-    pub metadata: AndroidMetadata,
+    pub metadata: M,
 }
 
 /// The manifest schema this crate reads and writes.
@@ -55,13 +57,13 @@ pub struct File<'a> {
 /// image until an edit writes a blob into the tree's `content/` directory.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PartitionTree {
+pub struct PartitionTree<M = AndroidMetadata> {
     pub schema: u32,
     pub partition: Name,
     pub filesystem: Filesystem,
     pub source_sha256: Sha256Digest,
     pub root: AndroidMetadata,
-    pub entries: BTreeMap<RelativePath, Entry>,
+    pub entries: BTreeMap<RelativePath, Entry<M>>,
 }
 
 impl PartitionTree {
@@ -117,6 +119,13 @@ impl PartitionTree {
         Ok(())
     }
 
+    pub fn blob_path(blob: &Name) -> RelativePath {
+        RelativePath::try_from(format!("content/{blob}"))
+            .expect("validated blob names are safe components")
+    }
+}
+
+impl<M> PartitionTree<M> {
     /// The regular file at `path`, following a hardlink.
     pub fn file(&self, path: &RelativePath) -> Result<File<'_>, Error> {
         let (mut path, mut entry) = self
@@ -144,8 +153,32 @@ impl PartitionTree {
         }
     }
 
-    pub fn blob_path(blob: &Name) -> RelativePath {
-        RelativePath::try_from(format!("content/{blob}"))
-            .expect("validated blob names are safe components")
+    /// The same tree, each entry's metadata mapped by `metadata`.
+    pub fn map<N, E>(
+        self,
+        mut metadata: impl FnMut(&RelativePath, &EntryKind, M) -> Result<N, E>,
+    ) -> Result<PartitionTree<N>, E> {
+        let entries = self
+            .entries
+            .into_iter()
+            .map(|(path, entry)| {
+                let metadata = metadata(&path, &entry.kind, entry.metadata)?;
+                Ok((
+                    path,
+                    Entry {
+                        kind: entry.kind,
+                        metadata,
+                    },
+                ))
+            })
+            .collect::<Result<_, E>>()?;
+        Ok(PartitionTree {
+            schema: self.schema,
+            partition: self.partition,
+            filesystem: self.filesystem,
+            source_sha256: self.source_sha256,
+            root: self.root,
+            entries,
+        })
     }
 }

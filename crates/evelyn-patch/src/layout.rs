@@ -2,6 +2,7 @@
 //! Every edit keeps hardlink groups intact: when a group's canonical entry is dropped,
 //! its lexicographically first surviving member is promoted to canonical.
 
+use crate::target::{EntryMetadata, Tree};
 use android_firmware::RelativePath;
 use android_fs::{Entry, EntryKind, PartitionTree};
 use std::collections::{BTreeMap, BTreeSet};
@@ -22,7 +23,7 @@ pub enum Error {
 }
 
 /// Recursively remove an existing entry.
-pub fn remove(tree: &mut PartitionTree, path: &RelativePath) -> Result<(), Error> {
+pub(crate) fn remove(tree: &mut Tree, path: &RelativePath) -> Result<(), Error> {
     exists(tree, path)?;
     let removed: BTreeMap<_, _> = tree
         .entries
@@ -33,11 +34,11 @@ pub fn remove(tree: &mut PartitionTree, path: &RelativePath) -> Result<(), Error
 }
 
 /// Copy `from` and its descendants out of `source`, mapped to `to`.
-pub(crate) fn subtree(
-    source: &PartitionTree,
+pub(crate) fn subtree<M: Clone>(
+    source: &PartitionTree<M>,
     from: &RelativePath,
     to: &RelativePath,
-) -> Result<BTreeMap<RelativePath, Entry>, Error> {
+) -> Result<BTreeMap<RelativePath, Entry<M>>, Error> {
     exists(source, from)?;
     let mut selected: BTreeMap<_, _> = source
         .entries
@@ -58,7 +59,7 @@ pub(crate) fn is_glob(path: &RelativePath) -> bool {
 
 /// The entries `path` names in a tree: every match of a glob, else the entry if
 /// it is there.
-pub(crate) fn matches(tree: &PartitionTree, path: &RelativePath) -> Vec<RelativePath> {
+pub(crate) fn matches<M>(tree: &PartitionTree<M>, path: &RelativePath) -> Vec<RelativePath> {
     let children = |dir: &str| {
         let prefix = match dir {
             "" => String::new(),
@@ -113,16 +114,35 @@ pub(crate) fn walk(
     found
 }
 
+/// The metadata of the directory at `path` in `tree`, if it is one.
+pub(crate) fn directory<'a, M>(tree: &'a PartitionTree<M>, path: &RelativePath) -> Option<&'a M> {
+    tree.entries
+        .get(path)
+        .filter(|entry| matches!(entry.kind, EntryKind::Directory))
+        .map(|entry| &entry.metadata)
+}
+
+/// The paths below `path` in `tree`, not `path` itself.
+pub(crate) fn below<'a, M>(
+    tree: &'a PartitionTree<M>,
+    path: &RelativePath,
+) -> impl Iterator<Item = &'a RelativePath> {
+    let prefix = format!("{path}/");
+    tree.entries
+        .keys()
+        .filter(move |candidate| candidate.as_ref().starts_with(&prefix))
+}
+
 /// Create any missing directories above `path`; those made. Each takes the metadata
-/// of the same directory in `like` when it has one, else of its nearest existing
+/// `like` gives the same directory when it gives one, else of its nearest existing
 /// ancestor.
 pub(crate) fn create_parents(
-    tree: &mut PartitionTree,
+    tree: &mut Tree,
     path: &RelativePath,
-    like: Option<&PartitionTree>,
+    like: impl Fn(&RelativePath) -> Option<EntryMetadata>,
 ) -> Result<BTreeSet<RelativePath>, Error> {
     let mut made = BTreeSet::new();
-    let mut inherited = tree.root.clone();
+    let mut inherited = EntryMetadata::Set(tree.root.clone());
     let mut prefix = String::new();
     let components: Vec<_> = path.as_ref().split('/').collect();
     for component in &components[..components.len() - 1] {
@@ -137,10 +157,7 @@ pub(crate) fn create_parents(
             }
             Some(_) => return Err(Error::NonDirectoryParent(dir)),
             None => {
-                let metadata = like
-                    .and_then(|like| like.entries.get(&dir))
-                    .filter(|entry| matches!(entry.kind, EntryKind::Directory))
-                    .map_or_else(|| inherited.clone(), |entry| entry.metadata.clone());
+                let metadata = like(&dir).unwrap_or_else(|| inherited.clone());
                 inherited = metadata.clone();
                 made.insert(dir.clone());
                 tree.entries.insert(
@@ -156,7 +173,7 @@ pub(crate) fn create_parents(
     Ok(made)
 }
 
-fn exists(tree: &PartitionTree, path: &RelativePath) -> Result<(), Error> {
+fn exists<M>(tree: &PartitionTree<M>, path: &RelativePath) -> Result<(), Error> {
     if tree.entries.contains_key(path) {
         Ok(())
     } else {
@@ -167,9 +184,9 @@ fn exists(tree: &PartitionTree, path: &RelativePath) -> Result<(), Error> {
 /// Re-point hardlinks whose canonical entry was `dropped`: the first remaining
 /// member of each group takes the canonical's kind, as `source` has it, and the
 /// rest link to it.
-fn promote(
-    source: &BTreeMap<RelativePath, Entry>,
-    entries: &mut BTreeMap<RelativePath, Entry>,
+fn promote<M>(
+    source: &BTreeMap<RelativePath, Entry<M>>,
+    entries: &mut BTreeMap<RelativePath, Entry<M>>,
     dropped: impl Fn(&RelativePath) -> bool,
 ) {
     let mut promotions = BTreeMap::new();
@@ -192,11 +209,11 @@ fn promote(
 }
 
 /// Move every path (and hardlink target) under `from` to the same place under `to`.
-fn rebase(
-    entries: BTreeMap<RelativePath, Entry>,
+fn rebase<M>(
+    entries: BTreeMap<RelativePath, Entry<M>>,
     from: &RelativePath,
     to: &RelativePath,
-) -> Result<BTreeMap<RelativePath, Entry>, Error> {
+) -> Result<BTreeMap<RelativePath, Entry<M>>, Error> {
     let moved = |path: &RelativePath| -> Result<RelativePath, Error> {
         if within(path, from) {
             let suffix = &path.as_ref()[from.as_ref().len()..];
