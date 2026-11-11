@@ -1,6 +1,7 @@
 //! Each operation a recipe can name, over the files of the build or of the open
 //! package: what [`crate::patch::files`] selects, reads and writes.
 
+use crate::Firmware;
 use crate::patch::{
     Composition, Error,
     compose::{Bound, Context},
@@ -10,7 +11,6 @@ use crate::recipe::{
     Expr, Hex, Location, Metadata, Operation, Returns, XmlEdit,
     value::{Located, Place, Value, ValueError},
 };
-use android::firmware::Firmware;
 use android::hash::Sha256Digest;
 use android::path::{DevicePath, Name, RelativePath};
 use std::collections::BTreeMap;

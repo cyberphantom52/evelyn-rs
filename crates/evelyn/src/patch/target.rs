@@ -21,8 +21,6 @@ pub enum Error {
     #[error(transparent)]
     Recipe(#[from] crate::recipe::Error),
     #[error(transparent)]
-    Firmware(#[from] android::firmware::Error),
-    #[error(transparent)]
     Android(#[from] android::Error),
     #[error(transparent)]
     Align(#[from] crate::patch::align::Error),
@@ -71,7 +69,7 @@ pub enum Error {
     #[error("{0} is in no partition this build has")]
     AbsentPath(android::path::DevicePath),
     #[error("source {0} was not extracted")]
-    UnknownSource(android::firmware::SourceRef),
+    UnknownSource(crate::SourceRef),
     #[error(transparent)]
     Defaults(#[from] android::defaults::Error),
     #[error("no file_contexts label for new entry {0}")]

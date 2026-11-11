@@ -1,7 +1,7 @@
 //! Names and paths: a partition-relative path, a path as the device sees it, and
 //! the globs both can hold.
 
-use crate::firmware::Error;
+use crate::Error;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt,

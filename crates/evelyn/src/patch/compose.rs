@@ -6,8 +6,8 @@ use crate::patch::{
 };
 use crate::recipe::{Expr, Metadata, Operation, Recipe, value::Located};
 use crate::toolchain::Tools;
+use crate::{Firmware, SourceRef};
 use android::PartitionTree;
-use android::firmware::{Firmware, SourceRef};
 use android::partition::{Mounts, STANDARD_SYSTEM, TargetPath, VENDOR_SIDE};
 use android::path::{DevicePath, Name, RelativePath};
 use serde::Serialize;
@@ -135,7 +135,7 @@ impl Composition {
                 self.skip(format!("{name} is not set: {value}"));
                 return Ok(());
             };
-            if !android::firmware::is_token(&text) {
+            if !is_token(&text) {
                 return Err(crate::recipe::Error::Invalid(format!(
                     "{name} is bound to {text:?}, which is not [A-Za-z0-9._-]"
                 ))
@@ -361,4 +361,13 @@ fn files(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
     }
     found.sort();
     Ok(found)
+}
+
+/// Whether `text` is a non-empty run of `[A-Za-z0-9._-]`: safe in a path component
+/// or a recipe, for a value read from firmware.
+pub fn is_token(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
 }

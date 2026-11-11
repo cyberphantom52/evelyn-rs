@@ -11,8 +11,8 @@ use crate::recipe::{
     Location,
     value::{Located, Place},
 };
+use crate::{Firmware, SourceRef};
 use android::EntryKind;
-use android::firmware::{Firmware, SourceRef};
 use android::partition::TargetPath;
 use android::path::{DevicePath, Name, RelativePath};
 

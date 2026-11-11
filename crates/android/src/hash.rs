@@ -1,6 +1,6 @@
 //! Content hashes: SHA-256 digests, and bytes written as hex.
 
-use crate::firmware::Error;
+use crate::Error;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{

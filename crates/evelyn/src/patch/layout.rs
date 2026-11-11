@@ -11,7 +11,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("invalid path: {0}")]
-    Firmware(#[from] android::firmware::Error),
+    Android(#[from] android::Error),
     #[error("path does not exist: {0}")]
     MissingPath(RelativePath),
     #[error("destination already exists: {0}")]
