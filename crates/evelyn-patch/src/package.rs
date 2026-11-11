@@ -1,13 +1,10 @@
 //! Packages (APKs and JARs) a `Package` edits: decoded with apktool into a
-//! directory its body runs in, then rebuilt in place of the original. A failed
-//! body leaves the directory partially changed; the next decode replaces it.
+//! directory its edits run in, then rebuilt in place of the original. A failed
+//! edit leaves the directory partially changed; the next decode replaces it.
 
 use crate::{Target, compose::Context};
 use android_firmware::{Name, RelativePath, TargetPath};
-use recipe::{
-    tree::{Expr, Stmt},
-    visit::{self, Visitor},
-};
+use recipe::{Expr, Location, Operation};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -20,7 +17,7 @@ pub enum Error {
     Io(PathBuf, #[source] std::io::Error),
 }
 
-/// A decoded package, open for the statements inside a `Package`.
+/// A decoded package, open for the edits inside a `Package`.
 pub(crate) struct Opened {
     pub decoded: PathBuf,
     /// The partition the package is in.
@@ -28,21 +25,21 @@ pub(crate) struct Opened {
     rebuilt: PathBuf,
 }
 
-/// Decode the package at `at`. Resources are decoded only when `body` touches them.
+/// Decode the package at `at`. Resources are decoded only when `edits` touch them.
 pub(crate) fn open(
     target: &mut Target,
     at: &TargetPath,
-    body: &[Stmt],
+    edits: &[Operation],
     context: &Context<'_>,
-    step: &Name,
 ) -> Result<Opened, crate::Error> {
     let source = target.content_path(&at.path, context.images)?;
-    let workspace = context.packages.join(step.as_ref());
+    let workspace = context
+        .packages
+        .join(at.partition.as_ref())
+        .join(at.path.as_ref());
     fs::create_dir_all(&workspace)?;
     let decoded = workspace.join("decoded");
-    let mut resources = Resources(false);
-    visit::walk(body, &mut resources)?;
-    crate::apktool::decode(context.tools, &source, &decoded, resources.0)?;
+    crate::apktool::decode(context.tools, &source, &decoded, resources(edits))?;
     Ok(Opened {
         decoded,
         partition: at.partition.clone(),
@@ -62,40 +59,37 @@ pub(crate) fn close(
     target.replace_file(path, &opened.rebuilt)
 }
 
-/// Whether statements reach resources or the manifest, which need decoding.
-struct Resources(bool);
-
-impl Resources {
-    /// A path that is computed may be anything.
-    fn note_expr(&mut self, path: &Expr) {
-        self.0 |= path
-            .literal_str()
-            .is_none_or(|path| path.starts_with("/res/") || path == "/AndroidManifest.xml");
-    }
-}
-
-impl Visitor for Resources {
-    fn stmt(
-        &mut self,
-        stmt: &Stmt,
-        _bound: &[&recipe::tree::Binding],
-    ) -> Result<(), recipe::Error> {
-        if let Stmt::Copy { to: Some(to), .. } = stmt {
-            self.note_expr(to);
+/// Whether edits reach resources or the manifest, which need decoding: whether a
+/// path they name is in `/res/` or is `/AndroidManifest.xml`. A path naming a
+/// bound value, or computed, may be anything.
+fn resources(edits: &[Operation]) -> bool {
+    let resource = |path: &str| {
+        recipe::written_out(path)
+            .is_none_or(|path| path.starts_with("/res/") || path == "/AndroidManifest.xml")
+    };
+    let selects = |expr: &Expr| {
+        expr.locations().into_iter().any(|location| {
+            !matches!(location, Location::Partition(_)) && resource(location.path())
+        })
+    };
+    let to = |to: &Expr| match to {
+        Expr::Text(path) => resource(path),
+        _ => true,
+    };
+    edits.iter().any(|edit| match edit {
+        Operation::Remove { pattern: path, .. }
+        | Operation::ApplyDiff { target: path, .. }
+        | Operation::WriteBytes { target: path, .. }
+        | Operation::EditXml { target: path, .. }
+        | Operation::AssertHash { target: path, .. } => resource(path),
+        Operation::Append { target, content } => resource(target) || selects(content),
+        Operation::Copy { from, to: dest, .. } => {
+            resource(from.path()) || dest.as_ref().is_some_and(to)
         }
-        Ok(())
-    }
-
-    fn expr(
-        &mut self,
-        expr: &Expr,
-        _bound: &[&recipe::tree::Binding],
-    ) -> Result<(), recipe::Error> {
-        if let Expr::Select { pattern, .. } = expr {
-            self.note_expr(pattern);
-        }
-        Ok(())
-    }
+        Operation::Install { asset, to: dest } => resource(asset) || to(dest),
+        Operation::Assert { condition, .. } => selects(condition),
+        _ => false,
+    })
 }
 
 pub(crate) fn io(path: &Path) -> impl FnOnce(std::io::Error) -> Error + '_ {

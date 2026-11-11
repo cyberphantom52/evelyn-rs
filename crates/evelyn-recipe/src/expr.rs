@@ -10,6 +10,7 @@ use crate::{
 };
 use android_firmware::{DevicePath, Name, RelativePath};
 use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, fmt};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -121,6 +122,80 @@ impl Expr {
     }
 }
 
+impl Expr {
+    /// Every location in it, nested ones included.
+    pub fn locations(&self) -> Vec<&Location> {
+        let mut found = Vec::new();
+        self.collect(&mut found);
+        found
+    }
+
+    fn collect<'a>(&'a self, found: &mut Vec<&'a Location>) {
+        match self {
+            Self::At(location) => found.push(location),
+            Self::Property { target, .. } => found.extend(target),
+            Self::Read(inner)
+            | Self::Hash(inner)
+            | Self::Below(inner)
+            | Self::Exists(inner)
+            | Self::Not(inner)
+            | Self::Lines(inner)
+            | Self::Join(inner)
+            | Self::Trim(inner)
+            | Self::Matches(inner, _)
+            | Self::In(inner, _) => inner.collect(found),
+            Self::All(exprs) | Self::Any(exprs) | Self::Union(exprs) => {
+                exprs.iter().for_each(|expr| expr.collect(found))
+            }
+            Self::Eq(first, second)
+            | Self::Filter {
+                over: first,
+                keep: second,
+                ..
+            } => {
+                first.collect(found);
+                second.collect(found);
+            }
+            Self::If {
+                condition,
+                then,
+                otherwise,
+            } => {
+                condition.collect(found);
+                then.collect(found);
+                otherwise.collect(found);
+            }
+            Self::Text(_) | Self::Bool(_) => {}
+        }
+    }
+}
+
+/// As reports show it: a string as it is, anything else in RON.
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text(text) => f.write_str(text),
+            other => f.write_str(&ron::to_string(other).unwrap_or_default()),
+        }
+    }
+}
+
+/// `written` with each `{name}` in it replaced by the value bound to the name.
+pub fn substitute(written: &str, bound: &BTreeMap<Name, String>) -> Result<String, Error> {
+    let mut text = String::new();
+    for part in parts(written) {
+        match part {
+            Part::Text(part) => text.push_str(&part),
+            Part::Bound(name) => text.push_str(
+                bound
+                    .get(&name)
+                    .ok_or_else(|| Error::Invalid(format!("{{{name}}} is not bound")))?,
+            ),
+        }
+    }
+    Ok(text)
+}
+
 /// A piece of a written string: text, or the value a name is bound to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Part {
@@ -172,7 +247,7 @@ pub(crate) fn parts(written: &str) -> Vec<Part> {
 }
 
 /// A written string that names no bound value, as it reads: its escapes undone.
-pub(crate) fn written_out(written: &str) -> Option<String> {
+pub fn written_out(written: &str) -> Option<String> {
     match &parts(written)[..] {
         [Part::Text(text)] => Some(text.clone()),
         _ => None,

@@ -15,7 +15,7 @@ pub mod tree;
 pub mod value;
 pub mod visit;
 mod xml;
-pub use expr::Expr;
+pub use expr::{Expr, substitute, written_out};
 use location::Kind;
 pub use location::Location;
 pub use xml::{
@@ -270,7 +270,7 @@ impl From<Hex> for String {
 }
 
 impl Operation {
-    fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match self {
             Self::Copy { .. } => "Copy",
             Self::Import(..) => "Import",
@@ -305,7 +305,7 @@ impl Operation {
 
     /// What can run on a package's files: content edits, copies of assets and
     /// removals by path, and the smali edits.
-    fn in_package(&self) -> bool {
+    pub fn in_package(&self) -> bool {
         match self {
             Self::Remove {
                 origin: None,

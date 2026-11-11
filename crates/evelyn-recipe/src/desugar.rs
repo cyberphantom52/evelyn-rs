@@ -52,12 +52,8 @@ fn step(step: &Step) -> Stmt {
     }
 }
 
-/// An expression as reports name it: a string as it is, anything else in RON.
 fn shown(written: &Written) -> String {
-    match written {
-        Written::Text(text) => text.clone(),
-        other => ron::to_string(other).unwrap_or_default(),
-    }
+    written.to_string()
 }
 
 /// A written expression as primitives.

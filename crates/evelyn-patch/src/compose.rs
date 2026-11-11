@@ -1,24 +1,13 @@
-//! Apply recipes across every target partition. A recipe is desugared into its
-//! primitive tree, and each statement and expression has one implementation here
-//! and in [`crate::scope`], whatever surface operation it came from.
+//! Apply recipes across every target partition: each step's `let:` and `when:`,
+//! then its operations, each a function in [`crate::operations`].
 
-use crate::{
-    Error, Images, Target,
-    defaults::Defaults,
-    layout,
-    operations::Placing,
-    package::Opened,
-    scope::{Bound, Scope},
-};
+use crate::{Error, Images, Target, defaults::Defaults, layout, package::Opened, target::Placing};
 use android_firmware::{
     DevicePath, Firmware, Mounts, Name, RelativePath, STANDARD_SYSTEM, SourceRef, TargetPath,
     VENDOR_SIDE,
 };
 use android_fs::PartitionTree;
-use recipe::{
-    tree::{Assigned, Expr, Metadata, Overrides, Stmt, Transform, Tree},
-    value::{Located, Place, Value},
-};
+use recipe::{Expr, Operation, Recipe, tree::Metadata, value::Located};
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
@@ -79,13 +68,19 @@ pub struct Skipped {
 }
 
 pub struct Composition {
-    targets: BTreeMap<Name, Target>,
+    pub(crate) targets: BTreeMap<Name, Target>,
     /// Which firmware each target partition was built from.
-    origins: BTreeMap<Name, Firmware>,
+    pub(crate) origins: BTreeMap<Name, Firmware>,
     skipped: Vec<Skipped>,
+    /// What the step being applied reported skipping.
+    skips: Vec<String>,
     /// The package a `Package` has open.
-    package: Option<Opened>,
+    pub(crate) package: Option<Opened>,
 }
+
+/// The values the strings of an operation can name as `{name}`: a step's `let:`,
+/// and what a `Filter` binds.
+pub(crate) type Bound = BTreeMap<Name, String>;
 
 impl Composition {
     pub fn new(targets: BTreeMap<Name, Target>, origins: BTreeMap<Name, Firmware>) -> Self {
@@ -93,330 +88,89 @@ impl Composition {
             targets,
             origins,
             skipped: Vec::new(),
+            skips: Vec::new(),
             package: None,
         }
     }
 
-    /// Apply a recipe's primitive tree, its steps in dependency order.
-    pub fn apply(&mut self, tree: &Tree, context: &Context<'_>) -> Result<(), Error> {
-        let unnamed = Name::try_from("recipe".to_owned())?;
-        for stmt in &tree.body {
-            self.exec(stmt, &tree.name, &unnamed, context, None)?;
-        }
-        Ok(())
-    }
-
-    /// What the step reads: the build so far, the firmware and the open package.
-    fn scope<'a>(&'a self, context: &'a Context<'a>, step: &'a Name) -> Scope<'a> {
-        Scope {
-            targets: &self.targets,
-            origins: &self.origins,
-            context,
-            step,
-            package: self.package.as_ref(),
-        }
-    }
-
-    /// `expr`'s value, with what the `Let`s around the statement bind.
-    fn eval(
-        &self,
-        expr: &Expr,
-        context: &Context<'_>,
-        step: &Name,
-        bound: Option<&Bound<'_>>,
-    ) -> Result<Value, Error> {
-        self.scope(context, step).eval(expr, bound)
-    }
-
-    fn skip(&mut self, recipe: &Name, step: &Name, reason: String) {
-        self.skipped.push(Skipped {
-            recipe: recipe.clone(),
-            step: step.clone(),
-            reason,
-        });
-    }
-
-    /// The one rule for each kind of statement.
-    fn exec(
-        &mut self,
-        stmt: &Stmt,
-        recipe: &Name,
-        step: &Name,
-        context: &Context<'_>,
-        bound: Option<&Bound<'_>>,
-    ) -> Result<(), Error> {
-        if self.package.is_some() && matches!(stmt, Stmt::SetMetadata { .. } | Stmt::Package { .. })
-        {
-            return Err(Error::Unsupported(
-                "inside a package only Edit, Copy, Remove, Let, When and Assert run",
-            ));
-        }
-        match stmt {
-            Stmt::Step { id, body } => {
-                for stmt in body {
-                    self.exec(stmt, recipe, id, context, bound)?;
-                }
-            }
-            Stmt::Let { name, value, body } => {
-                let value = self.eval(value, context, step, bound)?;
-                if let Some(text) = value.as_str()?
-                    && !android_firmware::is_token(text)
-                {
-                    return Err(recipe::Error::Invalid(format!(
-                        "{name} is bound to {text:?}, which is not [A-Za-z0-9._-]"
-                    ))
-                    .into());
-                }
-                let bound = Bound::new(name, value, bound);
-                for stmt in body {
-                    self.exec(stmt, recipe, step, context, Some(&bound))?;
-                }
-            }
-            Stmt::When {
-                condition,
-                body,
-                skip,
-            } => {
-                if self.eval(condition, context, step, bound)?.as_bool()? {
-                    for stmt in body {
-                        self.exec(stmt, recipe, step, context, bound)?;
-                    }
-                } else {
-                    self.skip(recipe, step, skip.clone());
-                }
-            }
-            Stmt::Remove { selection } => {
-                let selected = self.eval(selection, context, step, bound)?;
-                let selected = selected.as_selection()?;
-                for entry in selected {
-                    match (entry.place, &self.package) {
-                        (Place::Build, _) => {
-                            self.target(&entry.partition)?.remove(&entry.path)?;
-                        }
-                        (Place::Package, Some(package)) => {
-                            let path = entry.path.resolve(&package.decoded);
-                            let removed = match path.is_dir() {
-                                true => std::fs::remove_dir_all(&path),
-                                false => std::fs::remove_file(&path),
-                            };
-                            removed.map_err(crate::package::io(&path))?;
-                        }
-                        _ => return Err(Error::Unsupported("only the build can be removed from")),
-                    }
-                }
-            }
-            Stmt::Copy {
-                selection,
-                to,
-                metadata,
-                overwrite,
-                create_parent,
-            } => {
-                let placing = Placing {
-                    metadata: *metadata,
-                    overwrite: *overwrite,
-                    create_parent: *create_parent,
-                };
-                let selected = self.eval(selection, context, step, bound)?;
-                let selected = selected.as_selection()?;
-                let to = match to {
-                    Some(to) => {
-                        let to = self.eval(to, context, step, bound)?;
-                        let to = to
-                            .as_str()?
-                            .ok_or(Error::Unsupported("a copy's to is a string that is set"))?;
-                        Some(DevicePath::try_from(to.to_owned())?)
-                    }
-                    None => None,
-                };
-                if to.is_some() && selected.len() > 1 {
-                    return Err(Error::Unsupported(
-                        "a copy of several entries keeps their paths",
-                    ));
-                }
-                for entry in selected {
-                    match entry.place {
-                        Place::Firmware(firmware) => self.copy_firmware(
-                            firmware,
-                            entry,
-                            to.as_ref(),
-                            placing,
-                            context,
-                            step,
-                        )?,
-                        Place::Asset => {
-                            let to = to
-                                .as_ref()
-                                .ok_or(Error::Unsupported("an asset is copied to a path"))?;
-                            self.copy_asset(&entry.path, to, placing, context, step)?;
-                        }
-                        Place::Build => {
-                            let to = to.as_ref().ok_or(Error::Unsupported(
-                                "a copy within the build needs a path",
-                            ))?;
-                            self.copy_build(entry, to, placing, context, step)?;
-                        }
-                        Place::Package => {
-                            return Err(Error::Unsupported("a package's files are not copied"));
-                        }
-                    }
-                }
-            }
-            Stmt::SetMetadata {
-                selection,
-                metadata,
-            } => {
-                let selected = self.eval(selection, context, step, bound)?;
-                let selected = selected.as_selection()?;
-                let overrides = match metadata {
-                    Assigned::Default => {
-                        for entry in selected {
-                            if entry.place != Place::Build {
-                                return Err(Error::Unsupported(
-                                    "only the build's entries get Android's defaults",
-                                ));
-                            }
-                            self.target(&entry.partition)?.reset(&entry.path);
-                        }
-                        return Ok(());
-                    }
-                    // The label is evaluated before it is set.
-                    Assigned::Fields(overrides) => &Overrides {
-                        selinux: match &overrides.selinux {
-                            Some(label) => {
-                                let label = self.eval(label, context, step, bound)?;
-                                let label = label
-                                    .as_str()?
-                                    .filter(|label| recipe::tree::selinux_label(label))
-                                    .ok_or(Error::Unsupported("a label is a well-formed string"))?;
-                                Some(Expr::Literal(Value::Str(label.to_owned())))
-                            }
-                            None => None,
-                        },
-                        ..overrides.clone()
-                    },
-                };
-                for entry in selected {
-                    self.target(&entry.partition)?
-                        .set_metadata(&entry.path, overrides)?;
-                }
-            }
-            Stmt::Edit {
-                selection,
-                transform,
-            } => {
-                let selected = self.eval(selection, context, step, bound)?;
-                let selected = selected.as_selection()?;
-                if selected.is_empty() {
-                    return Ok(());
-                }
-                // A transform's strings, and the policy files a policy patch resolves
-                // with, are expressions, evaluated before the edit.
-                let transform = transform.map_strings(|text| {
-                    let text = self.eval(text, context, step, bound)?;
-                    let text = text
-                        .as_str()?
-                        .ok_or(Error::Unsupported("a transform's strings are set"))?;
-                    Ok::<_, Error>(Expr::Literal(Value::Str(text.to_owned())))
+    /// Apply a recipe, its steps in dependency order. An error says which step
+    /// it came from.
+    pub fn apply(&mut self, recipe: &Recipe, context: &Context<'_>) -> Result<(), Error> {
+        for step in recipe.ordered_steps()? {
+            let bindings = (&step.bindings, step.when.as_ref());
+            self.body(bindings, &step.operations, Bound::new(), context)
+                .map_err(|source| Error::Step {
+                    step: step.id.clone(),
+                    source: Box::new(source),
                 })?;
-                let transform =
-                    &match transform {
-                        Transform::AddPolicy {
-                            policies,
-                            resolve_with,
-                        } => {
-                            let scope = self.scope(context, step);
-                            let mut texts = Vec::new();
-                            for file in scope.eval(&resolve_with, bound)?.as_selection()? {
-                                texts.push(String::from_utf8(scope.content(file)?).map_err(
-                                    |_| Error::Unsupported("a policy file is UTF-8 text"),
-                                )?);
-                            }
-                            Transform::AddPolicy {
-                                policies,
-                                resolve_with: Expr::Literal(Value::List(texts)),
-                            }
-                        }
-                        other => other,
-                    };
-                for entry in selected {
-                    match (entry.place, &self.package) {
-                        (Place::Build, _) => self
-                            .target(&entry.partition)?
-                            .transform(&entry.path, transform, context)
-                            .map_err(|source| Error::At {
-                                path: context
-                                    .mounts
-                                    .device_path(&TargetPath {
-                                        partition: entry.partition.clone(),
-                                        path: entry.path.clone(),
-                                    })
-                                    .map_or_else(
-                                        || entry.path.to_string(),
-                                        |path| path.to_string(),
-                                    ),
-                                source: Box::new(source),
-                            })?,
-                        (Place::Package, Some(package)) => {
-                            let path = entry.path.resolve(&package.decoded);
-                            let bytes = std::fs::read(&path).map_err(crate::package::io(&path))?;
-                            let changed =
-                                crate::operations::transformed(&bytes, transform, context)?;
-                            std::fs::write(&path, changed).map_err(crate::package::io(&path))?;
-                        }
-                        _ => return Err(Error::Unsupported("only the build can be edited")),
-                    }
-                }
-            }
-            Stmt::Assert { condition, message } => {
-                if !self.eval(condition, context, step, bound)?.as_bool()? {
-                    let message = self.eval(message, context, step, bound)?;
-                    return Err(Error::Assertion {
-                        step: step.clone(),
-                        message: message.as_str()?.unwrap_or_default().to_owned(),
-                    });
-                }
-            }
-            Stmt::Package { package, body } => {
-                let package = self.eval(package, context, step, bound)?;
-                let package = package.as_str()?.ok_or(Error::Unsupported(
-                    "a package's path is a string that is set",
-                ))?;
-                let at =
-                    self.resolve_one(&DevicePath::try_from(package.to_owned())?, context, step)?;
-                let opened =
-                    crate::package::open(self.target(&at.partition)?, &at, body, context, step)?;
-                self.package = Some(opened);
-                let ran = body
-                    .iter()
-                    .try_for_each(|stmt| self.exec(stmt, recipe, step, context, bound));
-                let opened = self.package.take().expect("opened above");
-                ran?;
-                crate::package::close(self.target(&at.partition)?, &at.path, opened, context)?;
+            for reason in self.skips.drain(..) {
+                self.skipped.push(Skipped {
+                    recipe: recipe.name.clone(),
+                    step: step.id.clone(),
+                    reason,
+                });
             }
         }
         Ok(())
+    }
+
+    /// Bind each `let:` name to its value, then, if `when:` holds, apply the
+    /// operations. A value that is not set, or a condition that does not hold,
+    /// skips them, and is reported. A bound string is a token, `[A-Za-z0-9._-]`:
+    /// it comes from firmware and goes into paths.
+    fn body(
+        &mut self,
+        (bindings, when): (&BTreeMap<Name, Expr>, Option<&Expr>),
+        operations: &[Operation],
+        mut bound: Bound,
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
+        for (name, value) in bindings {
+            let Some(text) = self
+                .eval(value, &bound, context)?
+                .as_str()?
+                .map(str::to_owned)
+            else {
+                self.skip(format!("{name} is not set: {value}"));
+                return Ok(());
+            };
+            if !android_firmware::is_token(&text) {
+                return Err(recipe::Error::Invalid(format!(
+                    "{name} is bound to {text:?}, which is not [A-Za-z0-9._-]"
+                ))
+                .into());
+            }
+            bound.insert(name.clone(), text);
+        }
+        if let Some(condition) = when
+            && !self.eval(condition, &bound, context)?.as_bool()?
+        {
+            self.skip(format!("condition does not hold: {condition}"));
+            return Ok(());
+        }
+        operations
+            .iter()
+            .try_for_each(|operation| self.run(operation, &bound, context))
+    }
+
+    /// Report that part of the step being applied did not apply, and why.
+    pub(crate) fn skip(&mut self, reason: String) {
+        self.skips.push(reason);
     }
 
     /// Copy what a firmware has at `entry` into the build.
-    fn copy_firmware(
+    pub(crate) fn copy_firmware(
         &mut self,
         firmware: Firmware,
         entry: &Located,
         to: Option<&DevicePath>,
         placing: Placing,
         context: &Context<'_>,
-        step: &Name,
     ) -> Result<(), Error> {
-        if self.package.is_some() {
-            return Err(Error::Unsupported(
-                "a package takes assets, not firmware files",
-            ));
-        }
-        let source = crate::scope::source_of(firmware, &entry.partition);
+        let source = crate::files::source_of(firmware, &entry.partition);
         let tree = context.source(&source)?;
         let to = match to {
-            Some(to) => self.resolve_one(to, context, step)?,
+            Some(to) => self.resolve_one(to, context)?,
             None => TargetPath {
                 partition: entry.partition.clone(),
                 path: entry.path.clone(),
@@ -428,13 +182,12 @@ impl Composition {
 
     /// Copy a recipe asset (a file, or a directory's files) to `to`, in the build
     /// or the open package. An asset has no metadata of its own.
-    fn copy_asset(
+    pub(crate) fn copy_asset(
         &mut self,
         asset: &RelativePath,
         to: &DevicePath,
         placing: Placing,
         context: &Context<'_>,
-        step: &Name,
     ) -> Result<(), Error> {
         let source = context.asset(asset)?;
         if let Some(package) = &self.package {
@@ -456,7 +209,7 @@ impl Composition {
         let (partition, base) = match context.mounts.partition_at(to) {
             Some(partition) => (partition.clone(), None),
             None => {
-                let at = self.resolve_one(to, context, step)?;
+                let at = self.resolve_one(to, context)?;
                 (at.partition, Some(at.path))
             }
         };
@@ -489,15 +242,14 @@ impl Composition {
 
     /// Copy an entry of the build, and what is below it, to `to`, keeping their
     /// metadata; those still waiting for Android's defaults wait at the copy too.
-    fn copy_build(
+    pub(crate) fn copy_build(
         &mut self,
         entry: &Located,
         to: &DevicePath,
         placing: Placing,
         context: &Context<'_>,
-        step: &Name,
     ) -> Result<(), Error> {
-        let to = self.resolve_one(to, context, step)?;
+        let to = self.resolve_one(to, context)?;
         if entry.partition == to.partition {
             self.target(&to.partition)?
                 .copy_within(&entry.path, &to.path, placing)
@@ -531,26 +283,22 @@ impl Composition {
     }
 
     /// The one place a device path is in the build.
-    fn resolve_one(
+    pub(crate) fn resolve_one(
         &self,
         path: &DevicePath,
         context: &Context<'_>,
-        step: &Name,
     ) -> Result<TargetPath, Error> {
         let mut found = Self::resolve(&self.targets, context.mounts, path);
         match found.len() {
             1 => Ok(found.remove(0)),
-            0 => Err(Error::AbsentPath {
-                step: step.clone(),
-                path: path.clone(),
-            }),
+            0 => Err(Error::AbsentPath(path.clone())),
             _ => Err(Error::Unsupported(
                 "a path to edit must name one partition, not a glob over several",
             )),
         }
     }
 
-    fn target(&mut self, name: &Name) -> Result<&mut Target, Error> {
+    pub(crate) fn target(&mut self, name: &Name) -> Result<&mut Target, Error> {
         self.targets
             .get_mut(name)
             .ok_or_else(|| Error::UnknownPartition(name.clone()))
