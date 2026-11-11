@@ -1,11 +1,10 @@
 //! Literal XML selectors; paths include the document element.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 /// An element or attribute name, written as `local` or, with a namespace,
 /// `{uri}local`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "String", into = "String")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct XmlName {
     pub namespace: Option<String>,
     pub local: String,
@@ -14,8 +13,7 @@ pub struct XmlName {
 /// An element selector, written as a string: `name`, `name[@attr]`,
 /// `name[@attr='value']`, `name[text()='value']` or `name[child='value']`, where an
 /// element name may carry a namespace as `{uri}name` and `*` is any element.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct XmlMatch {
     pub name: XmlName,
     pub predicate: Option<XmlPredicate>,
@@ -93,34 +91,6 @@ impl From<String> for XmlName {
     }
 }
 
-impl From<XmlName> for String {
-    fn from(name: XmlName) -> Self {
-        name.to_string()
-    }
-}
-
-impl From<XmlMatch> for String {
-    fn from(matches: XmlMatch) -> Self {
-        let name = matches.name;
-        // Quoted with whichever quote the value does not hold.
-        let quoted = |value: &str| match value.contains('\'') {
-            true => format!("\"{value}\""),
-            false => format!("'{value}'"),
-        };
-        match matches.predicate {
-            None => name.to_string(),
-            Some(XmlPredicate::HasAttribute { name: key }) => format!("{name}[@{key}]"),
-            Some(XmlPredicate::Attribute { name: key, value }) => {
-                format!("{name}[@{key}={}]", quoted(&value))
-            }
-            Some(XmlPredicate::ChildText { name: key, value }) => {
-                format!("{name}[{key}={}]", quoted(&value))
-            }
-            Some(XmlPredicate::Text { value }) => format!("{name}[text()={}]", quoted(&value)),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum XmlPredicate {
     HasAttribute { name: XmlName },
@@ -133,10 +103,8 @@ pub enum XmlPredicate {
 /// `resources/string[@name='app_name']`. A step after `//` matches at any depth
 /// below, not just among children: `//feature[@name='x']`. A `/` inside a
 /// predicate or a `{namespace}` is part of it.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
+#[derive(Clone, Debug)]
 pub struct XmlPath {
-    text: String,
     pub selectors: Vec<XmlStep>,
 }
 
@@ -185,19 +153,13 @@ impl TryFrom<String> for XmlPath {
             });
             descendant = false;
         }
-        Ok(Self { text, selectors })
-    }
-}
-
-impl From<XmlPath> for String {
-    fn from(path: XmlPath) -> Self {
-        path.text
+        Ok(Self { selectors })
     }
 }
 
 /// An XML edit. Its paths, selectors, names and values are strings, in which
 /// `{name}` is a bound value; they are parsed when the edit is applied.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum XmlEdit {
     /// Replace the text of every match.
@@ -208,7 +170,7 @@ pub enum XmlEdit {
         path: String,
         name: String,
         value: String,
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default)]
         create: bool,
     },
     /// Remove every match.
@@ -219,7 +181,7 @@ pub enum XmlEdit {
         parent: String,
         key: String,
         element: String,
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default)]
         create: bool,
     },
 }
@@ -317,10 +279,6 @@ impl XmlEdit {
             },
         })
     }
-}
-
-fn is_false(value: &bool) -> bool {
-    !value
 }
 
 /// Text as an XML attribute value.
