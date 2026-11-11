@@ -130,6 +130,9 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
     if output != Output::Partitions && profile.device.super_layout.is_none() {
         return Err(Error::MissingLayout);
     }
+    if output == Output::Zip {
+        stock.check_firmware_images()?;
+    }
 
     let (mut partitions, ignored) = rom_partitions(&profile, &rom)?;
     partitions.extend(device_partitions(&profile, &mut stock)?);
