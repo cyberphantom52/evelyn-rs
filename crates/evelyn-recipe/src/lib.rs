@@ -3,10 +3,10 @@
 //!
 //! Where checks belong: loading a profile or recipe checks everything knowable
 //! without firmware (references between steps, which partitions a port can
-//! have, well-formed operation parameters); planning adds asset presence and hashes
-//! and the partitions the firmware supplies. Applying a recipe checks only what
-//! depends on firmware content: conditions, assertions and the entries an
-//! operation names.
+//! have, well-formed operation parameters); a build adds the partitions the
+//! firmware supplies. Applying a recipe checks only what depends on firmware
+//! content and assets: conditions, assertions, the entries an operation names and
+//! the assets it reads.
 
 mod desugar;
 mod expr;
