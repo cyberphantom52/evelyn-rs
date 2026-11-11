@@ -70,13 +70,6 @@ impl Context<'_> {
     }
 }
 
-/// A `SetMetadata` that set what was already there.
-#[derive(Clone, Debug, Serialize)]
-pub struct Unchanged {
-    pub step: Name,
-    pub pattern: String,
-}
-
 /// A step, or part of one, that did not apply, and why.
 #[derive(Clone, Debug, Serialize)]
 pub struct Skipped {
@@ -90,18 +83,8 @@ pub struct Composition {
     /// Which firmware each target partition was built from.
     origins: BTreeMap<Name, Firmware>,
     skipped: Vec<Skipped>,
-    /// Every `SetMetadata` statement, and whether it changed anything.
-    set: Vec<(Unchanged, bool)>,
     /// The package a `Package` has open.
     package: Option<Opened>,
-}
-
-/// What a composition reports besides the trees.
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct Report {
-    pub skipped: Vec<Skipped>,
-    /// `SetMetadata` patterns that changed nothing: what they set is already there.
-    pub unchanged: Vec<Unchanged>,
 }
 
 impl Composition {
@@ -110,7 +93,6 @@ impl Composition {
             targets,
             origins,
             skipped: Vec::new(),
-            set: Vec::new(),
             package: None,
         }
     }
@@ -282,7 +264,6 @@ impl Composition {
             }
             Stmt::SetMetadata {
                 selection,
-                pattern,
                 metadata,
             } => {
                 let selected = self.eval(selection, context, step, bound)?;
@@ -315,24 +296,9 @@ impl Composition {
                         ..overrides.clone()
                     },
                 };
-                let statement = self.set.len();
-                self.set.push((
-                    Unchanged {
-                        step: step.clone(),
-                        pattern: pattern.clone(),
-                    },
-                    false,
-                ));
                 for entry in selected {
-                    let changed = self.target(&entry.partition)?.set_metadata(
-                        &entry.path,
-                        overrides,
-                        statement,
-                        step,
-                    )?;
-                    if changed == Some(true) {
-                        self.set[statement].1 = true;
-                    }
+                    self.target(&entry.partition)?
+                        .set_metadata(&entry.path, overrides, step)?;
                 }
             }
             Stmt::Edit {
@@ -626,12 +592,12 @@ impl Composition {
     /// Give the entries waiting for them Android's defaults, from the finished
     /// build's own policy as the device labels with it, then what was set over
     /// them; write every target's manifest and return the finished trees, with the
-    /// steps that were skipped and the `SetMetadata` that changed nothing.
+    /// steps that were skipped.
     pub fn finish(
         mut self,
         mounts: &Mounts,
         images: &Images,
-    ) -> Result<(BTreeMap<Name, PartitionTree>, Report), Error> {
+    ) -> Result<(BTreeMap<Name, PartitionTree>, Vec<Skipped>), Error> {
         if self
             .targets
             .values()
@@ -639,29 +605,15 @@ impl Composition {
         {
             let defaults = Defaults::new(&self.targets, mounts, images)?;
             for (name, target) in &mut self.targets {
-                for statement in target.give_defaults(name, mounts, &defaults)? {
-                    self.set[statement].1 = true;
-                }
+                target.give_defaults(name, mounts, &defaults)?;
             }
         }
-        let unchanged = self
-            .set
-            .into_iter()
-            .filter(|(_, changed)| !changed)
-            .map(|(statement, _)| statement)
-            .collect();
         let trees = self
             .targets
             .into_iter()
             .map(|(name, target)| Ok((name, target.finish()?)))
             .collect::<Result<_, Error>>()?;
-        Ok((
-            trees,
-            Report {
-                skipped: self.skipped,
-                unchanged,
-            },
-        ))
+        Ok((trees, self.skipped))
     }
 }
 

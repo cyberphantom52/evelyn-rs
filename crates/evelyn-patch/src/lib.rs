@@ -16,5 +16,5 @@ mod target;
 mod text;
 mod xml;
 
-pub use compose::{Composition, Context, Report, Skipped, Sources, Unchanged};
+pub use compose::{Composition, Context, Skipped, Sources};
 pub use target::{Error, Images, Target};

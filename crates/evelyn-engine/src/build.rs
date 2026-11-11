@@ -38,8 +38,6 @@ pub struct Built {
     pub outputs: Vec<PathBuf>,
     /// Steps whose bindings or condition did not apply here.
     pub skipped: Vec<patch::Skipped>,
-    /// `SetMetadata` patterns that set what was already there.
-    pub unchanged: Vec<patch::Unchanged>,
     /// ROM partitions the port does not take.
     pub ignored: Vec<Name>,
 }
@@ -54,19 +52,15 @@ pub fn build(request: &BuildRequest<'_>) -> Result<Built, Error> {
         sources.insert(source.source.clone(), tree);
     }
     let mounts = mounts(plan, &sources)?;
-    let (targets, report) = compose(request, &sources, &images, &mounts)?;
-    for skip in &report.skipped {
+    let (targets, skipped) = compose(request, &sources, &images, &mounts)?;
+    for skip in &skipped {
         tracing::warn!(recipe = %skip.recipe, step = %skip.step, reason = %skip.reason, "skipped step");
-    }
-    for unchanged in &report.unchanged {
-        tracing::warn!(step = %unchanged.step, pattern = %unchanged.pattern, "SetMetadata sets what is already there");
     }
     crate::fstab::check(&targets, &images)?;
     if request.dry_run {
         return Ok(Built {
             outputs: Vec::new(),
-            skipped: report.skipped,
-            unchanged: report.unchanged,
+            skipped,
             ignored: plan.ignored.clone(),
         });
     }
@@ -119,8 +113,7 @@ pub fn build(request: &BuildRequest<'_>) -> Result<Built, Error> {
     let outputs = crate::output::publish(request, built)?;
     Ok(Built {
         outputs,
-        skipped: report.skipped,
-        unchanged: report.unchanged,
+        skipped,
         ignored: plan.ignored.clone(),
     })
 }
@@ -208,7 +201,7 @@ fn compose(
     sources: &patch::Sources,
     images: &patch::Images,
     mounts: &Mounts,
-) -> Result<(Targets, patch::Report), Error> {
+) -> Result<(Targets, Vec<patch::Skipped>), Error> {
     let plan = request.plan;
     let root = request.work_dir.join("targets");
     reset(&root)?;
@@ -247,7 +240,7 @@ fn compose(
         };
         composition.apply(&planned.tree, &context)?;
     }
-    let (trees, report) = composition.finish(mounts, images)?;
+    let (trees, skipped) = composition.finish(mounts, images)?;
     let targets = trees
         .into_iter()
         .map(|(name, tree)| {
@@ -255,5 +248,5 @@ fn compose(
             (name, (path, tree))
         })
         .collect();
-    Ok((targets, report))
+    Ok((targets, skipped))
 }
