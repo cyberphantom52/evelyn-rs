@@ -104,8 +104,6 @@ impl From<OutputArg> for Output {
 #[derive(Debug, Error)]
 enum Error {
     #[error(transparent)]
-    Android(#[from] android::Error),
-    #[error(transparent)]
     Engine(#[from] evelyn::engine::Error),
     #[error(transparent)]
     Profile(#[from] evelyn::engine::profile::Error),
@@ -174,11 +172,8 @@ fn print(value: &impl Serialize) -> Result<(), Error> {
 fn run(cli: Cli) -> Result<(), Error> {
     match cli.command {
         Command::Init { dir, device, rom } => {
-            let repository = evelyn::engine::init(
-                &dir.unwrap_or_else(|| PathBuf::from(".")),
-                &device.try_into()?,
-                &rom.try_into()?,
-            )?;
+            let repository =
+                evelyn::engine::init(&dir.unwrap_or_else(|| PathBuf::from(".")), &device, &rom)?;
             let checked = check(&evelyn::toolchain::Tools::user()?)?;
             print(&serde_json::json!({ "repository": repository, "checked": checked }))
         }

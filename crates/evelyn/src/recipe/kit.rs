@@ -3,7 +3,6 @@
 //! called as a built-in one is, by a name no other operation has.
 
 use crate::recipe::{BUILT_IN, Error, Expr, Operation, ron_options};
-use android::path::Name;
 use serde::{
     Deserialize, Deserializer,
     de::{self, DeserializeSeed, EnumAccess, MapAccess, VariantAccess, Visitor},
@@ -19,7 +18,7 @@ const KITS: [(&str, &str); 1] = [(
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Kit {
-    operations: BTreeMap<Name, Definition>,
+    operations: BTreeMap<String, Definition>,
 }
 
 /// What a kit's operation does, as a step does it: with `{name}` bound to what
@@ -29,9 +28,9 @@ struct Kit {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Definition {
-    pub parameters: Vec<Name>,
+    pub parameters: Vec<String>,
     #[serde(rename = "let", default)]
-    pub bindings: BTreeMap<Name, Expr>,
+    pub bindings: BTreeMap<String, Expr>,
     #[serde(default)]
     pub when: Option<Expr>,
     /// Built-in operations: a kit's operation does not call another's.
@@ -39,10 +38,10 @@ pub struct Definition {
 }
 
 /// The operations of every kit, once they are parsed.
-pub(crate) static OPERATIONS: OnceLock<BTreeMap<Name, Definition>> = OnceLock::new();
+pub(crate) static OPERATIONS: OnceLock<BTreeMap<String, Definition>> = OnceLock::new();
 
 /// The operations of every kit, by name.
-pub fn operations() -> Result<&'static BTreeMap<Name, Definition>, Error> {
+pub fn operations() -> Result<&'static BTreeMap<String, Definition>, Error> {
     if let Some(operations) = OPERATIONS.get() {
         return Ok(operations);
     }
@@ -53,7 +52,7 @@ pub fn operations() -> Result<&'static BTreeMap<Name, Definition>, Error> {
             source: Box::new(source),
         })?;
         for (name, definition) in kit.operations {
-            if BUILT_IN.contains(&name.as_ref()) || operations.contains_key(&name) {
+            if BUILT_IN.contains(&name.as_str()) || operations.contains_key(&name) {
                 return Err(Error::Invalid(format!(
                     "{path} defines {name}, which is already an operation"
                 )));
@@ -86,16 +85,15 @@ impl<'de> Visitor<'de> for Calls {
             return Operation::deserialize(Replay { name, variant });
         }
         let unknown = || de::Error::unknown_variant(&name, &BUILT_IN);
-        let call = Name::try_from(name.clone()).map_err(|_| unknown())?;
         let definition = OPERATIONS
             .get()
-            .and_then(|operations| operations.get(&call))
+            .and_then(|operations| operations.get(&name))
             .ok_or_else(unknown)?;
         let args = match &definition.parameters[..] {
             [] => variant.unit_variant().map(|()| BTreeMap::new())?,
             [parameter] => BTreeMap::from([(parameter.clone(), variant.newtype_variant()?)]),
             parameters => {
-                let args: BTreeMap<Name, String> = variant.struct_variant(&[], Args)?;
+                let args: BTreeMap<String, String> = variant.struct_variant(&[], Args)?;
                 if let Some(missing) = parameters.iter().find(|p| !args.contains_key(*p)) {
                     return Err(de::Error::custom(format!("{name} needs {missing}")));
                 }
@@ -107,7 +105,7 @@ impl<'de> Visitor<'de> for Calls {
                 args
             }
         };
-        Ok(Operation::Call { name: call, args })
+        Ok(Operation::Call { name, args })
     }
 }
 
@@ -165,7 +163,7 @@ impl<'de, A: VariantAccess<'de>> EnumAccess<'de> for Replay<A> {
 struct Args;
 
 impl<'de> Visitor<'de> for Args {
-    type Value = BTreeMap<Name, String>;
+    type Value = BTreeMap<String, String>;
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("parameters by name")
@@ -174,7 +172,7 @@ impl<'de> Visitor<'de> for Args {
     fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
         let mut args = BTreeMap::new();
         while let Some((name, value)) = map.next_entry::<String, String>()? {
-            args.insert(Name::try_from(name).map_err(de::Error::custom)?, value);
+            args.insert(name, value);
         }
         Ok(args)
     }

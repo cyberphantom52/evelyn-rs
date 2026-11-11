@@ -15,7 +15,6 @@ pub use xml::{
 
 use crate::Firmware;
 use android::hash::Sha256Digest;
-use android::path::Name;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -54,21 +53,21 @@ fn read(path: &Path) -> Result<String, Error> {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recipe {
-    pub name: Name,
+    pub name: String,
     pub steps: Vec<Step>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Step {
-    pub id: Name,
+    pub id: String,
     #[serde(default)]
-    pub after: Vec<Name>,
+    pub after: Vec<String>,
     /// Names bound to string expressions, evaluated against the tree composed so far,
     /// for the step's condition and operations to use as `{name}` in any string. One
     /// that has no value skips the step.
     #[serde(rename = "let", default)]
-    pub bindings: BTreeMap<Name, Expr>,
+    pub bindings: BTreeMap<String, Expr>,
     /// A boolean expression; the step applies only when it holds.
     #[serde(default)]
     pub when: Option<Expr>,
@@ -202,7 +201,7 @@ pub enum Operation {
     /// path. One over nothing is reported.
     ForEach {
         over: Expr,
-        name: Name,
+        name: String,
         operations: Vec<Operation>,
     },
     /// Add `content` at the end of a file, on a line of its own.
@@ -221,8 +220,8 @@ pub enum Operation {
     /// An operation of a kit, by name, with the strings its parameters are given.
     #[serde(skip)]
     Call {
-        name: Name,
-        args: BTreeMap<Name, String>,
+        name: String,
+        args: BTreeMap<String, String>,
     },
 }
 
@@ -312,7 +311,7 @@ impl Operation {
             Self::ForEach { .. } => "ForEach",
             Self::Append { .. } => "Append",
             Self::AddPolicy { .. } => "AddPolicy",
-            Self::Call { name, .. } => name.as_ref(),
+            Self::Call { name, .. } => name.as_str(),
         }
     }
 

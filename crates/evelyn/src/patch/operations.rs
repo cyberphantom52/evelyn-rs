@@ -12,7 +12,7 @@ use crate::recipe::{
     value::{Located, Place, Value, ValueError},
 };
 use android::hash::Sha256Digest;
-use android::path::{DevicePath, Name, RelativePath};
+use android::path::{DevicePath, RelativePath};
 use std::collections::BTreeMap;
 
 impl Composition {
@@ -171,7 +171,7 @@ impl Composition {
     fn for_each(
         &mut self,
         over: &Expr,
-        name: &Name,
+        name: &str,
         operations: &[Operation],
         bound: &Bound,
         context: &Context<'_>,
@@ -195,7 +195,7 @@ impl Composition {
         }
         for value in each {
             let mut bound = bound.clone();
-            bound.insert(name.clone(), value);
+            bound.insert(name.to_owned(), value);
             for operation in operations {
                 self.run(operation, &bound, context)?;
             }
@@ -207,8 +207,8 @@ impl Composition {
     /// What it reports skipping, and its errors, name the call.
     fn call(
         &mut self,
-        name: &Name,
-        args: &BTreeMap<Name, String>,
+        name: &str,
+        args: &BTreeMap<String, String>,
         bound: &Bound,
         context: &Context<'_>,
     ) -> Result<(), Error> {
@@ -415,7 +415,7 @@ impl Composition {
         let candidates: Vec<(&str, Option<&str>)> = match target {
             Some(Location::Partition(partition)) => android::property::PARTITION_PROPERTY_FILES
                 .iter()
-                .map(|path| (*path, Some(partition.as_ref())))
+                .map(|path| (*path, Some(partition.as_str())))
                 .collect(),
             Some(file) => return self.select(file, bound, context),
             // Last loaded first: within a group the canonical file, else the legacy
@@ -616,7 +616,7 @@ fn xml_ops(edits: &[XmlEdit], bound: &Bound) -> Result<Vec<crate::recipe::XmlOp>
 
 /// A kit's operation as it is called: `DisableFeature("x")`, or with several
 /// parameters, by name.
-fn shown(name: &Name, args: &BTreeMap<Name, String>) -> String {
+fn shown(name: &str, args: &BTreeMap<String, String>) -> String {
     match args.values().collect::<Vec<_>>()[..] {
         [value] => format!("{name}({value:?})"),
         _ => {

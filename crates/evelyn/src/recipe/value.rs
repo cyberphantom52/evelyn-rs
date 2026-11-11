@@ -3,7 +3,7 @@
 //! a silent result.
 
 use crate::recipe::Firmware;
-use android::path::{Name, RelativePath};
+use android::path::RelativePath;
 use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,7 +21,7 @@ pub enum Value {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Located {
     pub place: Place,
-    pub partition: Name,
+    pub partition: String,
     pub path: RelativePath,
 }
 

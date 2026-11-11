@@ -5,7 +5,7 @@
 use crate::patch::{Target, compose::Context};
 use crate::recipe::{Expr, Location, Operation};
 use android::partition::PartitionPath;
-use android::path::{Name, RelativePath};
+use android::path::RelativePath;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -22,7 +22,7 @@ pub enum Error {
 pub(crate) struct Opened {
     pub decoded: PathBuf,
     /// The partition the package is in.
-    pub partition: Name,
+    pub partition: String,
     rebuilt: PathBuf,
 }
 
@@ -34,10 +34,7 @@ pub(crate) fn open(
     context: &Context<'_>,
 ) -> Result<Opened, crate::patch::Error> {
     let source = target.content_path(&at.path, context.images)?;
-    let workspace = context
-        .packages
-        .join(at.partition.as_ref())
-        .join(at.path.as_ref());
+    let workspace = context.packages.join(&at.partition).join(at.path.as_ref());
     fs::create_dir_all(&workspace)?;
     let decoded = workspace.join("decoded");
     crate::patch::apktool::decode(context.tools, &source, &decoded, resources(edits))?;

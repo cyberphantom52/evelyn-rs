@@ -15,7 +15,6 @@ pub use profile::{Profile, init};
 
 use crate::SourceRef;
 use android::Filesystem;
-use android::path::Name;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -49,12 +48,12 @@ pub enum Error {
     #[error("ZIP output flashes the stock firmware's images from {0}, which does not exist")]
     MissingFirmware(PathBuf),
     #[error("the stock firmware has no {0}.img, which evelyn.toml sets")]
-    MissingStockPartition(Name),
+    MissingStockPartition(String),
     #[error(
         "stock {partition} is not the build evelyn.toml pins: expected {expected}, found {found}"
     )]
     StockFingerprint {
-        partition: Name,
+        partition: String,
         expected: String,
         found: String,
     },

@@ -14,7 +14,7 @@ use crate::recipe::{
 use crate::{Firmware, SourceRef};
 use android::EntryKind;
 use android::partition::PartitionPath;
-use android::path::{DevicePath, Name, RelativePath};
+use android::path::{DevicePath, RelativePath};
 
 impl Composition {
     /// What a location selects; a partition is the property files init loads
@@ -62,7 +62,7 @@ impl Composition {
         Ok(match context.has_asset(&path) {
             true => vec![Located {
                 place: Place::Asset,
-                partition: Name::try_from("assets".to_owned())?,
+                partition: "assets".to_owned(),
                 path,
             }],
             false => Vec::new(),
@@ -142,13 +142,11 @@ impl Composition {
                 &DevicePath::try_from(pattern.to_owned())?,
             )
         } else {
-            let selected: Vec<&Name> = self
+            let selected: Vec<&String> = self
                 .targets
                 .keys()
                 .filter(|name| origin.is_none_or(|origin| self.origins.get(*name) == Some(&origin)))
-                .filter(|name| {
-                    partition.is_none_or(|glob| android::path::glob(glob, name.as_ref()))
-                })
+                .filter(|name| partition.is_none_or(|glob| android::path::glob(glob, name)))
                 .collect();
             if selected.is_empty() {
                 return Err(Error::EmptyScope);
@@ -409,10 +407,10 @@ impl Composition {
 }
 
 /// A build source, from a firmware and a partition.
-pub(crate) fn source_of(from: Firmware, partition: &Name) -> SourceRef {
+pub(crate) fn source_of(from: Firmware, partition: &str) -> SourceRef {
     SourceRef {
         source: from,
-        partition: partition.clone(),
+        partition: partition.to_owned(),
     }
 }
 

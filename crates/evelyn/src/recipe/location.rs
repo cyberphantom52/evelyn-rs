@@ -1,7 +1,6 @@
 //! Where a recipe names a file, a directory or a partition. A path can name a
 //! bound value as `{name}`.
 
-use android::path::Name;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -19,7 +18,7 @@ pub enum Location {
     /// What a path, from the root of the package a `Package` has open, matches.
     Package(String),
     /// A partition of the build.
-    Partition(Name),
+    Partition(String),
 }
 
 impl Location {
@@ -31,7 +30,7 @@ impl Location {
             | Self::Stock(path)
             | Self::Asset(path)
             | Self::Package(path) => path,
-            Self::Partition(name) => name.as_ref(),
+            Self::Partition(name) => name,
         }
     }
 }
