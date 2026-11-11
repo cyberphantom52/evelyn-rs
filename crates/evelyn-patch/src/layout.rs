@@ -2,8 +2,8 @@
 //! Every edit keeps hardlink groups intact: when a group's canonical entry is dropped,
 //! its lexicographically first surviving member is promoted to canonical.
 
-use android_firmware::{RelativePath, SourceRef};
-use android_fs::{Entry, EntryKind, PartitionTree, Provenance};
+use android_firmware::RelativePath;
+use android_fs::{Entry, EntryKind, PartitionTree};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
@@ -32,35 +32,7 @@ pub fn remove(tree: &mut PartitionTree, path: &RelativePath) -> Result<(), Error
     Ok(())
 }
 
-/// Copy `from` and its descendants out of `source`, mapped to `to`. Image provenance
-/// without a source name is attributed to `identity`.
-pub fn select(
-    source: &PartitionTree,
-    from: &RelativePath,
-    to: &RelativePath,
-    identity: &SourceRef,
-) -> Result<BTreeMap<RelativePath, Entry>, Error> {
-    let mut selected = subtree(source, from, to)?;
-    for entry in selected.values_mut() {
-        for provenance in &mut entry.provenance {
-            if let Provenance::Image {
-                source: name,
-                partition,
-                sha256,
-                ..
-            } = provenance
-                && name.is_none()
-                && partition == &source.partition
-                && sha256 == &source.source_sha256
-            {
-                *name = Some(identity.source);
-            }
-        }
-    }
-    Ok(selected)
-}
-
-/// Like [`select`], preserving existing provenance as is.
+/// Copy `from` and its descendants out of `source`, mapped to `to`.
 pub(crate) fn subtree(
     source: &PartitionTree,
     from: &RelativePath,
@@ -176,7 +148,6 @@ pub(crate) fn create_parents(
                     Entry {
                         kind: EntryKind::Directory,
                         metadata,
-                        provenance: Vec::new(),
                     },
                 );
             }

@@ -19,7 +19,7 @@ pub struct Tree {
 /// A statement over an empty selection does nothing; where that would be a
 /// mistake, the surface operation asserts the selection first.
 pub enum Stmt {
-    /// A named unit: what provenance and skip reports refer to.
+    /// A named unit: what skip reports refer to.
     Step { id: Name, body: Vec<Stmt> },
     /// Bind `name` to a value for the body's expressions. A string bound here must
     /// be a token, `[A-Za-z0-9._-]`: it comes from firmware and goes into paths.

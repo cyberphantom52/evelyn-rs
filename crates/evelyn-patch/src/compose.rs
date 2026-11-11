@@ -298,7 +298,7 @@ impl Composition {
                 };
                 for entry in selected {
                     self.target(&entry.partition)?
-                        .set_metadata(&entry.path, overrides, step)?;
+                        .set_metadata(&entry.path, overrides)?;
                 }
             }
             Stmt::Edit {
@@ -343,7 +343,7 @@ impl Composition {
                     match (entry.place, &self.package) {
                         (Place::Build, _) => self
                             .target(&entry.partition)?
-                            .transform(&entry.path, transform, context, step)
+                            .transform(&entry.path, transform, context)
                             .map_err(|source| Error::At {
                                 path: context
                                     .mounts
@@ -392,13 +392,7 @@ impl Composition {
                     .try_for_each(|stmt| self.exec(stmt, recipe, step, context, bound));
                 let opened = self.package.take().expect("opened above");
                 ran?;
-                crate::package::close(
-                    self.target(&at.partition)?,
-                    &at.path,
-                    opened,
-                    context,
-                    step,
-                )?;
+                crate::package::close(self.target(&at.partition)?, &at.path, opened, context)?;
             }
         }
         Ok(())
@@ -429,7 +423,7 @@ impl Composition {
             },
         };
         let target = self.target(&to.partition)?;
-        let written = target.import(tree, &source, &entry.path, &to.path, placing, step)?;
+        let written = target.import(tree, &entry.path, &to.path, placing)?;
         target.copied(written, placing.metadata, Vec::new());
         Ok(())
     }
@@ -475,19 +469,13 @@ impl Composition {
         let files = if source.is_dir() {
             files(&source)?
                 .into_iter()
-                .map(|(relative, file)| {
-                    Ok((
-                        below(&relative)?,
-                        file,
-                        RelativePath::try_from(format!("{asset}/{relative}"))?,
-                    ))
-                })
+                .map(|(relative, file)| Ok((below(&relative)?, file)))
                 .collect::<Result<Vec<_>, Error>>()?
         } else {
             let to = base.ok_or(Error::Unsupported(
                 "a file cannot replace a partition's root",
             ))?;
-            vec![(to, source, asset.clone())]
+            vec![(to, source)]
         };
         if placing.metadata == Metadata::Source {
             return Err(Error::Unsupported(
@@ -496,8 +484,8 @@ impl Composition {
         }
         let target = self.target(&partition)?;
         let mut written = BTreeSet::new();
-        for (to, file, asset) in files {
-            written.extend(target.install(&file, &asset, &to, placing, step)?);
+        for (to, file) in files {
+            written.extend(target.install(&file, &to, placing)?);
         }
         target.copied(written, placing.metadata, Vec::new());
         Ok(())
@@ -529,14 +517,14 @@ impl Composition {
             .collect::<Result<_, Error>>()?;
         let written = if entry.partition == to.partition {
             self.target(&to.partition)?
-                .copy_within(&entry.path, &to.path, placing, step)?
+                .copy_within(&entry.path, &to.path, placing)?
         } else {
             let source = self
                 .targets
                 .remove(&entry.partition)
                 .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?;
             let copied = self.target(&to.partition).and_then(|destination| {
-                source.copy_into(destination, &entry.path, &to.path, placing, step)
+                source.copy_into(destination, &entry.path, &to.path, placing)
             });
             self.targets.insert(entry.partition.clone(), source);
             copied?

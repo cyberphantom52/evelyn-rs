@@ -1,6 +1,6 @@
 use crate::{Error, Target, compose::Context, layout};
-use android_firmware::{AndroidMetadata, Name, RelativePath, Sha256Digest, SourceRef};
-use android_fs::{Entry, EntryKind, PartitionTree, Provenance};
+use android_firmware::{AndroidMetadata, Name, RelativePath};
+use android_fs::{Entry, EntryKind, PartitionTree};
 use recipe::{
     Returns,
     tree::{Expr, Metadata, MethodEdit, Overrides, Transform},
@@ -26,11 +26,9 @@ impl Target {
     pub(crate) fn import(
         &mut self,
         source: &PartitionTree,
-        from: &SourceRef,
         path: &RelativePath,
         to_path: &RelativePath,
         placing: Placing,
-        step: &Name,
     ) -> Result<BTreeSet<RelativePath>, Error> {
         // A wildcard import keeps every match at its own path.
         let pairs = if layout::is_glob(path) {
@@ -47,7 +45,7 @@ impl Target {
         };
         let mut written = BTreeSet::new();
         for (from_path, to_path) in pairs {
-            let selected = layout::select(source, &from_path, &to_path, from)?;
+            let selected = layout::subtree(source, &from_path, &to_path)?;
             let made = self.destination(&to_path, placing, Some(source))?;
             if placing.metadata == Metadata::Source
                 && let Some(made) = made.iter().find(|path| !source.entries.contains_key(*path))
@@ -59,7 +57,6 @@ impl Target {
             let adopted = self.adopt(None, selected)?;
             self.tree.entries.extend(adopted);
         }
-        self.wrote(&written, step);
         Ok(written)
     }
 
@@ -69,10 +66,8 @@ impl Target {
     pub(crate) fn install(
         &mut self,
         file: &Path,
-        asset: &RelativePath,
         to: &RelativePath,
         placing: Placing,
-        step: &Name,
     ) -> Result<BTreeSet<RelativePath>, Error> {
         let previous = self.tree.entries.get(to);
         if previous.is_some_and(|entry| matches!(entry.kind, EntryKind::Directory)) {
@@ -80,26 +75,14 @@ impl Target {
                 "remove a directory explicitly before installing a file",
             ));
         }
-        // What it replaces is its history; its metadata is the copy's to give.
-        let mut lineage = previous.map_or_else(Vec::new, |entry| entry.provenance.clone());
+        // Its metadata is the copy's to give.
         let metadata = self.tree.root.clone();
         let mut written = self.destination(to, placing, None)?;
-        let bytes = std::fs::read(file)?;
-        lineage.push(Provenance::Asset {
-            path: asset.clone(),
-            sha256: Sha256Digest::bytes(&bytes),
-        });
-        let kind = self.write_blob(bytes.as_slice())?;
-        self.tree.entries.insert(
-            to.clone(),
-            Entry {
-                kind,
-                metadata,
-                provenance: lineage,
-            },
-        );
+        let kind = self.write_blob(std::fs::File::open(file)?)?;
+        self.tree
+            .entries
+            .insert(to.clone(), Entry { kind, metadata });
         written.insert(to.clone());
-        self.wrote(&written, step);
         Ok(written)
     }
 
@@ -109,12 +92,10 @@ impl Target {
         &mut self,
         path: &RelativePath,
         overrides: &Overrides,
-        step: &Name,
     ) -> Result<(), Error> {
         if let Some(pending) = self.derived.get_mut(path) {
             pending.push(Pending {
                 overrides: overrides.clone(),
-                step: step.clone(),
             });
             return Ok(());
         }
@@ -123,9 +104,7 @@ impl Target {
             .entries
             .get_mut(path)
             .ok_or_else(|| Error::Missing(path.clone()))?;
-        if set(&mut entry.metadata, overrides) {
-            entry.provenance.push(Provenance::Step { id: step.clone() });
-        }
+        set(&mut entry.metadata, overrides);
         Ok(())
     }
 
@@ -158,9 +137,7 @@ impl Target {
                 .ok_or_else(|| Error::UnknownPartition(partition.clone()))?;
             entry.metadata = defaults.metadata(&device, &entry.kind)?;
             for pending in pending {
-                if set(&mut entry.metadata, &pending.overrides) {
-                    entry.provenance.push(Provenance::Step { id: pending.step });
-                }
+                set(&mut entry.metadata, &pending.overrides);
             }
         }
         Ok(())
@@ -172,7 +149,6 @@ impl Target {
         path: &RelativePath,
         transform: &Transform,
         context: &Context<'_>,
-        step: &Name,
     ) -> Result<(), Error> {
         let canonical = self.file(path)?.path.clone();
         let bytes = self.read(path, context.images)?;
@@ -181,7 +157,7 @@ impl Target {
             return Ok(());
         }
         let kind = self.write_blob(changed.as_slice())?;
-        self.accept_content(&canonical, kind, step);
+        self.set_content(&canonical, kind);
         Ok(())
     }
 
@@ -209,15 +185,6 @@ impl Target {
             }
         }
         Ok(layout::create_parents(&mut self.tree, path, like)?)
-    }
-
-    /// Record the step on every entry written.
-    pub(crate) fn wrote(&mut self, written: &BTreeSet<RelativePath>, step: &Name) {
-        for path in written {
-            if let Some(entry) = self.tree.entries.get_mut(path) {
-                entry.provenance.push(Provenance::Step { id: step.clone() });
-            }
-        }
     }
 
     /// Give what a copy wrote the metadata it states: what the entries came with,
@@ -350,12 +317,10 @@ pub(crate) fn transformed(
 #[derive(Clone, Debug)]
 pub(crate) struct Pending {
     pub overrides: Overrides,
-    pub step: Name,
 }
 
-/// Set what `overrides` sets on `metadata`; whether that changed it.
-fn set(metadata: &mut AndroidMetadata, overrides: &Overrides) -> bool {
-    let before = metadata.clone();
+/// Set what `overrides` sets on `metadata`.
+fn set(metadata: &mut AndroidMetadata, overrides: &Overrides) {
     metadata.uid = overrides.uid.unwrap_or(metadata.uid);
     metadata.gid = overrides.gid.unwrap_or(metadata.gid);
     metadata.mode = overrides.mode.unwrap_or(metadata.mode);
@@ -363,7 +328,6 @@ fn set(metadata: &mut AndroidMetadata, overrides: &Overrides) -> bool {
     if let Some(label) = overrides.selinux.as_ref().and_then(Expr::literal_str) {
         metadata.set_selinux(label);
     }
-    *metadata != before
 }
 
 /// A transform's string, evaluated before the edit, where expressions are.
