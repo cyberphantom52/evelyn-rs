@@ -82,20 +82,20 @@ impl Sha256Digest {
 }
 
 /// Writer that hashes everything it passes through to `inner`.
-pub struct Sha256Writer<W> {
+struct Sha256Writer<W> {
     inner: W,
     digest: Sha256,
 }
 
 impl<W: Write> Sha256Writer<W> {
-    pub fn new(inner: W) -> Self {
+    fn new(inner: W) -> Self {
         Self {
             inner,
             digest: Sha256::new(),
         }
     }
 
-    pub fn finish(mut self) -> io::Result<(W, Sha256Digest)> {
+    fn finish(mut self) -> io::Result<(W, Sha256Digest)> {
         self.inner.flush()?;
         Ok((self.inner, Sha256Digest::finish(self.digest)))
     }

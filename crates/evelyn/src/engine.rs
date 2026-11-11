@@ -11,7 +11,8 @@ pub mod profile;
 mod properties;
 pub use build::{Build, Built, Composed, build};
 pub use firmware::{Extracted, Given, extract_in_place};
-pub use profile::{Profile, init};
+use profile::Profile;
+pub use profile::init;
 
 use crate::SourceRef;
 use android::Filesystem;

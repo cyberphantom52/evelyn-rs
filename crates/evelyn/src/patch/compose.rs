@@ -365,7 +365,7 @@ fn files(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
 
 /// Whether `text` is a non-empty run of `[A-Za-z0-9._-]`: safe in a path component
 /// or a recipe, for a value read from firmware.
-pub fn is_token(text: &str) -> bool {
+fn is_token(text: &str) -> bool {
     !text.is_empty()
         && text
             .bytes()

@@ -7,11 +7,9 @@ pub mod kit;
 mod location;
 pub mod value;
 mod xml;
-pub use expr::{Expr, Pattern, substitute, written_out};
+pub use expr::{Expr, substitute, written_out};
 pub use location::Location;
-pub use xml::{
-    XmlEdit, XmlMatch, XmlName, XmlOp, XmlPath, XmlPredicate, XmlStep, escape_attribute,
-};
+pub use xml::{XmlEdit, XmlMatch, XmlName, XmlOp, XmlPredicate, XmlStep, escape_attribute};
 
 use crate::Firmware;
 use android::hash::Sha256Digest;

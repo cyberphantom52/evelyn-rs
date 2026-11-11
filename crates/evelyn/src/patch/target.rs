@@ -214,7 +214,7 @@ impl Target {
     }
 
     /// Give `canonical`, and so all of its hardlinks, new content.
-    pub(crate) fn set_content(&mut self, canonical: &RelativePath, kind: EntryKind) {
+    fn set_content(&mut self, canonical: &RelativePath, kind: EntryKind) {
         if let Some(entry) = self.tree.entries.get_mut(canonical) {
             entry.kind = kind;
         }
@@ -230,7 +230,7 @@ impl Target {
     }
 
     /// Write a new blob from `reader`.
-    pub(crate) fn write_blob(&mut self, mut reader: impl Read) -> Result<EntryKind, Error> {
+    fn write_blob(&mut self, mut reader: impl Read) -> Result<EntryKind, Error> {
         let blob = self.new_blob();
         let size = io::copy(
             &mut reader,
@@ -244,7 +244,7 @@ impl Target {
 
     /// Bring entries into this target. Image contents are shared as they are; blobs of
     /// the tree at `source_root` are linked (or copied) into this target's store.
-    pub(crate) fn adopt(
+    fn adopt(
         &mut self,
         source_root: &Path,
         mut entries: BTreeMap<RelativePath, Entry<EntryMetadata>>,
@@ -381,7 +381,7 @@ impl Target {
 
     /// Have `path` get Android's defaults; what was set on it before no longer
     /// applies.
-    pub(crate) fn reset(&mut self, path: &RelativePath) {
+    fn reset(&mut self, path: &RelativePath) {
         if let Some(entry) = self.tree.entries.get_mut(path) {
             entry.metadata = EntryMetadata::Default(Vec::new());
         }
@@ -426,7 +426,7 @@ impl Target {
     /// Clear `path` for a new entry: an entry there is removed only to `overwrite`
     /// it, and missing parent directories are made, with the metadata `like`
     /// gives them, only to `create_parent`; the directories made.
-    pub(crate) fn destination(
+    fn destination(
         &mut self,
         path: &RelativePath,
         placing: Placing,
@@ -451,7 +451,7 @@ impl Target {
 
     /// Give what a copy wrote the metadata it states: what the entries came with,
     /// or Android's defaults.
-    pub(crate) fn give(&mut self, written: BTreeSet<RelativePath>, metadata: Metadata) {
+    fn give(&mut self, written: BTreeSet<RelativePath>, metadata: Metadata) {
         if metadata == Metadata::Default {
             for path in written {
                 self.reset(&path);

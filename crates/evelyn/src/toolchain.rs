@@ -74,7 +74,7 @@ fn key_error(error: impl std::fmt::Display) -> Error {
 }
 
 /// The key APKs are signed with: a PKCS#8 private key and its certificate.
-pub struct Keys {
+pub(crate) struct Keys {
     pub key: PathBuf,
     pub certificate: PathBuf,
 }
@@ -99,7 +99,7 @@ pub struct Tools {
 }
 
 impl Tools {
-    pub fn new(root: impl Into<PathBuf>) -> Self {
+    fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
     }
 
@@ -112,7 +112,7 @@ impl Tools {
     }
 
     /// A pinned Java tool, run with the host `java`.
-    pub fn jar(&self, name: &str) -> Result<Command, Error> {
+    pub(crate) fn jar(&self, name: &str) -> Result<Command, Error> {
         let path = self.file(name)?;
         let mut command = Command::new("java");
         command.arg("-jar").arg(path);
@@ -120,12 +120,12 @@ impl Tools {
     }
 
     /// Whether `name` is a file Evelyn has pinned, fetched or not.
-    pub fn pinned(&self, name: &str) -> bool {
+    pub(crate) fn pinned(&self, name: &str) -> bool {
         pin(name).is_ok()
     }
 
     /// A pinned file, such as `apktool.jar`, downloaded if it is not yet.
-    pub fn file(&self, name: &str) -> Result<PathBuf, Error> {
+    pub(crate) fn file(&self, name: &str) -> Result<PathBuf, Error> {
         let pin = pin(name)?;
         let path = self.root.join(pin.path);
         if !path.exists() {
@@ -135,7 +135,7 @@ impl Tools {
     }
 
     /// The signing key, generated if there is none yet.
-    pub fn keys(&self) -> Result<Keys, Error> {
+    pub(crate) fn keys(&self) -> Result<Keys, Error> {
         let dir = self.root.join("keys");
         let keys = Keys {
             key: dir.join("evelyn.pk8"),
@@ -317,7 +317,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), Error> {
 }
 
 /// Run to completion, returning stdout. Failures carry the combined output.
-pub fn run(command: &mut Command) -> Result<Vec<u8>, Error> {
+pub(crate) fn run(command: &mut Command) -> Result<Vec<u8>, Error> {
     let tool = command_name(command);
     tracing::debug!(command = ?command, "running");
     let output = command.output().map_err(|source| Error::Spawn {

@@ -3,8 +3,8 @@
 //! Evelyn downloads.
 
 pub mod engine;
-pub mod patch;
-pub mod recipe;
+mod patch;
+mod recipe;
 pub mod toolchain;
 
 use serde::{Deserialize, Serialize};
