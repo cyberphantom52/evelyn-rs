@@ -63,6 +63,11 @@ pub(crate) fn close(
 /// path they name is in `/res/` or is `/AndroidManifest.xml`. A path naming a
 /// bound value, or computed, may be anything.
 fn resources(edits: &[Operation]) -> bool {
+    edits.iter().any(resource)
+}
+
+/// Whether an edit reaches resources or the manifest.
+fn resource(edit: &Operation) -> bool {
     let resource = |path: &str| {
         recipe::written_out(path)
             .is_none_or(|path| path.starts_with("/res/") || path == "/AndroidManifest.xml")
@@ -76,7 +81,7 @@ fn resources(edits: &[Operation]) -> bool {
         Expr::Text(path) => resource(path),
         _ => true,
     };
-    edits.iter().any(|edit| match edit {
+    match edit {
         Operation::Remove { pattern: path, .. }
         | Operation::ApplyDiff { target: path, .. }
         | Operation::WriteBytes { target: path, .. }
@@ -88,8 +93,11 @@ fn resources(edits: &[Operation]) -> bool {
         }
         Operation::Install { asset, to: dest } => resource(asset) || to(dest),
         Operation::Assert { condition, .. } => selects(condition),
+        Operation::ForEach {
+            over, operations, ..
+        } => selects(over) || resources(operations),
         _ => false,
-    })
+    }
 }
 
 pub(crate) fn io(path: &Path) -> impl FnOnce(std::io::Error) -> Error + '_ {

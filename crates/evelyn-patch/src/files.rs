@@ -292,6 +292,7 @@ impl Composition {
     ) -> Result<(), Error> {
         let files = self.named(target, bound, context)?;
         if files.is_empty() {
+            let target = recipe::substitute(target, bound)?;
             return Err(Error::Assertion(format!("{target} is not there")));
         }
         self.edit(&files, context, edit)

@@ -27,7 +27,7 @@ pub enum Expr {
     /// What any of the selections selects, in the order they select it.
     Union(Vec<Expr>),
     /// The strings of a list, or the entries of a selection, for which `keep`
-    /// holds with `{name}` bound to each.
+    /// holds with `{name}` bound to each: the string, or the entry's device path.
     Filter {
         over: Box<Expr>,
         name: Name,
@@ -39,6 +39,8 @@ pub enum Expr {
     Join(Box<Expr>),
     /// The string has a match of the regular expression in it.
     Matches(Box<Expr>, Pattern),
+    /// The string has this text in it, which can name a bound value.
+    Contains(Box<Expr>, String),
     /// The files a location selects: `Build("/…")`, `Rom("/…")` and so on.
     #[serde(untagged)]
     At(Location),
@@ -64,7 +66,8 @@ impl Expr {
             | Self::Not(inner)
             | Self::Lines(inner)
             | Self::Join(inner)
-            | Self::Matches(inner, _) => inner.collect(found),
+            | Self::Matches(inner, _)
+            | Self::Contains(inner, _) => inner.collect(found),
             Self::All(exprs) | Self::Union(exprs) => {
                 exprs.iter().for_each(|expr| expr.collect(found))
             }

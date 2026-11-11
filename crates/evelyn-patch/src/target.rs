@@ -54,8 +54,14 @@ pub enum Error {
     Assertion(String),
     #[error("{0} is not set")]
     Unset(String),
+    #[error("{call}: {source}")]
+    Call {
+        call: String,
+        #[source]
+        source: Box<Error>,
+    },
     #[error("{0} does not work inside a Package")]
-    OutsidePackage(&'static str),
+    OutsidePackage(String),
     #[error("no target partition {0}")]
     UnknownPartition(Name),
     #[error("a scope selects no partition of this build")]
