@@ -202,6 +202,17 @@ impl OpenFirmware {
         Ok(())
     }
 
+    /// Whether a flashable ZIP can flash the partitions outside `super`: a
+    /// package has them, and a directory of images needs its `firmware/`.
+    pub(crate) fn check_firmware_images(&self) -> Result<(), Error> {
+        match &self.firmware_dir {
+            Some(directory) if !directory.is_dir() => {
+                Err(Error::MissingFirmware(directory.clone()))
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// The images of the partitions outside `super`, which a flashable ZIP
     /// flashes: a directory's `firmware/`, or a package's, extracted.
     pub(crate) fn firmware_images(&self) -> Result<Vec<PathBuf>, Error> {
@@ -216,9 +227,6 @@ impl OpenFirmware {
                 .collect());
         }
         let directory = self.firmware_dir.clone().unwrap_or_default();
-        if !directory.is_dir() {
-            return Err(Error::MissingFirmware(directory));
-        }
         Ok(image_files(&directory)?.into_values().collect())
     }
 }
