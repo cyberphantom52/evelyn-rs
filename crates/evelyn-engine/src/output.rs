@@ -1,35 +1,44 @@
 //! Publish built images in the requested output format.
 
 use crate::build::Written;
-use crate::{BuildRequest, Error};
-use std::{fs, path::PathBuf};
+use crate::firmware::Firmware;
+use crate::{Error, Output, Profile};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
-pub(crate) fn publish(request: &BuildRequest<'_>, images: Written) -> Result<Vec<PathBuf>, Error> {
-    fs::create_dir_all(request.output_dir)?;
-    let profile = &request.plan.profile;
+/// Move what was built into `output_dir` as `output`. A flashable ZIP also
+/// flashes the stock firmware's partitions outside `super`.
+pub(crate) fn publish(
+    output_dir: &Path,
+    profile: &Profile,
+    output: Output,
+    stock: &Firmware,
+    images: Written,
+) -> Result<Vec<PathBuf>, Error> {
+    fs::create_dir_all(output_dir)?;
     Ok(match images {
         Written::Partitions(images) => images
             .into_iter()
             .map(|(name, image)| {
-                let output = request.output_dir.join(format!("{name}.img"));
+                let output = output_dir.join(format!("{name}.img"));
                 fs::rename(image, &output)?;
                 Ok(output)
             })
             .collect::<Result<_, Error>>()?,
-        Written::Super(super_image) if request.plan.output == crate::Output::Super => {
-            let output = request.output_dir.join("super.img");
+        Written::Super(super_image) if output == Output::Super => {
+            let output = output_dir.join("super.img");
             fs::rename(super_image, &output)?;
             vec![output]
         }
         Written::Super(super_image) => {
-            let output = request
-                .output_dir
-                .join(format!("{}.zip", profile.device.name));
+            let output = output_dir.join(format!("{}.zip", profile.device.name));
             crate::flashable::write(
                 &crate::flashable::Package {
                     device: &profile.device.product_ids[0],
                     super_image: &super_image,
-                    firmware: &request.plan.firmware,
+                    firmware: &stock.firmware_images()?,
                 },
                 &output,
             )?;

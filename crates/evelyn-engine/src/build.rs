@@ -1,120 +1,354 @@
-//! The build pipeline: scan sources, compose targets, apply recipes, build images.
+//! The build pipeline: open the firmware, pick the port, resolve the partitions,
+//! extract and scan what the build reads, apply the recipes, build the images.
 //!
-//! Source images are never extracted. Each one is scanned into a tree whose files
+//! Source images are never unpacked. Each one is scanned into a tree whose files
 //! refer back to the image, and stays open for the whole build: untouched files
 //! stream straight from it into the new image, and only edited files are written.
 //!
-//! Work directory layout (reused across builds):
+//! Work directory layout:
+//!   firmware/{rom,stock}/               partitions extracted from an OTA package
 //!   targets/<partition>/                the blobs edits wrote
 //!   packages/                           decoded APK/JAR workspaces
 //!   images/<partition>.img              built filesystem images
 
-use crate::{Error, Output, Plan};
-use android_firmware::{Mounts, Name, RelativePath, SourceRef};
-use android_fs::Image;
-use android_fs::PartitionTree;
+use crate::firmware::{Firmware, Given};
+use crate::properties::{check_fingerprint, port_for, rom_properties};
+use crate::{Error, Output, Profile, profile};
+use android_firmware::Firmware as Source;
+use android_firmware::{Filesystem, Mounts, Name, STANDARD_SYSTEM, SourceRef, VENDOR_SIDE};
 use android_fs::lp::SuperImage;
+use android_fs::{Image, PartitionTree};
+use recipe::Recipe;
 use serde::Serialize;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
 use toolchain::Tools;
 
-pub struct BuildRequest<'a> {
-    pub plan: &'a Plan,
-    pub tools: &'a Tools,
+/// A build of a device repository.
+pub struct Build<'a> {
+    /// The repository's root, where `evelyn.toml` is.
+    pub root: &'a Path,
+    /// The ROM and the stock firmware: each a directory of partition images or
+    /// an OTA package, local or a URL [default: `firmware/rom` and
+    /// `firmware/stock` in the repository].
+    pub rom: Option<Given>,
+    pub stock: Option<Given>,
+    /// [default: a super image for a device with a `super` layout, else
+    /// partition images]
+    pub output: Option<Output>,
     pub work_dir: &'a Path,
-    pub output_dir: &'a Path,
+    /// [default: `out/<port>` in the repository]
+    pub output_dir: Option<&'a Path>,
+    /// Patch directories applied after the port's.
+    pub extra_patches: &'a [PathBuf],
     /// Compose and apply every recipe, but build and write no images.
     pub dry_run: bool,
+    pub tools: &'a Tools,
 }
 
+/// What a build did.
 #[derive(Debug, Serialize)]
 pub struct Built {
-    /// What was written; nothing for a dry run.
-    pub outputs: Vec<PathBuf>,
-    /// Steps whose bindings or condition did not apply here.
-    pub skipped: Vec<patch::Skipped>,
+    /// The port the ROM matched.
+    pub port: Name,
+    /// In `super` order.
+    pub partitions: Vec<Composed>,
+    /// The recipes applied, in order.
+    pub recipes: Vec<Name>,
     /// ROM partitions the port does not take.
     pub ignored: Vec<Name>,
+    /// Steps whose bindings or condition did not apply here.
+    pub skipped: Vec<patch::Skipped>,
+    /// What was written; nothing for a dry run.
+    pub outputs: Vec<PathBuf>,
 }
 
-pub fn build(request: &BuildRequest<'_>) -> Result<Built, Error> {
-    let plan = request.plan;
+/// A partition the build composed.
+#[derive(Debug, Serialize)]
+pub struct Composed {
+    pub name: Name,
+    /// The firmware it is built from.
+    pub from: Source,
+    pub filesystem: Filesystem,
+    pub mount_point: String,
+}
+
+/// A partition this build composes and builds into an image.
+struct Partition {
+    name: Name,
+    from: Source,
+    /// The port's override; otherwise the base image's filesystem.
+    filesystem: Option<Filesystem>,
+    mount_point: String,
+}
+
+/// A recipe as it is applied: its primitive tree, and the directory its assets
+/// are in, `None` for a recipe built into Evelyn, whose assets are in the tools.
+struct Loaded {
+    tree: recipe::tree::Tree,
+    assets: Option<PathBuf>,
+}
+
+/// Recipes every build applies before the port's patches, by name and text.
+const BUILT_IN: [(&str, &str); 1] =
+    [("vndk.ron", include_str!("../../../assets/recipes/vndk.ron"))];
+
+/// Build the repository: the recipes built into Evelyn, the port's patches, then
+/// the extra patch directories, applied to the partitions the port takes. Of
+/// firmware given as an OTA package, only the partitions the build reads are
+/// extracted, into the work directory, and removed when the build returns: the
+/// ROM's system side first, whose properties pick the port, then the device's
+/// partitions, then what the port takes and its patches read.
+pub fn build(build: &Build<'_>) -> Result<Built, Error> {
+    let given = |given: &Option<Given>, default: &str| {
+        given
+            .clone()
+            .unwrap_or_else(|| Given::Path(build.root.join("firmware").join(default)))
+    };
+    let scratch = build.work_dir.join("firmware");
+    let mut rom = Firmware::open(&given(&build.rom, "rom"), &scratch.join("rom"))?;
+    let mut stock = Firmware::open(&given(&build.stock, "stock"), &scratch.join("stock"))?;
+
+    let system: Vec<Name> = rom
+        .names()
+        .filter(|name| STANDARD_SYSTEM.contains(&name.as_ref()))
+        .cloned()
+        .collect();
+    rom.extract(&system)?;
+    let profile = Profile::load(build.root, &port_for(build.root, &rom_properties(&rom)?)?)?;
+    let output = build.output.unwrap_or(match profile.device.super_layout {
+        Some(_) => Output::Super,
+        None => Output::Partitions,
+    });
+    if output != Output::Partitions && profile.device.super_layout.is_none() {
+        return Err(Error::MissingLayout);
+    }
+
+    let (mut partitions, ignored) = rom_partitions(&profile, &rom)?;
+    partitions.extend(device_partitions(&profile, &mut stock)?);
+    let mounts = Mounts::new(
+        partitions
+            .iter()
+            .map(|partition| (partition.mount_point.clone(), partition.name.clone())),
+    );
+
+    let recipes = recipes(&profile, build.extra_patches)?;
+
+    let read = read(&partitions, &recipes, &mounts)?;
+    let of = |source: Source| -> Vec<Name> {
+        read.iter()
+            .filter(|read| read.source == source)
+            .map(|read| read.partition.clone())
+            .collect()
+    };
+    rom.extract(&of(Source::Rom))?;
+    stock.extract(&of(Source::Stock))?;
+
     let mut images = patch::Images::new();
     let mut sources = patch::Sources::new();
-    for source in &plan.sources {
-        let (image, tree) = open(&source.source, &source.image)?;
-        images.insert(source.source.clone(), image);
-        sources.insert(source.source.clone(), tree);
+    for source in read {
+        let firmware = match source.source {
+            Source::Rom => &rom,
+            Source::Stock => &stock,
+        };
+        // Steps that run check their imports; a skipped step needs none.
+        let Some(path) = firmware.image(&source.partition) else {
+            continue;
+        };
+        let image = Image::detect(path).map_err(|_| Error::SourceFilesystem(source.clone()))?;
+        tracing::info!(%source, "scanning source image");
+        sources.insert(source.clone(), android_fs::scan(&image, &source)?);
+        images.insert(source, image);
     }
-    let mounts = mounts(plan, &sources)?;
-    let (targets, skipped) = compose(request, &sources, &images, &mounts)?;
+
+    let (targets, skipped) = compose(build, &partitions, &recipes, &sources, &images, &mounts)?;
     for skip in &skipped {
         tracing::warn!(recipe = %skip.recipe, step = %skip.step, reason = %skip.reason, "skipped step");
     }
     crate::fstab::check(&targets, &images)?;
-    if request.dry_run {
-        return Ok(Built {
-            outputs: Vec::new(),
-            skipped,
-            ignored: plan.ignored.clone(),
-        });
-    }
-    let output = request.work_dir.join("images");
-    reset(&output)?;
-    // Builds `partition` into `to`: a region of `super`, or its own image file.
-    let build = |partition: &crate::PlannedPartition, to: To| {
-        let (root, tree) = &targets[&partition.name];
-        tracing::info!(partition = %partition.name, filesystem = ?tree.filesystem, "building image");
-        let store = android_fs::Store::new(&images, root);
-        let mount = mount_point(partition, &sources[&partition.base])?;
-        let (name, filesystem) = (&partition.name, tree.filesystem);
-        Ok::<_, Error>(match to {
-            To::Region(region) => {
-                android_fs::build::image(tree, &store, region, filesystem, name, &mount)?
-            }
-            To::File(image) => {
-                android_fs::build::image_file(tree, &store, image, filesystem, name, &mount)?
-            }
-        })
-    };
-    let built = match plan.output {
-        Output::Partitions => {
-            let mut images = Vec::new();
-            for partition in &plan.partitions {
-                let image = output.join(format!("{}.img", partition.name));
-                build(partition, To::File(&image))?;
-                images.push((partition.name.clone(), image));
-            }
-            Written::Partitions(images)
-        }
-        // Every partition is built straight into its place in `super`.
-        Output::Super | Output::Zip => {
-            let layout = plan
-                .profile
-                .device
-                .super_layout
-                .clone()
-                .expect("checked by Plan::load");
-            let path = output.join("super.img");
-            let mut image = SuperImage::create(&path, layout)?;
-            for partition in &plan.partitions {
-                let size = build(partition, To::Region(image.region()?))?;
-                image.add(partition.name.clone(), size)?;
-            }
-            image.finish()?;
-            Written::Super(path)
-        }
-    };
-    let outputs = crate::output::publish(request, built)?;
-    Ok(Built {
-        outputs,
+    let mut built = Built {
+        port: profile.name.clone(),
+        partitions: partitions
+            .iter()
+            .map(|partition| Composed {
+                name: partition.name.clone(),
+                from: partition.from,
+                filesystem: targets[&partition.name].1.filesystem,
+                mount_point: partition.mount_point.clone(),
+            })
+            .collect(),
+        recipes: recipes
+            .iter()
+            .map(|recipe| recipe.tree.name.clone())
+            .collect(),
+        ignored,
         skipped,
-        ignored: plan.ignored.clone(),
+        outputs: Vec::new(),
+    };
+    if build.dry_run {
+        return Ok(built);
+    }
+
+    let written = images_of(
+        build.work_dir,
+        &partitions,
+        &targets,
+        &images,
+        &profile,
+        output,
+    )?;
+    let output_dir = build
+        .output_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| build.root.join("out").join(profile.name.as_ref()));
+    built.outputs = crate::output::publish(&output_dir, &profile, output, &stock, written)?;
+    Ok(built)
+}
+
+/// The ROM's partitions the port takes, the standard system side first, and
+/// those it leaves out.
+fn rom_partitions(profile: &Profile, rom: &Firmware) -> Result<(Vec<Partition>, Vec<Name>), Error> {
+    let mut partitions = Vec::new();
+    let mut ignored = Vec::new();
+    for name in STANDARD_SYSTEM {
+        if let Some(name) = rom.names().find(|key| key.as_ref() == name) {
+            partitions.push(partition(profile, name, Source::Rom, rom)?);
+        }
+    }
+    for name in rom.names() {
+        if STANDARD_SYSTEM.contains(&name.as_ref()) || profile.is_vendor_side(name.as_ref()) {
+            continue;
+        }
+        if profile.takes_from_rom(name.as_ref()) {
+            partitions.push(partition(profile, name, Source::Rom, rom)?);
+        } else {
+            tracing::warn!(partition = %name, "the ROM's partition is not in port.toml; leaving it out");
+            ignored.push(name.clone());
+        }
+    }
+    Ok((partitions, ignored))
+}
+
+/// The device's partitions: the vendor side the stock firmware has, and any other
+/// partition `evelyn.toml` sets, each extracted and checked to be the pinned build.
+fn device_partitions(profile: &Profile, stock: &mut Firmware) -> Result<Vec<Partition>, Error> {
+    if let Some(missing) = profile
+        .device
+        .partitions
+        .keys()
+        .find(|name| !stock.has(name.as_ref()))
+    {
+        return Err(Error::MissingStockPartition(missing.clone()));
+    }
+    let mut device: Vec<Name> = stock
+        .names()
+        .filter(|name| {
+            VENDOR_SIDE.contains(&name.as_ref()) || profile.device.partitions.contains_key(*name)
+        })
+        .cloned()
+        .collect();
+    device.sort_by_key(Profile::device_order);
+    stock.extract(&device)?;
+    let mut partitions = Vec::new();
+    for name in &device {
+        let image = stock.image(name).expect("extracted");
+        check_fingerprint(name, image, &profile.device.stock.fingerprint)?;
+        partitions.push(partition(profile, name, Source::Stock, stock)?);
+    }
+    Ok(partitions)
+}
+
+/// `name` from `firmware`, with the port's settings for it. Where `system` is
+/// mounted, unless the port says, is decided from its image, which is extracted.
+fn partition(
+    profile: &Profile,
+    name: &Name,
+    from: Source,
+    firmware: &Firmware,
+) -> Result<Partition, Error> {
+    let settings = profile
+        .settings(name.as_ref())?
+        .cloned()
+        .unwrap_or_default();
+    let mount_point = match settings
+        .mount_point
+        .or_else(|| android_firmware::default_mount_point(name.as_ref()))
+    {
+        Some(mount_point) => mount_point,
+        None => {
+            let image = firmware.image(name).expect("the system side is extracted");
+            let found = Image::detect(image)?
+                .read_files(|path| path == "system/build.prop" || path == "build.prop")?;
+            android_firmware::system_mount_point(|path| found.iter().any(|(file, _)| file == path))
+                .ok_or(Error::SystemLayout)?
+                .to_owned()
+        }
+    };
+    Ok(Partition {
+        name: name.clone(),
+        from,
+        filesystem: settings.filesystem,
+        mount_point,
     })
+}
+
+/// The recipes built into Evelyn, the port's patches, then the `extra` patch
+/// directories', each checked against the port.
+fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Loaded>, Error> {
+    let mut recipes = Vec::new();
+    let mut step_ids = BTreeSet::new();
+    let mut add = |recipe: Recipe, assets: Option<PathBuf>| -> Result<(), Error> {
+        for step in &recipe.steps {
+            if !step_ids.insert(step.id.clone()) {
+                return Err(Error::DuplicateStep(step.id.clone()));
+            }
+        }
+        let tree = recipe.tree()?;
+        profile.validate_recipe(&tree)?;
+        recipes.push(Loaded { tree, assets });
+        Ok(())
+    };
+    for (name, text) in BUILT_IN {
+        add(Recipe::parse(text, Path::new(name))?, None)?;
+    }
+    let extra = extra.iter().map(|patch| patch.join(profile::PATCH));
+    for path in profile.patches().into_iter().chain(extra) {
+        let assets = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        add(Recipe::load(&path)?, Some(assets))?;
+    }
+    Ok(recipes)
+}
+
+/// What the build reads of the firmware: each partition's base, and the firmware
+/// partition of every path a recipe looks for in one.
+fn read(
+    partitions: &[Partition],
+    recipes: &[Loaded],
+    mounts: &Mounts,
+) -> Result<BTreeSet<SourceRef>, Error> {
+    let mut read: BTreeSet<SourceRef> = partitions
+        .iter()
+        .map(|partition| SourceRef {
+            source: partition.from,
+            partition: partition.name.clone(),
+        })
+        .collect();
+    let mut reads = crate::needs::Sources::default();
+    for recipe in recipes {
+        recipe.tree.walk(&mut reads)?;
+    }
+    for (firmware, path) in reads.reads {
+        for found in mounts.resolve(&path) {
+            read.insert(SourceRef {
+                source: firmware,
+                partition: found.partition,
+            });
+        }
+    }
+    Ok(read)
 }
 
 fn reset(path: &Path) -> Result<(), Error> {
@@ -125,15 +359,59 @@ fn reset(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-/// Open a source image and scan it; sparse images are read as the raw image they hold.
-fn open(source: &SourceRef, path: &Path) -> Result<(Image, PartitionTree), Error> {
-    let image = Image::detect(path).map_err(|_| Error::SourceFilesystem(source.clone()))?;
-    tracing::info!(%source, "scanning source image");
-    let tree = android_fs::scan(&image, source)?;
-    Ok((image, tree))
-}
-
 pub(crate) type Targets = BTreeMap<Name, (PathBuf, PartitionTree)>;
+
+/// Start each partition from its base tree and apply every recipe in order.
+fn compose(
+    build: &Build<'_>,
+    partitions: &[Partition],
+    recipes: &[Loaded],
+    sources: &patch::Sources,
+    images: &patch::Images,
+    mounts: &Mounts,
+) -> Result<(Targets, Vec<patch::Skipped>), Error> {
+    let root = build.work_dir.join("targets");
+    reset(&root)?;
+    let mut targets = BTreeMap::new();
+    for partition in partitions {
+        let base = sources[&SourceRef {
+            source: partition.from,
+            partition: partition.name.clone(),
+        }]
+            .clone();
+        let filesystem = partition.filesystem.unwrap_or(base.filesystem);
+        let target = patch::Target::create(&root.join(partition.name.as_ref()), base, filesystem)?;
+        targets.insert(partition.name.clone(), target);
+    }
+    let packages = build.work_dir.join("packages");
+    reset(&packages)?;
+    let origins = partitions
+        .iter()
+        .map(|partition| (partition.name.clone(), partition.from))
+        .collect();
+    let mut composition = patch::Composition::new(targets, origins);
+    for recipe in recipes {
+        tracing::info!(recipe = %recipe.tree.name, "applying recipe");
+        let context = patch::Context {
+            sources,
+            images,
+            tools: build.tools,
+            assets: recipe.assets.as_deref(),
+            packages: &packages,
+            mounts,
+        };
+        composition.apply(&recipe.tree, &context)?;
+    }
+    let (trees, skipped) = composition.finish(mounts, images)?;
+    let targets = trees
+        .into_iter()
+        .map(|(name, tree)| {
+            let path = root.join(name.as_ref());
+            (name, (path, tree))
+        })
+        .collect();
+    Ok((targets, skipped))
+}
 
 /// Where a partition is built.
 enum To<'a> {
@@ -148,81 +426,56 @@ pub(crate) enum Written {
     Super(PathBuf),
 }
 
-/// Where `partition` is mounted: the plan's, or for `system`, as `tree` is laid out.
-pub(crate) fn mount_point(
-    partition: &crate::PlannedPartition,
-    tree: &PartitionTree,
-) -> Result<String, Error> {
-    if let Some(mount) = &partition.mount_point {
-        return Ok(mount.clone());
-    }
-    let has = |path: &str| {
-        RelativePath::try_from(path.to_owned()).is_ok_and(|path| tree.entries.contains_key(&path))
-    };
-    android_firmware::system_mount_point(has)
-        .map(str::to_owned)
-        .ok_or(Error::SystemLayout)
-}
-
-/// Every partition's mount point, for resolving device paths.
-pub(crate) fn mounts(plan: &Plan, sources: &patch::Sources) -> Result<Mounts, Error> {
-    let mut mounts = Vec::new();
-    for partition in &plan.partitions {
-        mounts.push((
-            mount_point(partition, &sources[&partition.base])?,
-            partition.name.clone(),
-        ));
-    }
-    Ok(Mounts::new(mounts))
-}
-
-/// Start each partition from its base tree and apply every recipe in plan order.
-fn compose(
-    request: &BuildRequest<'_>,
-    sources: &patch::Sources,
+/// Build every partition into `images/` in the work directory: each into its own
+/// image, or straight into its place in `super`.
+fn images_of(
+    work_dir: &Path,
+    partitions: &[Partition],
+    targets: &Targets,
     images: &patch::Images,
-    mounts: &Mounts,
-) -> Result<(Targets, Vec<patch::Skipped>), Error> {
-    let plan = request.plan;
-    let root = request.work_dir.join("targets");
-    reset(&root)?;
-    let mut targets = BTreeMap::new();
-    for partition in &plan.partitions {
-        let base = sources[&partition.base].clone();
-        let filesystem = partition.filesystem.unwrap_or(base.filesystem);
-        let target = patch::Target::create(&root.join(partition.name.as_ref()), base, filesystem)?;
-        targets.insert(partition.name.clone(), target);
-    }
-    let packages = request.work_dir.join("packages");
-    reset(&packages)?;
-    let origins = plan
-        .partitions
-        .iter()
-        .map(|partition| (partition.name.clone(), partition.base.source))
-        .collect();
-    let mut composition = patch::Composition::new(targets, origins);
-    for planned in &plan.recipes {
-        tracing::info!(recipe = %planned.recipe.name, "applying recipe");
-        let context = patch::Context {
-            sources,
-            images,
-            tools: request.tools,
-            assets: planned
-                .path
-                .as_deref()
-                .map(|path| path.parent().unwrap_or(Path::new("."))),
-            packages: &packages,
-            mounts,
-        };
-        composition.apply(&planned.tree, &context)?;
-    }
-    let (trees, skipped) = composition.finish(mounts, images)?;
-    let targets = trees
-        .into_iter()
-        .map(|(name, tree)| {
-            let path = root.join(name.as_ref());
-            (name, (path, tree))
+    profile: &Profile,
+    output: Output,
+) -> Result<Written, Error> {
+    let dir = work_dir.join("images");
+    reset(&dir)?;
+    let build = |partition: &Partition, to: To| {
+        let (root, tree) = &targets[&partition.name];
+        tracing::info!(partition = %partition.name, filesystem = ?tree.filesystem, "building image");
+        let store = android_fs::Store::new(images, root);
+        let (name, filesystem, mount) = (&partition.name, tree.filesystem, &partition.mount_point);
+        Ok::<_, Error>(match to {
+            To::Region(region) => {
+                android_fs::build::image(tree, &store, region, filesystem, name, mount)?
+            }
+            To::File(image) => {
+                android_fs::build::image_file(tree, &store, image, filesystem, name, mount)?
+            }
         })
-        .collect();
-    Ok((targets, skipped))
+    };
+    Ok(match output {
+        Output::Partitions => {
+            let mut written = Vec::new();
+            for partition in partitions {
+                let image = dir.join(format!("{}.img", partition.name));
+                build(partition, To::File(&image))?;
+                written.push((partition.name.clone(), image));
+            }
+            Written::Partitions(written)
+        }
+        Output::Super | Output::Zip => {
+            let layout = profile
+                .device
+                .super_layout
+                .clone()
+                .expect("checked when the output was chosen");
+            let path = dir.join("super.img");
+            let mut image = SuperImage::create(&path, layout)?;
+            for partition in partitions {
+                let size = build(partition, To::Region(image.region()?))?;
+                image.add(partition.name.clone(), size)?;
+            }
+            image.finish()?;
+            Written::Super(path)
+        }
+    })
 }

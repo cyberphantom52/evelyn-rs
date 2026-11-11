@@ -84,7 +84,9 @@ flashes the stock OTA's partitions outside `super`, or the images in
 are downloaded, so a CI job can build from links alone:
 `evelyn build --rom <url> --stock <url>`. `--patch <directory>` applies an extra patch for one
 build, such as a debug build's. `--dry-run` applies every patch to the firmware
-but writes no images, and prints the plan with what applied.
+but writes no images, and prints what the build composed: the port, each
+partition and the firmware it comes from, the patches in order, the ROM
+partitions left out and the steps skipped.
 
 ## Layout
 
@@ -95,7 +97,7 @@ but writes no images, and prints the plan with what applied.
   - `smali`: smali parser and method edits
   - `evelyn-recipe`: the recipe language
   - `evelyn-patch`: applies recipes to partition trees
-  - `evelyn-engine`: device repositories, planning and the build pipeline
+  - `evelyn-engine`: device repositories and the build pipeline
   - `toolchain`: the files Evelyn downloads, pinned by SHA-256, and its signing key
   - `evelyn-cli`: the `evelyn` binary
 - `assets/`: files compiled into Evelyn: the recipes every build applies and the ZIP installer

@@ -65,14 +65,14 @@ pub enum Error {
 }
 
 /// `evelyn.toml`: the ROM a repository ports and the device it ports it to.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Repository {
     pub rom: Name,
     pub device: Device,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Device {
     pub name: Name,
@@ -87,14 +87,14 @@ pub struct Device {
     pub super_layout: Option<SuperLayout>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stock {
     /// Each device partition's `ro.<partition>.build.fingerprint` must equal this.
     pub fingerprint: String,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Port {
     /// The ROM builds this port is for: properties the ROM sets, each to a value
@@ -121,7 +121,7 @@ impl Port {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
     /// Default: the source image's filesystem.
@@ -130,7 +130,7 @@ pub struct Settings {
     pub mount_point: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Profile {
     pub rom: Name,
     pub device: Device,
