@@ -1,11 +1,8 @@
 use crate::Error;
 use crate::image::{Image, Kind};
 use crate::{Content, Entry, EntryKind, PartitionTree};
-use android_firmware::{RelativePath, Sha256Digest, Sha256Writer, SourceRef};
-use std::{
-    collections::{BTreeMap, btree_map},
-    io,
-};
+use android_firmware::{RelativePath, Sha256Digest, SourceRef};
+use std::collections::{BTreeMap, btree_map};
 
 struct Scan<'a> {
     image: &'a Image,
@@ -42,20 +39,12 @@ impl Scan<'_> {
                             target: self.image.link(id)?,
                         }
                     } else {
-                        let mut hash = Sha256Writer::new(io::sink());
-                        let size = io::copy(&mut self.image.file(id, inode.size)?, &mut hash)?;
-                        if size != inode.size {
-                            return Err(Error::Unsupported(format!(
-                                "short content read at {path}"
-                            )));
-                        }
                         EntryKind::File {
                             content: Content::Image {
                                 source: self.identity.clone(),
                                 inode: id,
                             },
-                            sha256: hash.finish()?.1,
-                            size,
+                            size: inode.size,
                         }
                     }
                 }
@@ -76,7 +65,7 @@ impl Scan<'_> {
 }
 
 /// Describe a source image as a tree whose file contents stay in the image: every
-/// entry with its Android metadata, and each file's content hash.
+/// entry with its Android metadata. Only metadata is read, no file's content.
 pub fn scan(
     image: &Image,
     identity: &SourceRef,
