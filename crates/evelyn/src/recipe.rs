@@ -36,8 +36,6 @@ pub enum Error {
     },
     #[error("invalid configuration: {0}")]
     Invalid(String),
-    #[error(transparent)]
-    Android(#[from] android::Error),
 }
 
 fn read(path: &Path) -> Result<String, Error> {
