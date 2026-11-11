@@ -6,11 +6,9 @@ use crate::patch::{
     Composition, Error,
     compose::{Bound, Context},
     layout,
-};
-use crate::recipe::{
-    Location,
     value::{Located, Place},
 };
+use crate::recipe::Location;
 use crate::{Firmware, SourceRef};
 use android::EntryKind;
 use android::partition::PartitionPath;

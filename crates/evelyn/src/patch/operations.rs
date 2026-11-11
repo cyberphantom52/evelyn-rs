@@ -6,11 +6,9 @@ use crate::patch::{
     Composition, Error,
     compose::{Bound, Context},
     target::{Overrides, Placing},
-};
-use crate::recipe::{
-    Expr, Hex, Location, Metadata, Operation, Returns, XmlEdit,
     value::{Located, Place, Value, ValueError},
 };
+use crate::recipe::{Expr, Hex, Location, Metadata, Operation, Returns, XmlEdit};
 use android::hash::Sha256Digest;
 use android::path::{DevicePath, RelativePath};
 use std::collections::BTreeMap;

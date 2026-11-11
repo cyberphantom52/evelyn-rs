@@ -5,7 +5,6 @@
 mod expr;
 pub mod kit;
 mod location;
-pub mod value;
 mod xml;
 pub use expr::{Expr, substitute, written_out};
 pub use location::Location;
