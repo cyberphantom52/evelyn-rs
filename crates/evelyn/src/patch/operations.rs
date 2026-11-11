@@ -10,7 +10,9 @@ use crate::recipe::{
     Expr, Hex, Location, Metadata, Operation, Returns, XmlEdit,
     value::{Located, Place, Value, ValueError},
 };
-use android::firmware::{DevicePath, Firmware, Name, RelativePath, Sha256Digest};
+use android::firmware::Firmware;
+use android::hash::Sha256Digest;
+use android::path::{DevicePath, Name, RelativePath};
 use std::collections::BTreeMap;
 
 impl Composition {
@@ -411,14 +413,14 @@ impl Composition {
         context: &Context<'_>,
     ) -> Result<Vec<Located>, Error> {
         let candidates: Vec<(&str, Option<&str>)> = match target {
-            Some(Location::Partition(partition)) => android::firmware::PARTITION_PROPERTY_FILES
+            Some(Location::Partition(partition)) => android::property::PARTITION_PROPERTY_FILES
                 .iter()
                 .map(|path| (*path, Some(partition.as_ref())))
                 .collect(),
             Some(file) => return self.select(file, bound, context),
             // Last loaded first: within a group the canonical file, else the legacy
             // ones from the last loaded.
-            None => android::firmware::PROPERTY_FILES
+            None => android::property::PROPERTY_FILES
                 .iter()
                 .rev()
                 .flat_map(|group| {
@@ -558,7 +560,7 @@ impl Composition {
         bound: &Bound,
         context: &Context<'_>,
     ) -> Result<(), Error> {
-        let named = self.select_build(android::firmware::SEPOLICY_VERSION, None, None, context)?;
+        let named = self.select_build(android::sepolicy::SEPOLICY_VERSION, None, None, context)?;
         let [named] = &named[..] else {
             return Err(Error::Assertion(
                 "the vendor does not name the platform policy version".into(),
@@ -567,7 +569,7 @@ impl Composition {
         let version = self.text(named, context)?.trim().to_owned();
         let patched = crate::recipe::substitute(target, bound)?;
         let mut files = Vec::new();
-        for (path, suffix) in android::firmware::SEPOLICY_FILES {
+        for (path, suffix) in android::sepolicy::SEPOLICY_FILES {
             let path = match suffix {
                 None if path == patched => continue,
                 None => path.to_owned(),

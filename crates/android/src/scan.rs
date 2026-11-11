@@ -1,6 +1,6 @@
 use crate::Error;
-use crate::firmware::RelativePath;
 use crate::image::{Image, Kind};
+use crate::path::RelativePath;
 use crate::{Content, Entry, EntryKind, PartitionTree};
 use std::collections::{BTreeMap, btree_map};
 

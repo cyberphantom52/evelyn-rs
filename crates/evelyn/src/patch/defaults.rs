@@ -4,10 +4,11 @@
 
 use crate::patch::{Composition, Error, Images, Target};
 use android::EntryKind;
+use android::defaults::{FILE_CONTEXTS, FS_CONFIG};
 use android::defaults::{FileContexts, FileKind, FsConfig, capability_xattr};
-use android::firmware::{
-    AndroidMetadata, DevicePath, FILE_CONTEXTS, FS_CONFIG, Mounts, Name, TargetPath,
-};
+use android::metadata::AndroidMetadata;
+use android::partition::{Mounts, TargetPath};
+use android::path::{DevicePath, Name};
 use std::collections::BTreeMap;
 
 pub(crate) struct Defaults {

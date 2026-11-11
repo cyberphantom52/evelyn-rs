@@ -3,7 +3,7 @@
 //! its lexicographically first surviving member is promoted to canonical.
 
 use crate::patch::target::{EntryMetadata, Tree};
-use android::firmware::RelativePath;
+use android::path::RelativePath;
 use android::{Entry, EntryKind, PartitionTree};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
@@ -100,7 +100,7 @@ pub(crate) fn walk(
             };
             if segment.contains(['*', '?']) {
                 for name in children(&dir) {
-                    if android::firmware::glob(segment, &name) {
+                    if android::path::glob(segment, &name) {
                         next.push(join(&name));
                     }
                 }

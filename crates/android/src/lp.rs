@@ -6,8 +6,10 @@
 //! twice, then a primary and a backup copy of every slot's metadata, and partitions from
 //! the next 1 MiB boundary on, each starting at the next one after the last.
 
-use crate::firmware::{Name, Sha256Digest, SlotScheme, SuperLayout};
+use crate::hash::Sha256Digest;
+use crate::path::Name;
 use crate::{Error, Region};
+use serde::Deserialize;
 use std::{
     fs::{self, File},
     os::unix::fs::FileExt,
@@ -248,4 +250,40 @@ fn first_data_byte(layout: &SuperLayout) -> u64 {
 
 fn invalid(message: String) -> Error {
     Error::Super(message)
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperLayout {
+    pub size: u64,
+    pub metadata_size: u32,
+    pub slots: SlotScheme,
+    /// The one dynamic partition group, named as the vendor names it.
+    pub group: Name,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlotScheme {
+    Single,
+    Ab,
+    VirtualAb,
+}
+
+impl SuperLayout {
+    pub fn metadata_slots(&self) -> u32 {
+        match self.slots {
+            SlotScheme::Single => 2,
+            SlotScheme::Ab | SlotScheme::VirtualAb => 3,
+        }
+    }
+
+    /// A slot's group may use the whole device, except on A/B, where both slots
+    /// hold full copies.
+    pub fn group_capacity(&self) -> u64 {
+        match self.slots {
+            SlotScheme::Ab => self.size / 2,
+            SlotScheme::Single | SlotScheme::VirtualAb => self.size,
+        }
+    }
 }

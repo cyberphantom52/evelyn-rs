@@ -4,7 +4,8 @@
 
 use crate::patch::{Target, compose::Context};
 use crate::recipe::{Expr, Location, Operation};
-use android::firmware::{Name, RelativePath, TargetPath};
+use android::partition::TargetPath;
+use android::path::{Name, RelativePath};
 use std::{
     fs,
     path::{Path, PathBuf},

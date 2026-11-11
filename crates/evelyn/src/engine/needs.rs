@@ -1,7 +1,8 @@
 //! The firmware partitions a recipe reads.
 
 use crate::recipe::{Expr, Location, Operation, Recipe};
-use android::firmware::{DevicePath, Firmware};
+use android::firmware::Firmware;
+use android::path::DevicePath;
 
 /// Every path a recipe looks for in a firmware, `Rom("/…")` or `Stock("/…")`
 /// written out: which firmware, and the device path. One naming a bound value is

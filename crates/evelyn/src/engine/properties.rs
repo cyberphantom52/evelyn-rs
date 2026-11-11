@@ -2,7 +2,8 @@
 //! the stock partitions are the build `evelyn.toml` pins.
 
 use crate::engine::{Error, firmware::Firmware, profile};
-use android::firmware::{Name, STANDARD_SYSTEM};
+use android::partition::STANDARD_SYSTEM;
+use android::path::Name;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -86,7 +87,7 @@ fn loaded(partition: &Name, image: &Path) -> Result<BTreeMap<String, String>, Er
         "system" => "/".to_owned(),
         other => format!("/{other}/"),
     };
-    let groups: Vec<Vec<&str>> = android::firmware::PROPERTY_FILES
+    let groups: Vec<Vec<&str>> = android::property::PROPERTY_FILES
         .iter()
         .map(|group| {
             group

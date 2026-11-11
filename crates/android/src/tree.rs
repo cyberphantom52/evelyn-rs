@@ -2,7 +2,9 @@
 //! each file's bytes are.
 
 use crate::Error;
-use crate::firmware::{AndroidMetadata, Filesystem, Name, RelativePath};
+use crate::Filesystem;
+use crate::metadata::AndroidMetadata;
+use crate::path::{Name, RelativePath};
 use std::collections::BTreeMap;
 
 /// Where a file's bytes are: unchanged in a source image, or in a tree's own store.

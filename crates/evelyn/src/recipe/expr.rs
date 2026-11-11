@@ -4,7 +4,7 @@
 //! `Exists(Asset("apex/com.android.vndk.v{vndk}.apex"))`.
 
 use crate::recipe::{Error, location::Location};
-use android::firmware::Name;
+use android::path::Name;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt};
 

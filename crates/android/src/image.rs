@@ -1,7 +1,8 @@
 //! Read-only access to EROFS and ext4 images.
 
+use crate::Filesystem;
 use crate::device::{Device, into_io};
-use crate::firmware::{AndroidMetadata, Filesystem};
+use crate::metadata::AndroidMetadata;
 use crate::{Error, ImageFormat};
 use fs_core::BlockRead;
 use fs_ext4::fs_core_bridge::CoreDevice;

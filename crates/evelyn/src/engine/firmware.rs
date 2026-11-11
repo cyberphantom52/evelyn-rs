@@ -8,7 +8,8 @@
 
 use crate::engine::Error;
 use android::ImageFormat;
-use android::firmware::{Name, Sha256Digest};
+use android::hash::Sha256Digest;
+use android::path::Name;
 use payload_dumper::{
     AsyncPayloadRead, DeltaArchiveManifest, ExtractionPaths, FileType, HttpReader,
     LocalAsyncPayloadReader, LocalAsyncZipPayloadReader, NoOpDownloadReporter, NoOpReporter,

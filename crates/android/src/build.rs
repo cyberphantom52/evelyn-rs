@@ -5,8 +5,9 @@ use crate::{Error, Store};
 
 mod erofs;
 mod ext4;
+use crate::Filesystem;
 use crate::Region;
-use crate::firmware::{Filesystem, Name};
+use crate::path::Name;
 use std::{fs, path::Path};
 
 /// Fixed timestamp for reproducible images (2009-01-01, as AOSP builds use).
@@ -59,7 +60,7 @@ pub fn image_file(
 
 /// Stable UUID derived from the partition name, so rebuilds produce identical images.
 fn uuid(partition: &Name) -> [u8; 16] {
-    let digest = crate::firmware::Sha256Digest::bytes(partition.as_ref().as_bytes());
+    let digest = crate::hash::Sha256Digest::bytes(partition.as_ref().as_bytes());
     let mut uuid: [u8; 16] = std::array::from_fn(|at| digest.as_bytes()[at]);
     // Version 4, RFC 4122 variant.
     uuid[6] = 0x40 | (uuid[6] & 0x0f);

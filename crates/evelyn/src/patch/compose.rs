@@ -7,10 +7,9 @@ use crate::patch::{
 use crate::recipe::{Expr, Metadata, Operation, Recipe, value::Located};
 use crate::toolchain::Tools;
 use android::PartitionTree;
-use android::firmware::{
-    DevicePath, Firmware, Mounts, Name, RelativePath, STANDARD_SYSTEM, SourceRef, TargetPath,
-    VENDOR_SIDE,
-};
+use android::firmware::{Firmware, SourceRef};
+use android::partition::{Mounts, STANDARD_SYSTEM, TargetPath, VENDOR_SIDE};
+use android::path::{DevicePath, Name, RelativePath};
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
