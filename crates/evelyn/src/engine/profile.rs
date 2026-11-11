@@ -18,7 +18,7 @@
 use android::Filesystem;
 use android::lp::SuperLayout;
 use android::partition::{STANDARD_SYSTEM, VENDOR_SIDE};
-use android::path::{Name, RelativePath, glob};
+use android::path::{RelativePath, glob};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -65,21 +65,21 @@ pub enum Error {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Repository {
-    pub rom: Name,
+    pub rom: String,
     pub device: Device,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Device {
-    pub name: Name,
+    pub name: String,
     /// `ro.product.device` values the installer accepts.
     pub product_ids: Vec<String>,
     /// The stock firmware build the device's partitions must come from.
     pub stock: Stock,
     /// Settings for the device's own partitions, where the defaults are wrong.
     #[serde(default)]
-    pub partitions: BTreeMap<Name, Settings>,
+    pub partitions: BTreeMap<String, Settings>,
     #[serde(rename = "super", default)]
     pub super_layout: Option<SuperLayout>,
 }
@@ -129,10 +129,10 @@ pub struct Settings {
 
 #[derive(Clone, Debug)]
 pub struct Profile {
-    pub rom: Name,
+    pub rom: String,
     pub device: Device,
     /// The port's name: its directory under `ports/`.
-    pub name: Name,
+    pub name: String,
     pub port: Port,
     /// The repository root, where `evelyn.toml` is.
     pub root: PathBuf,
@@ -140,13 +140,13 @@ pub struct Profile {
 
 impl Profile {
     /// Load the port `name` of the repository at `root`.
-    pub fn load(root: &Path, name: &Name) -> Result<Self, Error> {
+    pub fn load(root: &Path, name: &str) -> Result<Self, Error> {
         let repository: Repository = toml_file(&root.join(MANIFEST))?;
-        let port: Port = toml_file(&root.join("ports").join(name.as_ref()).join(PORT))?;
+        let port: Port = toml_file(&root.join("ports").join(name).join(PORT))?;
         let profile = Self {
             rom: repository.rom,
             device: repository.device,
-            name: name.clone(),
+            name: name.to_owned(),
             port,
             root: root.to_path_buf(),
         };
@@ -169,7 +169,7 @@ impl Profile {
             .device
             .partitions
             .keys()
-            .find(|name| STANDARD_SYSTEM.contains(&name.as_ref()))
+            .find(|name| STANDARD_SYSTEM.contains(&name.as_str()))
         {
             return Err(Error::Invalid(format!(
                 "device partition {standard} is system side, which comes from the ROM"
@@ -179,7 +179,7 @@ impl Profile {
             .device
             .partitions
             .iter()
-            .map(|(name, settings)| (name.as_ref(), settings));
+            .map(|(name, settings)| (name.as_str(), settings));
         for (pattern, settings) in settings.chain(
             self.port
                 .partitions
@@ -237,7 +237,7 @@ impl Profile {
             .device
             .partitions
             .iter()
-            .find(|(name, _)| name.as_ref() == partition)
+            .find(|(name, _)| name.as_str() == partition)
         {
             return Ok(Some(settings));
         }
@@ -269,7 +269,7 @@ impl Profile {
     fn vendor_side(&self) -> impl Iterator<Item = &str> {
         VENDOR_SIDE
             .into_iter()
-            .chain(self.device.partitions.keys().map(|name| name.as_ref()))
+            .chain(self.device.partitions.keys().map(|name| name.as_str()))
     }
 
     pub fn is_vendor_side(&self, partition: &str) -> bool {
@@ -277,13 +277,13 @@ impl Profile {
     }
 
     /// `super` order for the device's partitions: Treble's order, then by name.
-    pub fn device_order(partition: &Name) -> (usize, Name) {
+    pub fn device_order(partition: &str) -> (usize, String) {
         (
             VENDOR_SIDE
                 .iter()
-                .position(|vendor| *vendor == partition.as_ref())
+                .position(|vendor| *vendor == partition)
                 .unwrap_or(VENDOR_SIDE.len()),
-            partition.clone(),
+            partition.to_owned(),
         )
     }
 
@@ -311,7 +311,7 @@ pub struct Initialized {
 /// Set up a device repository at `root` that ports `rom` to `device`: its
 /// manifest, the `ports/`, `patches/` and `firmware/` directories, and what git
 /// ignores. One already there is left alone.
-pub fn init(root: &Path, device: &Name, rom: &Name) -> Result<Initialized, Error> {
+pub fn init(root: &Path, device: &str, rom: &str) -> Result<Initialized, Error> {
     let manifest = root.join(MANIFEST);
     if manifest.exists() {
         return Err(Error::Invalid(format!(
@@ -418,7 +418,7 @@ pub fn find(start: &Path) -> Result<PathBuf, Error> {
 }
 
 /// The ports of the repository at `root`, by name.
-pub fn ports(root: &Path) -> Result<BTreeMap<Name, Port>, Error> {
+pub fn ports(root: &Path) -> Result<BTreeMap<String, Port>, Error> {
     let dir = root.join("ports");
     let entries = fs::read_dir(&dir).map_err(|source| Error::Read {
         path: dir.clone(),
@@ -439,7 +439,6 @@ pub fn ports(root: &Path) -> Result<BTreeMap<Name, Port>, Error> {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let name = Name::try_from(name).map_err(|error| Error::Invalid(error.to_string()))?;
         ports.insert(name, toml_file(&path.join(PORT))?);
     }
     Ok(ports)

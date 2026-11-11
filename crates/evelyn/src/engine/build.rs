@@ -21,7 +21,6 @@ use crate::toolchain::Tools;
 use android::Filesystem;
 use android::lp::SuperImage;
 use android::partition::{Mounts, STANDARD_SYSTEM, VENDOR_SIDE};
-use android::path::Name;
 use android::{Image, PartitionTree};
 use serde::Serialize;
 use std::{
@@ -56,13 +55,13 @@ pub struct Build<'a> {
 #[derive(Debug, Serialize)]
 pub struct Built {
     /// The port the ROM matched.
-    pub port: Name,
+    pub port: String,
     /// In `super` order.
     pub partitions: Vec<Composed>,
     /// The recipes applied, in order.
-    pub recipes: Vec<Name>,
+    pub recipes: Vec<String>,
     /// ROM partitions the port does not take.
-    pub ignored: Vec<Name>,
+    pub ignored: Vec<String>,
     /// Steps whose bindings or condition did not apply here.
     pub skipped: Vec<crate::patch::Skipped>,
     /// What was written; nothing for a dry run.
@@ -72,7 +71,7 @@ pub struct Built {
 /// A partition the build composed.
 #[derive(Debug, Serialize)]
 pub struct Composed {
-    pub name: Name,
+    pub name: String,
     /// The firmware it is built from.
     pub from: Firmware,
     pub filesystem: Filesystem,
@@ -81,7 +80,7 @@ pub struct Composed {
 
 /// A partition this build composes and builds into an image.
 struct Partition {
-    name: Name,
+    name: String,
     from: Firmware,
     /// The port's override; otherwise the base image's filesystem.
     filesystem: Option<Filesystem>,
@@ -117,9 +116,9 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
     let mut rom = OpenFirmware::open(&given(&build.rom, "rom"), &scratch.join("rom"))?;
     let mut stock = OpenFirmware::open(&given(&build.stock, "stock"), &scratch.join("stock"))?;
 
-    let system: Vec<Name> = rom
+    let system: Vec<String> = rom
         .names()
-        .filter(|name| STANDARD_SYSTEM.contains(&name.as_ref()))
+        .filter(|name| STANDARD_SYSTEM.contains(&name.as_str()))
         .cloned()
         .collect();
     rom.extract(&system)?;
@@ -143,7 +142,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
     let recipes = recipes(&profile, build.extra_patches)?;
 
     let read = read(&partitions, &recipes, &mounts)?;
-    let of = |source: Firmware| -> Vec<Name> {
+    let of = |source: Firmware| -> Vec<String> {
         read.iter()
             .filter(|read| read.source == source)
             .map(|read| read.partition.clone())
@@ -208,7 +207,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
     let output_dir = build
         .output_dir
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| build.root.join("out").join(profile.name.as_ref()));
+        .unwrap_or_else(|| build.root.join("out").join(&profile.name));
     built.outputs = crate::engine::output::publish(&output_dir, &profile, output, &stock, written)?;
     Ok(built)
 }
@@ -218,19 +217,19 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
 fn rom_partitions(
     profile: &Profile,
     rom: &OpenFirmware,
-) -> Result<(Vec<Partition>, Vec<Name>), Error> {
+) -> Result<(Vec<Partition>, Vec<String>), Error> {
     let mut partitions = Vec::new();
     let mut ignored = Vec::new();
     for name in STANDARD_SYSTEM {
-        if let Some(name) = rom.names().find(|key| key.as_ref() == name) {
+        if let Some(name) = rom.names().find(|key| key.as_str() == name) {
             partitions.push(partition(profile, name, Firmware::Rom, rom)?);
         }
     }
     for name in rom.names() {
-        if STANDARD_SYSTEM.contains(&name.as_ref()) || profile.is_vendor_side(name.as_ref()) {
+        if STANDARD_SYSTEM.contains(&name.as_str()) || profile.is_vendor_side(name.as_str()) {
             continue;
         }
-        if profile.takes_from_rom(name.as_ref()) {
+        if profile.takes_from_rom(name.as_str()) {
             partitions.push(partition(profile, name, Firmware::Rom, rom)?);
         } else {
             tracing::warn!(partition = %name, "the ROM's partition is not in port.toml; leaving it out");
@@ -247,18 +246,18 @@ fn device_partitions(profile: &Profile, stock: &mut OpenFirmware) -> Result<Vec<
         .device
         .partitions
         .keys()
-        .find(|name| !stock.has(name.as_ref()))
+        .find(|name| !stock.has(name.as_str()))
     {
         return Err(Error::MissingStockPartition(missing.clone()));
     }
-    let mut device: Vec<Name> = stock
+    let mut device: Vec<String> = stock
         .names()
         .filter(|name| {
-            VENDOR_SIDE.contains(&name.as_ref()) || profile.device.partitions.contains_key(*name)
+            VENDOR_SIDE.contains(&name.as_str()) || profile.device.partitions.contains_key(*name)
         })
         .cloned()
         .collect();
-    device.sort_by_key(Profile::device_order);
+    device.sort_by_key(|name| Profile::device_order(name));
     stock.extract(&device)?;
     let mut partitions = Vec::new();
     for name in &device {
@@ -273,17 +272,14 @@ fn device_partitions(profile: &Profile, stock: &mut OpenFirmware) -> Result<Vec<
 /// mounted, unless the port says, is decided from its image, which is extracted.
 fn partition(
     profile: &Profile,
-    name: &Name,
+    name: &str,
     from: Firmware,
     firmware: &OpenFirmware,
 ) -> Result<Partition, Error> {
-    let settings = profile
-        .settings(name.as_ref())?
-        .cloned()
-        .unwrap_or_default();
+    let settings = profile.settings(name)?.cloned().unwrap_or_default();
     let mount_point = match settings
         .mount_point
-        .or_else(|| android::partition::default_mount_point(name.as_ref()))
+        .or_else(|| android::partition::default_mount_point(name))
     {
         Some(mount_point) => mount_point,
         None => {
@@ -298,7 +294,7 @@ fn partition(
         }
     };
     Ok(Partition {
-        name: name.clone(),
+        name: name.to_owned(),
         from,
         filesystem: settings.filesystem,
         mount_point,
@@ -365,7 +361,7 @@ fn reset(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-pub(crate) type Targets = BTreeMap<Name, (PathBuf, PartitionTree)>;
+pub(crate) type Targets = BTreeMap<String, (PathBuf, PartitionTree)>;
 
 /// Start each partition from its base tree and apply every recipe in order.
 fn compose(
@@ -386,8 +382,7 @@ fn compose(
         }]
             .clone();
         let filesystem = partition.filesystem.unwrap_or(base.filesystem);
-        let target =
-            crate::patch::Target::create(&root.join(partition.name.as_ref()), base, filesystem)?;
+        let target = crate::patch::Target::create(&root.join(&partition.name), base, filesystem)?;
         targets.insert(partition.name.clone(), target);
     }
     let packages = build.work_dir.join("packages");
@@ -413,7 +408,7 @@ fn compose(
     let targets = trees
         .into_iter()
         .map(|(name, tree)| {
-            let path = root.join(name.as_ref());
+            let path = root.join(&name);
             (name, (path, tree))
         })
         .collect();
@@ -429,7 +424,7 @@ enum To<'a> {
 /// What a build wrote: each partition's image in `super` order, or one `super` image
 /// holding them all.
 pub(crate) enum Written {
-    Partitions(Vec<(Name, PathBuf)>),
+    Partitions(Vec<(String, PathBuf)>),
     Super(PathBuf),
 }
 

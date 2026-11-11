@@ -1,22 +1,22 @@
 //! Partitions: which side of Treble each is on, where each is mounted, and the
 //! partitions and paths a device path refers to.
 
-use crate::path::{DevicePath, Name, RelativePath, glob};
+use crate::path::{DevicePath, RelativePath, glob};
 
 /// A path in a partition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PartitionPath {
-    pub partition: Name,
+    pub partition: String,
     pub path: RelativePath,
 }
 
 /// Where each partition is mounted on the device, for resolving device paths.
 #[derive(Clone, Debug, Default)]
-pub struct Mounts(Vec<(String, Name)>);
+pub struct Mounts(Vec<(String, String)>);
 
 impl Mounts {
     /// Mount points are absolute, like `/` or `/vendor`.
-    pub fn new(mounts: impl IntoIterator<Item = (String, Name)>) -> Self {
+    pub fn new(mounts: impl IntoIterator<Item = (String, String)>) -> Self {
         Self(mounts.into_iter().collect())
     }
 
@@ -62,7 +62,7 @@ impl Mounts {
 
     /// The directory a partition provides on the device: its mount point, or for
     /// the partition mounted at `/` (a system-as-root `system`), `/<name>`.
-    pub fn directory(&self, partition: &Name) -> Option<String> {
+    pub fn directory(&self, partition: &str) -> Option<String> {
         let (mount, _) = self.0.iter().find(|(_, p)| p == partition)?;
         Some(if mount == "/" {
             format!("/{partition}")
@@ -72,7 +72,7 @@ impl Mounts {
     }
 
     /// The partition mounted at exactly `path`, if one is.
-    pub fn partition_at(&self, path: &DevicePath) -> Option<&Name> {
+    pub fn partition_at(&self, path: &DevicePath) -> Option<&String> {
         let path = path.to_string();
         self.0
             .iter()

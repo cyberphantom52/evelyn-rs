@@ -17,7 +17,7 @@ struct Mount {
 pub(crate) fn check(targets: &Targets, images: &crate::patch::Images) -> Result<(), Error> {
     let Some((root, tree)) = targets
         .iter()
-        .find(|(name, _)| name.as_ref() == "vendor")
+        .find(|(name, _)| name.as_str() == "vendor")
         .map(|(_, target)| target)
     else {
         tracing::warn!("no vendor partition; its fstab cannot be checked");
@@ -63,7 +63,7 @@ fn check_one(fstab: &str, text: &str, targets: &Targets) -> Result<(), Error> {
         mount.required |= !flags.contains(&"nofail");
     }
     for (partition, mount) in mounts {
-        match targets.iter().find(|(name, _)| name.as_ref() == partition) {
+        match targets.iter().find(|(name, _)| name.as_str() == partition) {
             Some((_, (_, tree))) => {
                 if !mount.filesystems.contains(&tree.filesystem.to_string()) {
                     return Err(Error::FstabFilesystem {

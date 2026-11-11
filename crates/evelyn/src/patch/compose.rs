@@ -9,7 +9,7 @@ use crate::toolchain::Tools;
 use crate::{Firmware, SourceRef};
 use android::PartitionTree;
 use android::partition::{Mounts, PartitionPath, STANDARD_SYSTEM, VENDOR_SIDE};
-use android::path::{DevicePath, Name, RelativePath};
+use android::path::{DevicePath, RelativePath};
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
@@ -63,15 +63,15 @@ impl Context<'_> {
 /// A step, or part of one, that did not apply, and why.
 #[derive(Clone, Debug, Serialize)]
 pub struct Skipped {
-    pub recipe: Name,
-    pub step: Name,
+    pub recipe: String,
+    pub step: String,
     pub reason: String,
 }
 
 pub struct Composition {
-    pub(crate) targets: BTreeMap<Name, Target>,
+    pub(crate) targets: BTreeMap<String, Target>,
     /// Which firmware each target partition was built from.
-    pub(crate) origins: BTreeMap<Name, Firmware>,
+    pub(crate) origins: BTreeMap<String, Firmware>,
     skipped: Vec<Skipped>,
     /// What the step being applied reported skipping.
     pub(crate) skips: Vec<String>,
@@ -81,10 +81,10 @@ pub struct Composition {
 
 /// The values the strings of an operation can name as `{name}`: a step's `let:`,
 /// a kit operation's parameters, and what a `Filter` or `ForEach` binds.
-pub(crate) type Bound = BTreeMap<Name, String>;
+pub(crate) type Bound = BTreeMap<String, String>;
 
 impl Composition {
-    pub fn new(targets: BTreeMap<Name, Target>, origins: BTreeMap<Name, Firmware>) -> Self {
+    pub fn new(targets: BTreeMap<String, Target>, origins: BTreeMap<String, Firmware>) -> Self {
         Self {
             targets,
             origins,
@@ -121,7 +121,7 @@ impl Composition {
     /// it comes from firmware and goes into paths.
     pub(crate) fn body(
         &mut self,
-        (bindings, when): (&BTreeMap<Name, Expr>, Option<&Expr>),
+        (bindings, when): (&BTreeMap<String, Expr>, Option<&Expr>),
         operations: &[Operation],
         mut bound: Bound,
         context: &Context<'_>,
@@ -271,13 +271,13 @@ impl Composition {
     /// point whose partition this build lacks (`/odm/...` without `odm`) is nowhere,
     /// rather than in the empty mount-point directory `system` has for it.
     pub(crate) fn resolve(
-        targets: &BTreeMap<Name, Target>,
+        targets: &BTreeMap<String, Target>,
         mounts: &Mounts,
         path: &DevicePath,
     ) -> Vec<PartitionPath> {
         let first = path.components().next().unwrap_or_default();
         let standard = VENDOR_SIDE.contains(&first) || STANDARD_SYSTEM.contains(&first);
-        if standard && first != "system" && !targets.keys().any(|name| name.as_ref() == first) {
+        if standard && first != "system" && !targets.keys().any(|name| name.as_str() == first) {
             return Vec::new();
         }
         mounts.resolve(path)
@@ -299,10 +299,10 @@ impl Composition {
         }
     }
 
-    pub(crate) fn target(&mut self, name: &Name) -> Result<&mut Target, Error> {
+    pub(crate) fn target(&mut self, name: &str) -> Result<&mut Target, Error> {
         self.targets
             .get_mut(name)
-            .ok_or_else(|| Error::UnknownPartition(name.clone()))
+            .ok_or_else(|| Error::UnknownPartition(name.to_owned()))
     }
 
     /// Give the entries waiting for them Android's defaults, from the finished
@@ -312,7 +312,7 @@ impl Composition {
         self,
         mounts: &Mounts,
         images: &Images,
-    ) -> Result<(BTreeMap<Name, PartitionTree>, Vec<Skipped>), Error> {
+    ) -> Result<(BTreeMap<String, PartitionTree>, Vec<Skipped>), Error> {
         let defaults = match self.targets.values().any(Target::waits_for_defaults) {
             true => Some(Defaults::new(&self.targets, mounts, images)?),
             false => None,

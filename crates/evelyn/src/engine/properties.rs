@@ -3,7 +3,6 @@
 
 use crate::engine::{Error, firmware::OpenFirmware, profile};
 use android::partition::STANDARD_SYSTEM;
-use android::path::Name;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -12,7 +11,7 @@ use std::{
 /// A stock partition must be the build `evelyn.toml` pins: the property files init
 /// loads from it set `ro.<partition>.build.fingerprint` to `expected`.
 pub(crate) fn check_fingerprint(
-    partition: &Name,
+    partition: &str,
     image: &Path,
     expected: &str,
 ) -> Result<(), Error> {
@@ -20,7 +19,7 @@ pub(crate) fn check_fingerprint(
     match loaded(partition, image)?.remove(&key) {
         Some(value) if value == expected => Ok(()),
         Some(value) => Err(Error::StockFingerprint {
-            partition: partition.clone(),
+            partition: partition.to_owned(),
             expected: expected.into(),
             found: value,
         }),
@@ -36,7 +35,7 @@ pub(crate) fn check_fingerprint(
 pub(crate) fn rom_properties(rom: &OpenFirmware) -> Result<BTreeMap<String, String>, Error> {
     let mut properties = BTreeMap::new();
     for name in STANDARD_SYSTEM {
-        if let Some(partition) = rom.names().find(|key| key.as_ref() == name)
+        if let Some(partition) = rom.names().find(|key| key.as_str() == name)
             && let Some(image) = rom.image(partition)
         {
             properties.extend(loaded(partition, image)?);
@@ -46,9 +45,12 @@ pub(crate) fn rom_properties(rom: &OpenFirmware) -> Result<BTreeMap<String, Stri
 }
 
 /// The one port of the repository at `root` a ROM setting `properties` matches.
-pub(crate) fn port_for(root: &Path, properties: &BTreeMap<String, String>) -> Result<Name, Error> {
+pub(crate) fn port_for(
+    root: &Path,
+    properties: &BTreeMap<String, String>,
+) -> Result<String, Error> {
     let ports = profile::ports(root)?;
-    let matching: Vec<&Name> = ports
+    let matching: Vec<&String> = ports
         .iter()
         .filter(|(_, port)| port.matches(properties))
         .map(|(name, _)| name)
@@ -80,10 +82,10 @@ pub(crate) fn port_for(root: &Path, properties: &BTreeMap<String, String>) -> Re
 
 /// What the property files init loads from `partition` assign, the last
 /// assignment of a key winning.
-fn loaded(partition: &Name, image: &Path) -> Result<BTreeMap<String, String>, Error> {
+fn loaded(partition: &str, image: &Path) -> Result<BTreeMap<String, String>, Error> {
     // The groups init loads from this partition, as paths in its image; system is
     // mounted at /, so its files are under system/ in it.
-    let mount = match partition.as_ref() {
+    let mount = match partition {
         "system" => "/".to_owned(),
         other => format!("/{other}/"),
     };

@@ -4,7 +4,6 @@
 //! `Exists(Asset("apex/com.android.vndk.v{vndk}.apex"))`.
 
 use crate::recipe::{Error, location::Location};
-use android::path::Name;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt};
 
@@ -30,7 +29,7 @@ pub enum Expr {
     /// holds with `{name}` bound to each: the string, or the entry's device path.
     Filter {
         over: Box<Expr>,
-        name: Name,
+        name: String,
         keep: Box<Expr>,
     },
     /// The lines of a string, as a list.
@@ -95,7 +94,7 @@ impl fmt::Display for Expr {
 }
 
 /// `written` with each `{name}` in it replaced by the value bound to the name.
-pub fn substitute(written: &str, bound: &BTreeMap<Name, String>) -> Result<String, Error> {
+pub fn substitute(written: &str, bound: &BTreeMap<String, String>) -> Result<String, Error> {
     let mut text = String::new();
     for part in parts(written) {
         match part {
@@ -114,12 +113,12 @@ pub fn substitute(written: &str, bound: &BTreeMap<Name, String>) -> Result<Strin
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Part {
     Text(String),
-    Bound(Name),
+    Bound(String),
 }
 
-/// The pieces of a written string. `{name}`, a name of `[A-Za-z0-9_-]`, is the
-/// value bound to it; `{{` and `}}` are `{` and `}`; any other brace stands for
-/// itself, as in an XML namespace's `{http://…}`.
+/// The pieces of a written string. `{name}`, a name of `[A-Za-z0-9_-]` starting
+/// with a letter or digit, is the value bound to it; `{{` and `}}` are `{` and `}`;
+/// any other brace stands for itself, as in an XML namespace's `{http://…}`.
 pub(crate) fn parts(written: &str) -> Vec<Part> {
     let mut parts = Vec::new();
     let mut text = String::new();
@@ -136,9 +135,10 @@ pub(crate) fn parts(written: &str) -> Vec<Part> {
         let end = after
             .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
             .unwrap_or(after.len());
-        let bound = (rest.starts_with('{') && end > 0 && after[end..].starts_with('}'))
-            .then(|| Name::try_from(after[..end].to_owned()).ok())
-            .flatten();
+        let bound = (rest.starts_with('{')
+            && after.starts_with(|c: char| c.is_ascii_alphanumeric())
+            && after[end..].starts_with('}'))
+        .then(|| after[..end].to_owned());
         match bound {
             Some(name) => {
                 if !text.is_empty() {

@@ -5,7 +5,7 @@ use crate::patch::layout;
 use crate::recipe::Metadata;
 use android::Filesystem;
 use android::metadata::AndroidMetadata;
-use android::path::{Name, RelativePath};
+use android::path::RelativePath;
 use android::{Content, Entry, EntryKind, File, PartitionTree};
 use android::{Image, Store};
 use std::{
@@ -46,7 +46,7 @@ pub enum Error {
     Value(#[from] crate::recipe::value::ValueError),
     #[error("step {step}: {source}")]
     Step {
-        step: Name,
+        step: String,
         #[source]
         source: Box<Error>,
     },
@@ -63,7 +63,7 @@ pub enum Error {
     #[error("{0} does not work inside a Package")]
     OutsidePackage(String),
     #[error("no target partition {0}")]
-    UnknownPartition(Name),
+    UnknownPartition(String),
     #[error("a scope selects no partition of this build")]
     EmptyScope,
     #[error("{0} is in no partition this build has")]
@@ -266,12 +266,12 @@ impl Target {
         Ok(entries)
     }
 
-    fn new_blob(&mut self) -> Name {
+    fn new_blob(&mut self) -> String {
         self.next_blob += 1;
-        Name::try_from(format!("t{}", self.next_blob)).expect("blob names are valid")
+        format!("t{}", self.next_blob)
     }
 
-    fn blob_path(&self, blob: &Name) -> PathBuf {
+    fn blob_path(&self, blob: &str) -> PathBuf {
         self.root.join(PartitionTree::blob_path(blob).as_ref())
     }
 
@@ -391,7 +391,7 @@ impl Target {
     /// for where it is on the device, from `defaults`, then what was set over them.
     pub(crate) fn resolve(
         self,
-        partition: &Name,
+        partition: &str,
         mounts: &android::partition::Mounts,
         defaults: Option<&crate::patch::defaults::Defaults>,
     ) -> Result<PartitionTree, Error> {
@@ -399,12 +399,12 @@ impl Target {
             EntryMetadata::Set(metadata) => Ok(metadata),
             EntryMetadata::Default(overrides) => {
                 let at = android::partition::PartitionPath {
-                    partition: partition.clone(),
+                    partition: partition.to_owned(),
                     path: path.clone(),
                 };
                 let device = mounts
                     .device_path(&at)
-                    .ok_or_else(|| Error::UnknownPartition(partition.clone()))?;
+                    .ok_or_else(|| Error::UnknownPartition(partition.to_owned()))?;
                 let defaults = defaults.expect("made when an entry waits for them");
                 let mut metadata = defaults.metadata(&device, kind)?;
                 for overrides in &overrides {

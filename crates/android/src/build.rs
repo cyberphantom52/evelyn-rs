@@ -7,7 +7,6 @@ mod erofs;
 mod ext4;
 use crate::Filesystem;
 use crate::Region;
-use crate::path::Name;
 use std::{fs, path::Path};
 
 /// Fixed timestamp for reproducible images (2009-01-01, as AOSP builds use).
@@ -20,18 +19,14 @@ pub fn image(
     store: &Store<'_>,
     region: Region,
     filesystem: Filesystem,
-    partition: &Name,
+    partition: &str,
     mount_point: &str,
 ) -> Result<u64, Error> {
     let uuid = uuid(partition);
     match filesystem {
         Filesystem::Erofs => erofs::write(store, tree, region, uuid, EPOCH),
         Filesystem::Ext4 => {
-            let label = if mount_point == "/" {
-                "/"
-            } else {
-                partition.as_ref()
-            };
+            let label = if mount_point == "/" { "/" } else { partition };
             ext4::write(store, tree, region, label, uuid, EPOCH)
         }
     }
@@ -43,7 +38,7 @@ pub fn image_file(
     store: &Store<'_>,
     output: &Path,
     filesystem: Filesystem,
-    partition: &Name,
+    partition: &str,
     mount_point: &str,
 ) -> Result<u64, Error> {
     let file = fs::OpenOptions::new()
@@ -59,8 +54,8 @@ pub fn image_file(
 }
 
 /// Stable UUID derived from the partition name, so rebuilds produce identical images.
-fn uuid(partition: &Name) -> [u8; 16] {
-    let digest = crate::hash::Sha256Digest::bytes(partition.as_ref().as_bytes());
+fn uuid(partition: &str) -> [u8; 16] {
+    let digest = crate::hash::Sha256Digest::bytes(partition.as_bytes());
     let mut uuid: [u8; 16] = std::array::from_fn(|at| digest.as_bytes()[at]);
     // Version 4, RFC 4122 variant.
     uuid[6] = 0x40 | (uuid[6] & 0x0f);

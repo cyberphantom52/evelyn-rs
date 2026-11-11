@@ -4,7 +4,7 @@
 use crate::Error;
 use crate::Filesystem;
 use crate::metadata::AndroidMetadata;
-use crate::path::{Name, RelativePath};
+use crate::path::RelativePath;
 use std::collections::BTreeMap;
 
 /// Where a file's bytes are: unchanged in a source image, or in a tree's own store.
@@ -14,7 +14,7 @@ pub enum Content {
     /// [`crate::Store`] reads.
     Image { image: usize, inode: u64 },
     /// A file in the tree's `content/` directory, written by an edit.
-    Blob(Name),
+    Blob(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,7 +50,7 @@ pub struct PartitionTree<M = AndroidMetadata> {
 }
 
 impl PartitionTree {
-    pub fn blob_path(blob: &Name) -> RelativePath {
+    pub fn blob_path(blob: &str) -> RelativePath {
         RelativePath::try_from(format!("content/{blob}")).expect("blob names are safe components")
     }
 }

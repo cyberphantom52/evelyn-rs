@@ -40,12 +40,6 @@ macro_rules! string_type {
     };
 }
 
-string_type!(Name, "name", |s: &str| s
-    .bytes()
-    .next()
-    .is_some_and(|b| b.is_ascii_alphanumeric())
-    && s.bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)));
 // An empty path is one empty component, so it is rejected too.
 string_type!(RelativePath, "partition-relative path", |s: &str| !s
     .contains('\0')

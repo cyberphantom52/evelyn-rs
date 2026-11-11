@@ -7,7 +7,6 @@
 //! the next 1 MiB boundary on, each starting at the next one after the last.
 
 use crate::hash::Sha256Digest;
-use crate::path::Name;
 use crate::{Error, Region};
 use serde::Deserialize;
 use std::{
@@ -44,7 +43,7 @@ pub struct SuperImage {
     /// Where the next partition goes.
     next: u64,
     /// Each partition built so far, with its start and size in bytes.
-    partitions: Vec<(Name, u64, u64)>,
+    partitions: Vec<(String, u64, u64)>,
     /// What those partitions take of their group.
     used: u64,
 }
@@ -86,7 +85,7 @@ impl SuperImage {
 
     /// Record the partition just built in [`Self::region`], `size` bytes long, if it
     /// fits in the device and in its group.
-    pub fn add(&mut self, name: Name, size: u64) -> Result<(), Error> {
+    pub fn add(&mut self, name: String, size: u64) -> Result<(), Error> {
         let size = size.next_multiple_of(BLOCK_SIZE);
         if self.next + size > self.layout.size {
             return Err(invalid(format!(
@@ -259,7 +258,7 @@ pub struct SuperLayout {
     pub metadata_size: u32,
     pub slots: SlotScheme,
     /// The one dynamic partition group, named as the vendor names it.
-    pub group: Name,
+    pub group: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]

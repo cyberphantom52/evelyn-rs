@@ -7,7 +7,6 @@ pub mod patch;
 pub mod recipe;
 pub mod toolchain;
 
-use android::path::Name;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -32,7 +31,7 @@ impl fmt::Display for Firmware {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SourceRef {
     pub source: Firmware,
-    pub partition: Name,
+    pub partition: String,
 }
 
 impl fmt::Display for SourceRef {

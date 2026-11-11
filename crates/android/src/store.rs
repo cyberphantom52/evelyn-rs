@@ -1,7 +1,6 @@
 //! Where file contents are read from: source images and a tree's own blobs.
 
 use crate::hash::Sha256Digest;
-use crate::path::Name;
 use crate::{Content, Error, File, Image, PartitionTree};
 use std::{
     fs,
@@ -50,7 +49,7 @@ impl<'a> Store<'a> {
         Ok(Sha256Digest::reader(self.open(file.content, file.size)?)?)
     }
 
-    fn blob_path(&self, blob: &Name) -> Result<PathBuf, Error> {
+    fn blob_path(&self, blob: &str) -> Result<PathBuf, Error> {
         let root = self
             .root
             .ok_or_else(|| Error::Unsupported(format!("blob {blob} outside a tree")))?;

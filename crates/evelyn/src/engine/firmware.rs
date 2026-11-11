@@ -9,7 +9,6 @@
 use crate::engine::Error;
 use android::ImageFormat;
 use android::hash::Sha256Digest;
-use android::path::Name;
 use payload_dumper::{
     AsyncPayloadRead, DeltaArchiveManifest, ExtractionPaths, FileType, HttpReader,
     LocalAsyncPayloadReader, LocalAsyncZipPayloadReader, NoOpDownloadReporter, NoOpReporter,
@@ -54,7 +53,7 @@ impl std::fmt::Display for Given {
 /// A firmware's partitions, each image there once found or extracted.
 pub(crate) struct OpenFirmware {
     /// Every filesystem partition it has, with its image once there.
-    images: BTreeMap<Name, Option<PathBuf>>,
+    images: BTreeMap<String, Option<PathBuf>>,
     /// Where a directory of images keeps those a flashable ZIP flashes.
     firmware_dir: Option<PathBuf>,
     ota: Option<Ota>,
@@ -140,9 +139,7 @@ impl OpenFirmware {
             match &dynamic {
                 Some(dynamic) if !dynamic.contains(name) => other.push(name.clone()),
                 _ => {
-                    if let Ok(name) = Name::try_from(name.clone()) {
-                        images.insert(name, None);
-                    }
+                    images.insert(name.clone(), None);
                 }
             }
         }
@@ -162,7 +159,7 @@ impl OpenFirmware {
         };
         if dynamic.is_none() {
             // Which partitions are filesystems is only known from their images.
-            let all: Vec<Name> = firmware.images.keys().cloned().collect();
+            let all: Vec<String> = firmware.images.keys().cloned().collect();
             firmware.extract(&all)?;
             for name in all {
                 let image = firmware.images[&name].clone().expect("extracted");
@@ -175,34 +172,32 @@ impl OpenFirmware {
     }
 
     /// Every filesystem partition the firmware has.
-    pub(crate) fn names(&self) -> impl Iterator<Item = &Name> {
+    pub(crate) fn names(&self) -> impl Iterator<Item = &String> {
         self.images.keys()
     }
 
     pub(crate) fn has(&self, name: &str) -> bool {
-        self.images.keys().any(|key| key.as_ref() == name)
+        self.images.keys().any(|key| key.as_str() == name)
     }
 
     /// The image of `name`, once [`OpenFirmware::extract`] has it there.
-    pub(crate) fn image(&self, name: &Name) -> Option<&Path> {
+    pub(crate) fn image(&self, name: &str) -> Option<&Path> {
         self.images.get(name)?.as_deref()
     }
 
     /// Have the images of `names` there, extracting those of a package that are
     /// not yet; names the firmware lacks are left out.
-    pub(crate) fn extract(&mut self, names: &[Name]) -> Result<(), Error> {
+    pub(crate) fn extract(&mut self, names: &[String]) -> Result<(), Error> {
         let Some(ota) = &self.ota else {
             return Ok(());
         };
         let wanted: Vec<&str> = names
             .iter()
             .filter(|name| matches!(self.images.get(*name), Some(None)))
-            .map(|name| name.as_ref())
+            .map(|name| name.as_str())
             .collect();
         for (name, image) in ota.dump(&wanted, &ota.scratch)? {
-            if let Ok(name) = Name::try_from(name) {
-                self.images.insert(name, Some(image));
-            }
+            self.images.insert(name, Some(image));
         }
         Ok(())
     }
@@ -474,7 +469,7 @@ fn otas(dir: &Path) -> Result<Vec<PathBuf>, Error> {
 }
 
 /// The `<partition>.img` files directly in `dir`, if it exists.
-fn image_files(dir: &Path) -> Result<BTreeMap<Name, PathBuf>, Error> {
+fn image_files(dir: &Path) -> Result<BTreeMap<String, PathBuf>, Error> {
     let mut images = BTreeMap::new();
     if !dir.is_dir() {
         return Ok(images);
@@ -489,10 +484,8 @@ fn image_files(dir: &Path) -> Result<BTreeMap<Name, PathBuf>, Error> {
         else {
             continue;
         };
-        if let Ok(name) = Name::try_from(stem.to_string_lossy().into_owned())
-            && path.is_file()
-        {
-            images.insert(name, path);
+        if path.is_file() {
+            images.insert(stem.to_string_lossy().into_owned(), path);
         }
     }
     Ok(images)

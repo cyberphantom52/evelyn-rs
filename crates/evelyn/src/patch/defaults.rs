@@ -8,7 +8,7 @@ use android::defaults::{FILE_CONTEXTS, FS_CONFIG};
 use android::defaults::{FileContexts, FileKind, FsConfig, capability_xattr};
 use android::metadata::AndroidMetadata;
 use android::partition::{Mounts, PartitionPath};
-use android::path::{DevicePath, Name};
+use android::path::DevicePath;
 use std::collections::BTreeMap;
 
 pub(crate) struct Defaults {
@@ -19,7 +19,7 @@ pub(crate) struct Defaults {
 impl Defaults {
     /// The defaults as the build has them.
     pub(crate) fn new(
-        targets: &BTreeMap<Name, Target>,
+        targets: &BTreeMap<String, Target>,
         mounts: &Mounts,
         images: &Images,
     ) -> Result<Self, Error> {
