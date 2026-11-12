@@ -98,7 +98,10 @@ The operations:
 - `AddPolicy(target:, policies:)` adds TE policies to one of the vendor's CIL
   files, checked to resolve with the rest of the device's policy.
 - `Package(target:, edits:)` decodes an APK or JAR and applies edits to it, with
-  paths from its root, including `StubMethod`, `ReplaceMethod` and `InsertMethod`.
+  paths from its root, including the smali edits: `StubMethod`, `ReplaceMethod`
+  and `InsertMethod` change one method of a class, and `ReplaceOperand(from:,
+  to:)` replaces what instructions name (a method, a field, a type, a string, a
+  number) in every class, or in `class:`, or in its `method:`.
 - `Assert(condition:, message:)` and `AssertHash(target:, sha256:)` fail the build
   when the firmware is not what the patch expects.
 - `ForEach(over:, name:, operations:)` applies operations once for each string of
@@ -169,7 +172,7 @@ partitions left out and the steps skipped.
 
 - `crates/`: the Rust workspace
   - `android`: what is true of Android whatever ports it: EROFS and ext4 images (raw or sparse) read in place, scanned into partition trees and built back, alone or straight into a `super` image; partition paths, mount points and Treble sides; Android file metadata and its defaults; `.prop` files
-  - `smali`: smali parser and method edits
+  - `smali`: smali as a lossless tree, and edits of its methods and instructions
   - `evelyn`: the `evelyn` binary, and the library it is built on:
     - `recipe`: the recipe language and its kits
     - `patch`: applies recipes to partition trees
@@ -185,7 +188,6 @@ partitions left out and the steps skipped.
 - [ ] Sparse image output
 - [ ] Port system-as-root ROMs to devices with the older `/system` layout (and the reverse)
 - [ ] Patch boot images (`boot`, `vendor_boot`) in Evelyn instead of beforehand, and check the first-stage fstab in `vendor_boot` as well as `vendor/etc`
-- [ ] Instruction-level smali patches (replace a call or constant in every class): make the smali tree lossless, print it back, and edit it as a tree with visitors instead of splicing text, with the method-level edits rebuilt on top
 
 ## Authors
 

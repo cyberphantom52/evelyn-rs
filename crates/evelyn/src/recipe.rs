@@ -184,6 +184,18 @@ pub enum Operation {
         method: String,
         returns: Returns,
     },
+    /// Inside a `Package`: replace the operand written as `from` with `to` in every
+    /// instruction that has it, of every class, or of `class`, or of its `method`:
+    /// a method (`Lcom/example/Name;->get()I`), a field, a type, a string in its
+    /// quotes, a number. An instruction must have it.
+    ReplaceOperand {
+        from: String,
+        to: String,
+        #[serde(default)]
+        class: Option<String>,
+        #[serde(default)]
+        method: Option<String>,
+    },
     /// The condition must hold, or the build fails with `message`.
     Assert { condition: Expr, message: String },
     /// The file's content must have this SHA-256.
@@ -228,7 +240,7 @@ pub enum Operation {
 }
 
 /// The built-in operations' names.
-pub(crate) const BUILT_IN_OPERATIONS: [&str; 20] = [
+pub(crate) const BUILT_IN_OPERATIONS: [&str; 21] = [
     "Copy",
     "Import",
     "Install",
@@ -243,6 +255,7 @@ pub(crate) const BUILT_IN_OPERATIONS: [&str; 20] = [
     "ReplaceMethod",
     "InsertMethod",
     "StubMethod",
+    "ReplaceOperand",
     "Assert",
     "AssertHash",
     "ForEach",
@@ -303,6 +316,7 @@ impl Operation {
             Self::ReplaceMethod { .. } => "ReplaceMethod",
             Self::InsertMethod { .. } => "InsertMethod",
             Self::StubMethod { .. } => "StubMethod",
+            Self::ReplaceOperand { .. } => "ReplaceOperand",
             Self::Assert { .. } => "Assert",
             Self::AssertHash { .. } => "AssertHash",
             Self::ForEach { .. } => "ForEach",
@@ -333,6 +347,7 @@ impl Operation {
                 | Self::ReplaceMethod { .. }
                 | Self::InsertMethod { .. }
                 | Self::StubMethod { .. }
+                | Self::ReplaceOperand { .. }
                 | Self::ForEach { .. }
                 | Self::When { .. }
         )
