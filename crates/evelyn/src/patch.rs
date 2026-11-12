@@ -2,7 +2,6 @@
 //! conditions read from the composed firmware, and each operation a function
 //! over the build's files or an open package's.
 
-mod align;
 mod apktool;
 mod binary;
 mod compose;

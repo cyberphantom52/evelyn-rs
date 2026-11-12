@@ -109,7 +109,7 @@ enum Error {
     Profile(#[from] evelyn::engine::profile::Error),
     #[error(transparent)]
     Toolchain(#[from] evelyn::toolchain::Error),
-    #[error("Java is needed for apktool and apksigner: {0}")]
+    #[error("Java is needed for apktool: {0}")]
     Java(String),
     #[error("{0} of what builds need could not be set up")]
     Unchecked(usize),

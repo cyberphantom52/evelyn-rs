@@ -33,13 +33,6 @@ pub enum Error {
     Hash { url: &'static str, found: String },
     #[error("{0} is not the pinned file; delete it and run evelyn check")]
     Changed(PathBuf),
-    #[error("cannot read {member} from {url}: {source}")]
-    Archive {
-        url: &'static str,
-        member: &'static str,
-        #[source]
-        source: zip::result::ZipError,
-    },
     #[error("cannot generate the signing key: {0}")]
     Key(String),
     #[error("{path}: {source}")]
@@ -157,7 +150,7 @@ impl Tools {
             let state = match path.exists() {
                 false => self.fetch(pin, &path).map(|()| State::New),
                 true => match sha256(&path) {
-                    Ok(found) if found == pin.file_sha256() => Ok(State::Present),
+                    Ok(found) if found == pin.sha256 => Ok(State::Present),
                     Ok(_) => Err(Error::Changed(path.clone())),
                     Err(error) => Err(error),
                 },
@@ -221,33 +214,7 @@ impl Tools {
             }
             Ok(())
         };
-        let fetched = match &pin.member {
-            None => download(&partial),
-            Some(member) => {
-                let archive = path.with_extension("download");
-                let extracted = download(&archive).and_then(|()| {
-                    let at = |source| Error::Archive {
-                        url: pin.url,
-                        member: member.name,
-                        source,
-                    };
-                    let file = fs::File::open(&archive).map_err(io_at(&archive))?;
-                    let mut zip = zip::ZipArchive::new(file).map_err(at)?;
-                    let mut entry = zip.by_name(member.name).map_err(at)?;
-                    let mut out = fs::File::create(&partial).map_err(io_at(&partial))?;
-                    let found = copy_hashing(&mut entry, &mut out, &partial)?;
-                    if found != member.sha256 {
-                        return Err(Error::Hash {
-                            url: pin.url,
-                            found,
-                        });
-                    }
-                    Ok(())
-                });
-                let _ = fs::remove_file(&archive);
-                extracted
-            }
-        };
+        let fetched = download(&partial);
         if let Err(error) = fetched {
             let _ = fs::remove_file(&partial);
             return Err(error);

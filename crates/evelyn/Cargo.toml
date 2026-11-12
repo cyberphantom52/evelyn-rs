@@ -9,8 +9,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-base64.workspace = true
 android.workspace = true
+apkscope-core.workspace = true
+base64.workspace = true
 smali.workspace = true
 clap.workspace = true
 diffy.workspace = true
