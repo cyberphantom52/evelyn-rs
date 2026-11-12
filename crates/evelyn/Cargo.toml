@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 android.workspace = true
+apkscope-core.workspace = true
 smali.workspace = true
 clap.workspace = true
 diffy.workspace = true

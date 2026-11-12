@@ -123,21 +123,6 @@ impl Composition {
             .collect()
     }
 
-    /// Every smali file of the open package, whichever dex it is in.
-    pub(crate) fn package_smali(&self) -> Result<Vec<Located>, Error> {
-        let mut found = Vec::new();
-        let mut dirs = self.select_package("/smali*")?;
-        while let Some(dir) = dirs.pop() {
-            for name in self.select_package(&format!("/{}/*", dir.path.as_ref()))? {
-                match name.path.as_ref().ends_with(".smali") {
-                    true => found.push(name),
-                    false => dirs.push(name),
-                }
-            }
-        }
-        Ok(found)
-    }
-
     /// What a device path, or a relative pattern in the directory of each
     /// partition that came from `origin` and matches `partition` (a name or
     /// glob), matches in the build.

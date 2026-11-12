@@ -23,8 +23,6 @@ pub enum Error {
     #[error(transparent)]
     Android(#[from] android::Error),
     #[error(transparent)]
-    Align(#[from] crate::patch::align::Error),
-    #[error(transparent)]
     Sepolicy(#[from] crate::patch::sepolicy::Error),
     #[error(transparent)]
     Binary(#[from] crate::patch::binary::Error),

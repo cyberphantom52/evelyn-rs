@@ -97,11 +97,12 @@ The operations:
   `Append(target:, content:)` edit a file.
 - `AddPolicy(target:, policies:)` adds TE policies to one of the vendor's CIL
   files, checked to resolve with the rest of the device's policy.
-- `Package(target:, edits:)` decodes an APK or JAR and applies edits to it, with
-  paths from its root, including the smali edits: `StubMethod`, `ReplaceMethod`
-  and `InsertMethod` change one method of a class, and `ReplaceOperand(from:,
-  to:)` replaces what instructions name (a method, a field, a type, a string, a
-  number) in every class, or in `class:`, or in its `method:`.
+- `Package(target:, edits:)` applies edits to an APK or JAR. Its code is edited
+  as smali, in place: `StubMethod`, `ReplaceMethod` and `InsertMethod` change
+  one method of a class, and `ReplaceOperand(from:, to:)` replaces what
+  instructions name (a method, a field, a type, a string, a number) in every
+  class, or in `class:`, or in its `method:`. The other edits take paths from
+  its root (`/res/values/strings.xml`), for which it is decoded with apktool.
 - `Assert(condition:, message:)` and `AssertHash(target:, sha256:)` fail the build
   when the firmware is not what the patch expects.
 - `ForEach(over:, name:, operations:)` applies operations once for each string of
@@ -132,11 +133,11 @@ any by name, those with a default included.
 
 - Rust (the toolchain is pinned in `rust-toolchain.toml`)
 - A C compiler, which builds liblz4 for EROFS compression
-- Java, for apktool and apksigner
+- Java, for apktool: only patches that edit a package's resources or files need it
 
 What else a build needs Evelyn keeps in its data directory
 (`~/Library/Application Support/evelyn` on macOS, `~/.local/share/evelyn` on
-Linux): apktool, apksigner and VNDK APEXes, downloaded the first time one is
+Linux): apktool and VNDK APEXes, downloaded the first time one is
 needed and checked against the SHA-256 Evelyn pins, and the key it signs APKs
 with, generated the first time. `evelyn check` sets all of it up at once,
 checks what is there and reports what is missing; `evelyn init` runs it too.

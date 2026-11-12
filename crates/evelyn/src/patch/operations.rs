@@ -113,7 +113,7 @@ impl Composition {
                     Returns::Zero => smali::Stub::Zero,
                     Returns::One => smali::Stub::One,
                 };
-                self.smali(class, method, bound, context, |source, class, method| {
+                self.smali(class, method, bound, |source, class, method| {
                     smali::stub_method(source, class, method, stub)
                 })
             }
@@ -123,7 +123,7 @@ impl Composition {
                 body,
             } => {
                 let body = self.asset(body, bound, context)?;
-                self.smali(class, method, bound, context, |source, class, method| {
+                self.smali(class, method, bound, |source, class, method| {
                     smali::replace_method(source, class, method, &body)
                 })
             }
@@ -133,7 +133,7 @@ impl Composition {
                 body,
             } => {
                 let body = self.asset(body, bound, context)?;
-                self.smali(class, method, bound, context, |source, class, method| {
+                self.smali(class, method, bound, |source, class, method| {
                     smali::insert_method(source, class, method, &body)
                 })
             }
@@ -142,13 +142,7 @@ impl Composition {
                 to,
                 class,
                 method,
-            } => self.replace_operand(
-                (from, to),
-                class.as_deref(),
-                method.as_deref(),
-                bound,
-                context,
-            ),
+            } => self.replace_operand((from, to), class.as_deref(), method.as_deref(), bound),
             Operation::Assert { condition, message } => {
                 match self.eval(condition, bound, context)?.as_bool()? {
                     true => Ok(()),
@@ -524,64 +518,55 @@ impl Composition {
         crate::patch::package::close(self.target(&at.partition)?, &at.path, opened, context)
     }
 
-    /// Change one method of a class in the open package, in the smali file that
-    /// defines it: `smali*/com/example/Name.smali`, whichever dex it is in.
+    /// Change one method of a class in the open package.
     fn smali(
         &mut self,
         class: &str,
         method: &str,
         bound: &Bound,
-        context: &Context<'_>,
         edit: impl Fn(&str, &str, &str) -> Result<String, smali::Error>,
     ) -> Result<(), Error> {
         let (class, method) = (
             crate::recipe::substitute(class, bound)?,
             crate::recipe::substitute(method, bound)?,
         );
-        let name = class.trim_start_matches('L').trim_end_matches(';');
-        let files = self.select_package(&format!("/smali*/{name}.smali"))?;
-        if files.is_empty() {
-            return Err(Error::Assertion(format!(
-                "class {class} is not in the package"
-            )));
-        }
-        self.edit(&files, context, |bytes| {
-            Ok(edit(&text(bytes)?, &class, &method)?.into_bytes())
-        })
+        let source = self.open_package()?.class(&class)?;
+        *source = edit(source, &class, &method)?;
+        Ok(())
     }
 
-    /// Replace an operand of the instructions that have it, in the smali of every
-    /// class of the open package, or of one, or of one of its methods. Only a file
-    /// in which it is written is parsed.
+    /// The package a `Package` has open.
+    fn open_package(&mut self) -> Result<&mut crate::patch::package::Opened, Error> {
+        self.package.as_mut().ok_or(Error::Unsupported(
+            "a package's code is edited inside a Package",
+        ))
+    }
+
+    /// Replace an operand of the instructions that have it, in every class of the
+    /// open package, or in one, or in one of its methods. Only a class in which
+    /// it is written is parsed.
     fn replace_operand(
         &mut self,
         (from, to): (&str, &str),
         class: Option<&str>,
         method: Option<&str>,
         bound: &Bound,
-        context: &Context<'_>,
     ) -> Result<(), Error> {
         let substitute = |text: &str| crate::recipe::substitute(text, bound);
         let (from, to) = (substitute(from)?, substitute(to)?);
         let method = method.map(substitute).transpose()?;
-        let files = match class {
-            Some(class) => {
-                let class = substitute(class)?;
-                let name = class.trim_start_matches('L').trim_end_matches(';');
-                self.select_package(&format!("/smali*/{name}.smali"))?
-            }
-            None => self.package_smali()?,
+        let package = self.open_package()?;
+        let classes = match class {
+            Some(class) => vec![substitute(class)?],
+            None => package.classes_with(&from)?,
         };
         let mut replaced = 0;
-        self.edit(&files, context, |bytes| {
-            let source = text(bytes)?;
-            if !source.contains(&from) {
-                return Ok(bytes.to_vec());
-            }
-            let (edited, count) = smali::replace_operand(&source, &from, &to, method.as_deref())?;
+        for class in classes {
+            let source = package.class(&class)?;
+            let (edited, count) = smali::replace_operand(source, &from, &to, method.as_deref())?;
+            *source = edited;
             replaced += count;
-            Ok(edited.into_bytes())
-        })?;
+        }
         match replaced {
             0 => Err(Error::Assertion(format!(
                 "no instruction has the operand {from}"
