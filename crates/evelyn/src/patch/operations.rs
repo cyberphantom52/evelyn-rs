@@ -137,6 +137,18 @@ impl Composition {
                     smali::insert_method(source, class, method, &body)
                 })
             }
+            Operation::ReplaceOperand {
+                from,
+                to,
+                class,
+                method,
+            } => self.replace_operand(
+                (from, to),
+                class.as_deref(),
+                method.as_deref(),
+                bound,
+                context,
+            ),
             Operation::Assert { condition, message } => {
                 match self.eval(condition, bound, context)?.as_bool()? {
                     true => Ok(()),
@@ -536,6 +548,46 @@ impl Composition {
         self.edit(&files, context, |bytes| {
             Ok(edit(&text(bytes)?, &class, &method)?.into_bytes())
         })
+    }
+
+    /// Replace an operand of the instructions that have it, in the smali of every
+    /// class of the open package, or of one, or of one of its methods. Only a file
+    /// in which it is written is parsed.
+    fn replace_operand(
+        &mut self,
+        (from, to): (&str, &str),
+        class: Option<&str>,
+        method: Option<&str>,
+        bound: &Bound,
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
+        let substitute = |text: &str| crate::recipe::substitute(text, bound);
+        let (from, to) = (substitute(from)?, substitute(to)?);
+        let method = method.map(substitute).transpose()?;
+        let files = match class {
+            Some(class) => {
+                let class = substitute(class)?;
+                let name = class.trim_start_matches('L').trim_end_matches(';');
+                self.select_package(&format!("/smali*/{name}.smali"))?
+            }
+            None => self.package_smali()?,
+        };
+        let mut replaced = 0;
+        self.edit(&files, context, |bytes| {
+            let source = text(bytes)?;
+            if !source.contains(&from) {
+                return Ok(bytes.to_vec());
+            }
+            let (edited, count) = smali::replace_operand(&source, &from, &to, method.as_deref())?;
+            replaced += count;
+            Ok(edited.into_bytes())
+        })?;
+        match replaced {
+            0 => Err(Error::Assertion(format!(
+                "no instruction has the operand {from}"
+            ))),
+            _ => Ok(()),
+        }
     }
 
     fn assert_hash(

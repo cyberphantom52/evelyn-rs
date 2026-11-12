@@ -123,6 +123,21 @@ impl Composition {
             .collect()
     }
 
+    /// Every smali file of the open package, whichever dex it is in.
+    pub(crate) fn package_smali(&self) -> Result<Vec<Located>, Error> {
+        let mut found = Vec::new();
+        let mut dirs = self.select_package("/smali*")?;
+        while let Some(dir) = dirs.pop() {
+            for name in self.select_package(&format!("/{}/*", dir.path.as_ref()))? {
+                match name.path.as_ref().ends_with(".smali") {
+                    true => found.push(name),
+                    false => dirs.push(name),
+                }
+            }
+        }
+        Ok(found)
+    }
+
     /// What a device path, or a relative pattern in the directory of each
     /// partition that came from `origin` and matches `partition` (a name or
     /// glob), matches in the build.
@@ -271,10 +286,13 @@ impl Composition {
                     })?;
                 }
                 Place::Package => {
-                    let edited = edit(&self.content(entry, context)?)?;
+                    let bytes = self.content(entry, context)?;
+                    let edited = edit(&bytes)?;
                     let package = self.package.as_ref().expect("a package's file is in it");
                     let path = entry.path.resolve(&package.decoded);
-                    std::fs::write(&path, edited).map_err(crate::patch::package::io(&path))?;
+                    if edited != bytes {
+                        std::fs::write(&path, edited).map_err(crate::patch::package::io(&path))?;
+                    }
                 }
                 _ => return Err(Error::Unsupported("only the build can be edited")),
             }
