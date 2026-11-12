@@ -160,6 +160,15 @@ impl Composition {
                 name,
                 operations,
             } => self.for_each(over, name, operations, bound, context),
+            Operation::When {
+                condition,
+                operations,
+            } => match self.eval(condition, bound, context)?.as_bool()? {
+                true => operations
+                    .iter()
+                    .try_for_each(|operation| self.run(operation, bound, context)),
+                false => Ok(()),
+            },
             Operation::Call { name, args } => self.call(name, args, bound, context),
         }
     }
@@ -201,7 +210,8 @@ impl Composition {
         Ok(())
     }
 
-    /// Apply a kit's operation, its parameters bound to the strings it is given.
+    /// Apply a kit's operation, its parameters bound to the strings it is given,
+    /// or to their defaults.
     /// What it reports skipping, and its errors, name the call.
     fn call(
         &mut self,
@@ -211,7 +221,7 @@ impl Composition {
         context: &Context<'_>,
     ) -> Result<(), Error> {
         let definition = &crate::recipe::kit::operations()?[name];
-        let mut given = Bound::new();
+        let mut given: Bound = definition.defaults.clone().into_iter().collect();
         for (parameter, value) in args {
             given.insert(parameter.clone(), crate::recipe::substitute(value, bound)?);
         }
@@ -615,15 +625,20 @@ fn xml_ops(edits: &[XmlEdit], bound: &Bound) -> Result<Vec<crate::recipe::XmlOp>
 /// A kit's operation as it is called: `DisableFeature("x")`, or with several
 /// parameters, by name.
 fn shown(name: &str, args: &BTreeMap<String, String>) -> String {
-    match args.values().collect::<Vec<_>>()[..] {
-        [value] => format!("{name}({value:?})"),
+    let args = match args.values().collect::<Vec<_>>()[..] {
+        [value] => format!("{value:?}"),
         _ => {
             let args: Vec<String> = args
                 .iter()
                 .map(|(parameter, value)| format!("{parameter}: {value:?}"))
                 .collect();
-            format!("{name}({})", args.join(", "))
+            args.join(", ")
         }
+    };
+    // A kit's `Outer(Inner)` is called as `Outer(Inner(…))`.
+    match name.strip_suffix(')') {
+        Some(nested) => format!("{nested}({args}))"),
+        None => format!("{name}({args})"),
     }
 }
 

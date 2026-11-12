@@ -94,6 +94,10 @@ fn resource(edit: &Operation) -> bool {
         Operation::ForEach {
             over, operations, ..
         } => selects(over) || resources(operations),
+        Operation::When {
+            condition,
+            operations,
+        } => selects(condition) || resources(operations),
         _ => false,
     }
 }
