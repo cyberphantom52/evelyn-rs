@@ -1,6 +1,7 @@
 //! Kits: operations defined out of the built-in ones, shipped with Evelyn in
 //! `assets/kits/`. Every operation of every kit is available to every recipe,
-//! called as a built-in one is, by a name no other operation has.
+//! called as a built-in one is, by a name no other operation has. A kit names
+//! one `Outer` or `Outer(Inner)`; the second is called as `Outer(Inner(…))`.
 
 use crate::recipe::{BUILT_IN_OPERATIONS, Error, Expr, Operation, ron_options};
 use serde::{
@@ -22,13 +23,17 @@ struct Kit {
 }
 
 /// What a kit's operation does, as a step does it: with `{name}` bound to what
-/// each parameter is given, and to what `let:` binds, if `when:` holds, apply
-/// the operations. A value that is not set, or a condition that does not hold,
+/// each parameter is given, or to its default, and to what `let:` binds, if
+/// `when:` holds, apply the operations. A value that is not set, or a condition that does not hold,
 /// skips them, and is reported; the rest of the step still applies.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Definition {
+    /// The parameters a call must give.
     pub parameters: Vec<String>,
+    /// The parameters a call can give, by name, and what each is if it does not.
+    #[serde(default)]
+    pub defaults: BTreeMap<String, String>,
     #[serde(rename = "let", default)]
     pub bindings: BTreeMap<String, Expr>,
     #[serde(default)]
@@ -84,27 +89,19 @@ impl<'de> Visitor<'de> for Calls {
         if BUILT_IN_OPERATIONS.contains(&name.as_str()) {
             return Operation::deserialize(Replay { name, variant });
         }
-        let unknown = || de::Error::unknown_variant(&name, &BUILT_IN_OPERATIONS);
-        let definition = OPERATIONS
-            .get()
-            .and_then(|operations| operations.get(&name))
-            .ok_or_else(unknown)?;
-        let args = match &definition.parameters[..] {
-            [] => variant.unit_variant().map(|()| BTreeMap::new())?,
-            [parameter] => BTreeMap::from([(parameter.clone(), variant.newtype_variant()?)]),
-            parameters => {
-                let args: BTreeMap<String, String> = variant.struct_variant(&[], Args)?;
-                if let Some(missing) = parameters.iter().find(|p| !args.contains_key(*p)) {
-                    return Err(de::Error::custom(format!("{name} needs {missing}")));
-                }
-                if let Some(extra) = args.keys().find(|arg| !parameters.contains(arg)) {
-                    return Err(de::Error::custom(format!(
-                        "{name} has no parameter {extra}"
-                    )));
-                }
-                args
-            }
-        };
+        let operations = OPERATIONS.get().into_iter().flatten();
+        let nests = format!("{name}(");
+        if operations
+            .clone()
+            .any(|(known, _)| known.starts_with(&nests))
+        {
+            return variant.newtype_variant_seed(Nested(name));
+        }
+        let definition = operations
+            .clone()
+            .find_map(|(known, definition)| (*known == name).then_some(definition))
+            .ok_or_else(|| de::Error::unknown_variant(&name, &BUILT_IN_OPERATIONS))?;
+        let args = args(&name, definition, variant)?;
         Ok(Operation::Call { name, args })
     }
 }
@@ -159,21 +156,101 @@ impl<'de, A: VariantAccess<'de>> EnumAccess<'de> for Replay<A> {
     }
 }
 
-/// A kit operation's parameters, given by name.
-struct Args;
+/// What follows `Outer(`: the kit's `Outer(Inner)`, as `Inner(…)`.
+struct Nested(String);
 
-impl<'de> Visitor<'de> for Args {
-    type Value = BTreeMap<String, String>;
+impl<'de> DeserializeSeed<'de> for Nested {
+    type Value = Operation;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Operation, D::Error> {
+        deserializer.deserialize_enum("Operation", &[], self)
+    }
+}
+
+impl<'de> Visitor<'de> for Nested {
+    type Value = Operation;
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("parameters by name")
+        write!(f, "one of the kit's {}(…)", self.0)
     }
 
-    fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+    fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> Result<Operation, A::Error> {
+        let (Identifier(inner), variant) = data.variant()?;
+        let name = format!("{}({inner})", self.0);
+        let definition = OPERATIONS
+            .get()
+            .and_then(|operations| operations.get(&name))
+            .ok_or_else(|| de::Error::custom(format!("no kit defines {name}")))?;
+        let args = args(&name, definition, variant)?;
+        Ok(Operation::Call { name, args })
+    }
+}
+
+/// What a call gives a kit operation's parameters: the one it must give, bare,
+/// or any of them by name.
+fn args<'de, A: VariantAccess<'de>>(
+    name: &str,
+    definition: &Definition,
+    variant: A,
+) -> Result<BTreeMap<String, String>, A::Error> {
+    let parameters = &definition.parameters;
+    let args = match variant.newtype_variant_seed(Args)? {
+        Given::Bare(value) => match &parameters[..] {
+            [parameter] => BTreeMap::from([(parameter.clone(), value)]),
+            _ => {
+                return Err(de::Error::custom(format!(
+                    "{name} takes its parameters by name"
+                )));
+            }
+        },
+        Given::Named(args) => args,
+    };
+    if let Some(missing) = parameters.iter().find(|p| !args.contains_key(*p)) {
+        return Err(de::Error::custom(format!("{name} needs {missing}")));
+    }
+    if let Some(extra) = args
+        .keys()
+        .find(|arg| !parameters.contains(arg) && !definition.defaults.contains_key(*arg))
+    {
+        return Err(de::Error::custom(format!(
+            "{name} has no parameter {extra}"
+        )));
+    }
+    Ok(args)
+}
+
+/// What a call gives: one string, or strings by name.
+enum Given {
+    Bare(String),
+    Named(BTreeMap<String, String>),
+}
+
+struct Args;
+
+impl<'de> DeserializeSeed<'de> for Args {
+    type Value = Given;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Given, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for Args {
+    type Value = Given;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a string, or parameters by name")
+    }
+
+    fn visit_str<E: de::Error>(self, value: &str) -> Result<Given, E> {
+        Ok(Given::Bare(value.to_owned()))
+    }
+
+    fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Given, M::Error> {
         let mut args = BTreeMap::new();
         while let Some((name, value)) = map.next_entry::<String, String>()? {
             args.insert(name, value);
         }
-        Ok(args)
+        Ok(Given::Named(args))
     }
 }

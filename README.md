@@ -103,6 +103,7 @@ The operations:
   when the firmware is not what the patch expects.
 - `ForEach(over:, name:, operations:)` applies operations once for each string of
   a list, or each file of a selection, with `{name}` bound to it.
+- `When(condition:, operations:)` applies operations if the condition holds.
 
 Expressions select files (`Build`, `Rom`, `Stock`, `Asset`, `Package`), read them
 (`Read`, `Property(key:, target:)`, `Lines`), test values (`Exists`, which also
@@ -113,13 +114,16 @@ takes a `Partition(…)`, `Not`, `All`, `Matches(text, "regex")`, `Contains(text
 
 Operations specific to a ROM family come in kits Evelyn ships, `assets/kits/`,
 which define them out of the operations above. Every recipe can call any kit's
-operation as it calls a built-in one: one parameter bare, several by name.
+operation as it calls a built-in one: the one parameter it must give bare, or
+any by name, those with a default included.
 
-- `oplus.ron`: `EnableAndroidFeature("…")`, `EnableOplusFeature("…")`,
-  `EnableAppFeature(name:, file:)` and `EnableAppFeatureWithArgs(name:, args:,
-  file:)` declare a feature in its kind's file, replacing one declared with that
-  name; `DisableFeature("…")` removes one from every permissions and extension
-  XML that mentions it, and reports a feature declared nowhere.
+- `oplus.ron`: `EnableFeature(Android("…"))`, `EnableFeature(Oplus("…"))` and
+  `EnableFeature(App(name:, file:))` declare a feature, replacing one declared
+  with that name. An Android or Oplus feature goes in its kind's file under
+  `/my_product/etc/permissions`, or in the one given:
+  `EnableFeature(Oplus(name: "…", file: "/…"))`. An app feature can have `args:`.
+  `DisableFeature("…")` removes one from every permissions and extension XML
+  that mentions it, and reports a feature declared nowhere.
 
 ## Requirements
 

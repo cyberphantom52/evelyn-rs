@@ -199,6 +199,12 @@ pub enum Operation {
         name: String,
         operations: Vec<Operation>,
     },
+    /// Apply `operations` if the condition holds. One whose condition does not
+    /// hold is not reported.
+    When {
+        condition: Expr,
+        operations: Vec<Operation>,
+    },
     /// Add `content` at the end of a file, on a line of its own.
     Append {
         target: String,
@@ -212,7 +218,8 @@ pub enum Operation {
         target: String,
         policies: Vec<String>,
     },
-    /// An operation of a kit, by name, with the strings its parameters are given.
+    /// An operation of a kit, by the name the kit gives it, with the strings its
+    /// parameters are given.
     #[serde(skip)]
     Call {
         name: String,
@@ -221,7 +228,7 @@ pub enum Operation {
 }
 
 /// The built-in operations' names.
-pub(crate) const BUILT_IN_OPERATIONS: [&str; 19] = [
+pub(crate) const BUILT_IN_OPERATIONS: [&str; 20] = [
     "Copy",
     "Import",
     "Install",
@@ -239,6 +246,7 @@ pub(crate) const BUILT_IN_OPERATIONS: [&str; 19] = [
     "Assert",
     "AssertHash",
     "ForEach",
+    "When",
     "Append",
     "AddPolicy",
 ];
@@ -298,6 +306,7 @@ impl Operation {
             Self::Assert { .. } => "Assert",
             Self::AssertHash { .. } => "AssertHash",
             Self::ForEach { .. } => "ForEach",
+            Self::When { .. } => "When",
             Self::Append { .. } => "Append",
             Self::AddPolicy { .. } => "AddPolicy",
             Self::Call { name, .. } => name.as_str(),
@@ -325,6 +334,7 @@ impl Operation {
                 | Self::InsertMethod { .. }
                 | Self::StubMethod { .. }
                 | Self::ForEach { .. }
+                | Self::When { .. }
         )
     }
 
@@ -351,6 +361,13 @@ impl Operation {
                 found.extend(over.locations());
                 found.extend(operations.iter().flat_map(Self::locations));
             }
+            Self::When {
+                condition,
+                operations,
+            } => {
+                found.extend(condition.locations());
+                found.extend(operations.iter().flat_map(Self::locations));
+            }
             // What a kit's operation names is in the kit, written out or naming its
             // parameters.
             Self::Call { name, .. } => found.extend(
@@ -367,9 +384,13 @@ impl Operation {
     }
 }
 
-/// Optional fields are given as plain values, without `Some(...)`.
+/// Optional fields are given as plain values, without `Some(...)`, and what a
+/// name wraps, a kit operation's parameters by name included, without parentheses
+/// of its own.
 pub(crate) fn ron_options() -> ron::Options {
-    ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+    use ron::extensions::Extensions;
+    ron::Options::default()
+        .with_default_extension(Extensions::IMPLICIT_SOME | Extensions::UNWRAP_VARIANT_NEWTYPES)
 }
 
 /// A key a property file can assign.

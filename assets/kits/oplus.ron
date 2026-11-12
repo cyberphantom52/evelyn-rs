@@ -2,40 +2,41 @@
 // XML declare.
 Kit(
     operations: {
-        // `<feature name=…>`, in the Android features' file; one already declared is
-        // replaced.
-        "EnableAndroidFeature": (
+        // `EnableFeature(Android("…"))`: `<feature name=…>`, in the Android features'
+        // file, or in `file`; one already declared is replaced.
+        "EnableFeature(Android)": (
             parameters: ["name"],
+            defaults: {"file": "/my_product/etc/permissions/com.oplus.android-features.xml"},
             operations: [
-                EditXml(target: "/my_product/etc/permissions/com.oplus.android-features.xml", edits: [
+                EditXml(target: "{file}", edits: [
                     PutChild(parent: "permissions", key: "feature[@name='{name}']", element: "<feature name=\"{name}\"/>", create: true),
                 ]),
             ],
         ),
-        // `<oplus-feature name=…>`, in the Oplus features' file.
-        "EnableOplusFeature": (
+        // `EnableFeature(Oplus("…"))`: `<oplus-feature name=…>`, in the Oplus
+        // features' file, or in `file`.
+        "EnableFeature(Oplus)": (
             parameters: ["name"],
+            defaults: {"file": "/my_product/etc/permissions/oplus.feature.android.xml"},
             operations: [
-                EditXml(target: "/my_product/etc/permissions/oplus.feature.android.xml", edits: [
+                EditXml(target: "{file}", edits: [
                     PutChild(parent: "oplus-config", key: "oplus-feature[@name='{name}']", element: "<oplus-feature name=\"{name}\"/>", create: true),
                 ]),
             ],
         ),
-        // `<app_feature name=…>`, in an extension file.
-        "EnableAppFeature": (
+        // `EnableFeature(App(name: "…", file: "/…"))`: `<app_feature name=…>`, in an
+        // extension file, with `args` if they are given.
+        "EnableFeature(App)": (
             parameters: ["name", "file"],
+            defaults: {"args": ""},
             operations: [
                 EditXml(target: "{file}", edits: [
                     PutChild(parent: "extend_features", key: "app_feature[@name='{name}']", element: "<app_feature name=\"{name}\"/>", create: true),
                 ]),
-            ],
-        ),
-        // `<app_feature name=… args=…>`, in an extension file.
-        "EnableAppFeatureWithArgs": (
-            parameters: ["name", "args", "file"],
-            operations: [
-                EditXml(target: "{file}", edits: [
-                    PutChild(parent: "extend_features", key: "app_feature[@name='{name}']", element: "<app_feature name=\"{name}\" args=\"{args}\"/>", create: true),
+                When(condition: Matches("{args}", "."), operations: [
+                    EditXml(target: "{file}", edits: [
+                        SetAttribute(path: "extend_features/app_feature[@name='{name}']", name: "args", value: "{args}", create: true),
+                    ]),
                 ]),
             ],
         ),
