@@ -1,14 +1,14 @@
-//! Smali parsing and method-level editing.
+//! Smali parsing and editing.
 //!
-//! [`parse`] turns a `.smali` file into a [`Class`] whose nodes borrow from the
-//! source. Edits locate methods through that tree and splice text into the original,
-//! so everything they do not touch stays byte-identical.
+//! [`parse`] turns a `.smali` file into a lossless tree of [`Node`]s, which prints
+//! back as it was written. Edits replace nodes of that tree, so everything they do
+//! not touch stays byte-identical.
 
-pub mod ast;
 mod parser;
+mod tree;
 
-pub use ast::{BlockKind, Class, Field, Instruction, Method, Operand, Statement};
-pub use parser::{Error as ParseError, parse};
+pub use parser::{Error as ParseError, Rule as Kind, parse};
+pub use tree::{Element, Node};
 
 use thiserror::Error;
 
@@ -39,24 +39,31 @@ pub enum Stub {
     One,
 }
 
-/// The methods `signature` names in `class`, a file that must declare `name`: as
-/// many as `expected`.
-fn methods<'a>(
-    class: &'a Class<'a>,
-    name: &str,
-    signature: &str,
-    expected: usize,
-) -> Result<Vec<&'a Method<'a>>, Error> {
-    if class.name != name {
+/// `name(params)return` of a method or a method reference, the form recipes use
+/// to select a method.
+fn signature(method: &Node) -> String {
+    let part = |kind| method.child(kind).map(Node::to_string).unwrap_or_default();
+    part(Kind::member_name) + &part(Kind::proto)
+}
+
+/// Where in `file`, which must declare class `name`, the methods `signature`
+/// names are: as many as `expected`.
+fn methods(file: &Node, name: &str, signature: &str, expected: usize) -> Result<Vec<usize>, Error> {
+    let class = file
+        .child(Kind::class)
+        .and_then(|class| class.child(Kind::class_type));
+    let found = class.map(Node::to_string).unwrap_or_default();
+    if found != name {
         return Err(Error::Class {
             expected: name.into(),
-            found: class.name.into(),
+            found,
         });
     }
-    let matches: Vec<_> = class
-        .methods
-        .iter()
-        .filter(|m| m.signature() == signature)
+    let matches: Vec<usize> = (0..file.children.len())
+        .filter(|at| match &file.children[*at] {
+            Element::Node(node) => node.kind == Kind::method && self::signature(node) == signature,
+            Element::Text(_) => false,
+        })
         .collect();
     if matches.len() != expected {
         return Err(Error::Count {
@@ -68,9 +75,14 @@ fn methods<'a>(
     Ok(matches)
 }
 
-/// The one method `signature` names in `class`.
-fn find<'a>(class: &'a Class<'a>, name: &str, signature: &str) -> Result<&'a Method<'a>, Error> {
-    Ok(methods(class, name, signature, 1)?[0])
+/// The one method `text` is, whose signature must be `expected`.
+fn method(text: &str, expected: &str) -> Result<Node, Error> {
+    let file = parse(&format!("{}\n", text.trim_end_matches('\n')))?;
+    let mut methods = file.nodes().filter(|node| node.kind == Kind::method);
+    match (methods.next(), methods.next()) {
+        (Some(method), None) if signature(method) == expected => Ok(method.clone()),
+        _ => Err(Error::Replacement(expected.into())),
+    }
 }
 
 /// Replace method `signature` of `class` with `replacement`, one complete method.
@@ -80,10 +92,10 @@ pub fn replace_method(
     signature: &str,
     replacement: &str,
 ) -> Result<String, Error> {
-    let parsed = parse(source)?;
-    let span = find(&parsed, class, signature)?.span.clone();
-    check_replacement(replacement, signature)?;
-    Ok(splice(source, span, replacement))
+    let mut file = parse(source)?;
+    let at = methods(&file, class, signature, 1)?[0];
+    file.children[at] = Element::Node(method(replacement, signature)?);
+    Ok(file.to_string())
 }
 
 /// Append `method`, whose signature must be `signature`, to `class`, which must not
@@ -94,19 +106,16 @@ pub fn insert_method(
     signature: &str,
     method: &str,
 ) -> Result<String, Error> {
-    let parsed = parse(source)?;
-    let signature = check_replacement(method, signature)?;
-    methods(&parsed, class, &signature, 0)?;
-    let mut output = source.to_owned();
-    if !output.is_empty() && !output.ends_with('\n') {
-        output.push('\n');
-    }
-    output.push('\n');
-    output.push_str(method);
-    if !method.ends_with('\n') {
-        output.push('\n');
-    }
-    Ok(output)
+    let mut file = parse(source)?;
+    methods(&file, class, signature, 0)?;
+    let method = self::method(method, signature)?;
+    let gap = match source.is_empty() || source.ends_with('\n') {
+        true => "\n",
+        false => "\n\n",
+    };
+    file.children.push(Element::Text(gap.into()));
+    file.children.push(Element::Node(method));
+    Ok(file.to_string())
 }
 
 /// Replace the body of method `signature` so it only returns `stub`.
@@ -116,53 +125,87 @@ pub fn stub_method(
     signature: &str,
     stub: Stub,
 ) -> Result<String, Error> {
-    let parsed = parse(source)?;
-    let method = find(&parsed, class, signature)?;
-    let ret = method.return_type();
-    let body = match (stub, ret.as_bytes().first()) {
-        (Stub::Void, _) if ret == "V" => "    .locals 0\n\n    return-void".to_owned(),
+    let mut file = parse(source)?;
+    let at = methods(&file, class, signature, 1)?[0];
+    let Element::Node(method) = &mut file.children[at] else {
+        unreachable!("methods are nodes")
+    };
+    let proto = method.child(Kind::proto).expect("a method has a proto");
+    let returns = proto
+        .nodes()
+        .last()
+        .map(Node::to_string)
+        .unwrap_or_default();
+    let body = match (stub, returns.as_bytes().first()) {
+        (Stub::Void, Some(b'V')) => "    .locals 0\n\n    return-void\n",
         (Stub::Zero, Some(b'J' | b'D')) => {
-            "    .locals 2\n\n    const-wide/16 v0, 0x0\n\n    return-wide v0".to_owned()
+            "    .locals 2\n\n    const-wide/16 v0, 0x0\n\n    return-wide v0\n"
         }
         (Stub::Zero, Some(b'L' | b'[')) => {
-            "    .locals 1\n\n    const/4 v0, 0x0\n\n    return-object v0".to_owned()
+            "    .locals 1\n\n    const/4 v0, 0x0\n\n    return-object v0\n"
         }
-        (Stub::Zero | Stub::One, Some(b'Z' | b'B' | b'S' | b'C' | b'I')) => format!(
-            "    .locals 1\n\n    const/4 v0, {}\n\n    return v0",
-            if stub == Stub::One { "0x1" } else { "0x0" }
-        ),
-        (Stub::Zero, Some(b'F')) => {
-            "    .locals 1\n\n    const/4 v0, 0x0\n\n    return v0".to_owned()
+        (Stub::Zero, Some(b'Z' | b'B' | b'S' | b'C' | b'I' | b'F')) => {
+            "    .locals 1\n\n    const/4 v0, 0x0\n\n    return v0\n"
+        }
+        (Stub::One, Some(b'Z' | b'B' | b'S' | b'C' | b'I')) => {
+            "    .locals 1\n\n    const/4 v0, 0x1\n\n    return v0\n"
         }
         _ => {
             return Err(Error::Replacement(format!(
-                "{signature}: cannot stub a {ret} method that way"
+                "{signature}: cannot stub a {returns} method that way"
             )));
         }
     };
-    let header = &source[method.span.start..];
-    let header = &header[..header.find('\n').unwrap_or(header.len())];
-    let text = format!("{header}\n{body}\n.end method\n");
-    Ok(splice(source, method.span.clone(), &text))
+    // The statements are what follows the proto's line end, up to `.end method`.
+    let header = method.children.iter().position(|child| match child {
+        Element::Node(node) => node.kind == Kind::proto,
+        Element::Text(_) => false,
+    });
+    let stub = parse(&format!(".method stub()V\n{body}.end method\n"))?;
+    let Some(Element::Node(stub)) = stub.children.into_iter().next() else {
+        unreachable!("the stub is a method")
+    };
+    let statements = stub.children.into_iter().skip(3);
+    method
+        .children
+        .truncate(header.expect("a method has a proto") + 1);
+    method.children.extend(statements);
+    Ok(file.to_string())
 }
 
-/// The replacement's signature, which must be `expected` when that is non-empty.
-fn check_replacement(text: &str, expected: &str) -> Result<String, Error> {
-    let wrapped = format!(".class public Lx;\n{text}\n");
-    let parsed = parse(&wrapped)?;
-    match parsed.methods.as_slice() {
-        [method] if expected.is_empty() || method.signature() == expected => Ok(method.signature()),
-        _ => Err(Error::Replacement(expected.into())),
+/// Replace the operand written as `from` with `to`, in every instruction of the
+/// file, or of its method `signature`: a method, a field, a type, a string in its
+/// quotes, a number, a register. Says how many it replaced.
+pub fn replace_operand(
+    source: &str,
+    from: &str,
+    to: &str,
+    signature: Option<&str>,
+) -> Result<(String, usize), Error> {
+    let mut file = parse(source)?;
+    let to = parser::parse_as(Kind::operand_only, to)?;
+    let mut replaced = 0;
+    for child in &mut file.children {
+        let Element::Node(method) = child else {
+            continue;
+        };
+        if method.kind != Kind::method || signature.is_some_and(|s| self::signature(method) != s) {
+            continue;
+        }
+        method.visit(&mut |node| {
+            if node.kind != Kind::instruction {
+                return;
+            }
+            for operand in &mut node.children {
+                if let Element::Node(operand) = operand
+                    && operand.kind != Kind::opcode
+                    && operand.to_string() == from
+                {
+                    *operand = to.clone();
+                    replaced += 1;
+                }
+            }
+        });
     }
-}
-
-fn splice(source: &str, span: std::ops::Range<usize>, text: &str) -> String {
-    let mut output = String::with_capacity(source.len() + text.len());
-    output.push_str(&source[..span.start]);
-    output.push_str(text);
-    if !text.ends_with('\n') && source[..span.end].ends_with('\n') {
-        output.push('\n');
-    }
-    output.push_str(&source[span.end..]);
-    output
+    Ok((file.to_string(), replaced))
 }

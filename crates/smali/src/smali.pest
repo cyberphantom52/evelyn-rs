@@ -1,76 +1,99 @@
-// Smali, as written by baksmali/apktool: one statement per line.
+// Smali, as baksmali and apktool write it: one statement per line. Every rule
+// that is not silent is a node of the tree; what lies between a node's children
+// (spaces, punctuation, comments, line ends) is kept as text.
 
 WHITESPACE = _{ " " | "\t" }
 COMMENT    = _{ "#" ~ (!NEWLINE ~ ANY)* }
 eol        = _{ NEWLINE | EOI }
 
-file = { SOI ~ (class_item | NEWLINE)* ~ EOI }
+file = { SOI ~ (item | NEWLINE)* ~ EOI }
+item = _{ class | super_class | source | implements | annotation | field | method }
 
-class_item = _{ class | super_class | source | implements | debug | annotation | field | method }
+class       = { ".class" ~ access* ~ class_type ~ eol }
+super_class = { ".super" ~ class_type ~ eol }
+implements  = { ".implements" ~ class_type ~ eol }
+source      = { ".source" ~ string ~ eol }
 
-class      = { ".class" ~ access* ~ type_desc ~ eol }
-super_class = { ".super" ~ type_desc ~ eol }
-source     = { ".source" ~ string ~ eol }
-implements = { ".implements" ~ type_desc ~ eol }
-debug      = { ".debug" ~ literal ~ eol }
-
-access = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHA_LOWER | "-")* ~ &(WHITESPACE) }
-
-// Annotations keep their bodies as raw lines; only their extent matters here.
-annotation     = { ".annotation" ~ raw_rest ~ NEWLINE ~ annotation_line* ~ ".end annotation" ~ eol }
-annotation_line = _{ !(".end annotation") ~ raw_line }
+// public, static, synthetic, ..., and the hidden API lists.
+access = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHA_LOWER | "-")* ~ &WHITESPACE }
 
 field = {
-    ".field" ~ access* ~ member_name ~ ":" ~ type_desc ~ ("=" ~ raw_rest)? ~ eol
+    ".field" ~ access* ~ member_name ~ ":" ~ type_desc ~ ("=" ~ value)? ~ eol
     ~ (NEWLINE* ~ annotation ~ (NEWLINE | annotation)* ~ ".end field" ~ eol)?
 }
 
-method = {
-    ".method" ~ access* ~ method_name ~ method_desc ~ eol
-    ~ statement*
-    ~ ".end method" ~ eol
+method = { ".method" ~ access* ~ member_name ~ proto ~ eol ~ statement* ~ ".end method" ~ eol }
+
+// An annotation's values can run over lines.
+annotation    = { ".annotation" ~ visibility ~ class_type ~ eol ~ (NEWLINE | element)* ~ ".end annotation" ~ eol }
+subannotation = { ".subannotation" ~ class_type ~ NEWLINE ~ (NEWLINE | element)* ~ ".end subannotation" }
+visibility    = @{ "build" | "runtime" | "system" }
+element       = { member_name ~ "=" ~ value ~ eol }
+value         = _{
+    array | subannotation | enum_value | method_handle | method_ref | field_ref | string | char
+    | literal | proto | type_desc | void
 }
+array      = { "{" ~ NEWLINE* ~ (value ~ (NEWLINE* ~ "," ~ NEWLINE* ~ value)*)? ~ NEWLINE* ~ "}" }
+enum_value = { ".enum" ~ field_ref }
 
 statement = _{
-    NEWLINE | label_def | param | annotation | packed_switch | sparse_switch | array_data
-    | directive | instruction
+    NEWLINE | label_def | registers | locals | param | prologue | epilogue | line | local
+    | end_local | restart_local | catchall | catch | source | annotation | packed_switch
+    | sparse_switch | array_data | instruction
 }
 
-label_def = { label ~ eol }
-param     = {
+label_def     = { label ~ eol }
+registers     = { ".registers" ~ literal ~ eol }
+locals        = { ".locals" ~ literal ~ eol }
+param         = {
     ".param" ~ register ~ ("," ~ string)? ~ eol
     ~ (NEWLINE* ~ annotation ~ (NEWLINE | annotation)* ~ ".end param" ~ eol)?
 }
+prologue      = { ".prologue" ~ eol }
+epilogue      = { ".epilogue" ~ eol }
+line          = { ".line" ~ literal ~ eol }
+local         = { ".local" ~ register ~ ("," ~ (string | literal) ~ ":" ~ (type_desc | void) ~ ("," ~ string)?)? ~ eol }
+end_local     = { ".end local" ~ register ~ eol }
+restart_local = { ".restart local" ~ register ~ eol }
+catch         = { ".catch" ~ class_type ~ "{" ~ label ~ ".." ~ label ~ "}" ~ label ~ eol }
+catchall      = { ".catchall" ~ "{" ~ label ~ ".." ~ label ~ "}" ~ label ~ eol }
 packed_switch = { ".packed-switch" ~ literal ~ NEWLINE ~ (NEWLINE | label ~ eol)* ~ ".end packed-switch" ~ eol }
 sparse_switch = { ".sparse-switch" ~ NEWLINE ~ (NEWLINE | literal ~ "->" ~ label ~ eol)* ~ ".end sparse-switch" ~ eol }
-array_data    = { ".array-data" ~ literal ~ NEWLINE ~ (NEWLINE | literal+ ~ eol)* ~ ".end array-data" ~ eol }
-
-// .registers, .locals, .line, .local, .end local, .restart local, .catch, .catchall, ...
-directive      = { !(".end" ~ "method") ~ directive_name ~ raw_rest ~ eol }
-directive_name = @{ "." ~ (ASCII_ALPHA | "-")+ }
+array_data    = { ".array-data" ~ literal ~ NEWLINE ~ (NEWLINE | (literal | char)+ ~ eol)* ~ ".end array-data" ~ eol }
 
 instruction = { opcode ~ (operand ~ ("," ~ operand)*)? ~ eol }
 opcode      = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "-" | "/")* }
 
 operand = _{
-    register_range | register_list | method_ref | field_ref | string | label
-    | type_desc | literal | raw_operand
+    register_range | register_list | method_handle | method_ref | field_ref | string | char
+    | label | literal | proto | call_site | register | type_desc
 }
+// One operand and nothing else: what an edit is given to write.
+operand_only = _{ SOI ~ operand ~ EOI }
+
 register       = @{ ("v" | "p") ~ ASCII_DIGIT+ }
 register_list  = { "{" ~ (register ~ ("," ~ register)*)? ~ "}" }
 register_range = { "{" ~ register ~ ".." ~ register ~ "}" }
-method_ref     = { type_desc ~ "->" ~ method_name ~ method_desc }
-field_ref      = { type_desc ~ "->" ~ member_name ~ ":" ~ type_desc }
 label          = @{ ":" ~ (ASCII_ALPHANUMERIC | "_" | "$")+ }
+method_ref     = { type_desc ~ "->" ~ member_name ~ proto }
+field_ref      = { type_desc ~ "->" ~ member_name ~ ":" ~ type_desc }
+// invoke-static@Lcom/example/Name;->method()V, of const-method-handle.
+method_handle  = { handle_kind ~ "@" ~ (method_ref | field_ref) }
+handle_kind    = @{ ASCII_ALPHA_LOWER+ ~ "-" ~ ASCII_ALPHA_LOWER+ }
+// name("method", (I)V, ...)@Lcom/example/Name;->bootstrap(...)..., of invoke-custom.
+call_site      = { member_name ~ "(" ~ string ~ "," ~ proto ~ ("," ~ value)* ~ ")" ~ "@" ~ method_ref }
 
-type_desc  = @{ "["* ~ (("L" ~ (!(";" | NEWLINE) ~ ANY)+ ~ ";") | ("V" | "Z" | "B" | "S" | "C" | "I" | "J" | "F" | "D")) }
-method_desc = @{ "(" ~ (!")" ~ ANY)* ~ ")" ~ type_desc }
-method_name = @{ "<init>" | "<clinit>" | member_name }
-member_name = @{ (!(":" | "(" | "," | WHITESPACE | NEWLINE | "->") ~ ANY)+ }
+class_type  = @{ "L" ~ (!(";" | NEWLINE) ~ ANY)+ ~ ";" }
+type_desc   = @{ "["* ~ (class_type | "Z" | "B" | "S" | "C" | "I" | "J" | "F" | "D") }
+void        = @{ "V" }
+// (Ljava/lang/String;I)Z
+proto       = ${ "(" ~ type_desc* ~ ")" ~ (type_desc | void) }
+member_name = @{ (!(":" | "(" | "," | "=" | WHITESPACE | NEWLINE | "->") ~ ANY)+ }
 
 string  = @{ "\"" ~ ("\\" ~ ANY | !("\"" | NEWLINE) ~ ANY)* ~ "\"" }
-literal = @{ "-"? ~ ASCII_ALPHANUMERIC ~ (ASCII_ALPHANUMERIC | "." | "+" | "-")* }
-raw_operand = @{ (!("," | NEWLINE | "#") ~ ANY)+ }
-
-raw_rest = @{ (!NEWLINE ~ ANY)* }
-raw_line = @{ (!NEWLINE ~ ANY)* ~ NEWLINE }
+char    = @{ "'" ~ ("\\" ~ ANY | !("'" | NEWLINE) ~ ANY)+ ~ "'" }
+// 0x1, -0x10L, 1.5f, 1.0E-5, NaNf, -Infinity, true, null
+literal = @{
+    "-"? ~ (ASCII_DIGIT ~ (ASCII_ALPHANUMERIC | "." | "+" | "-")* | ("Infinity" | "NaN") ~ ASCII_ALPHA?)
+    | ("true" | "false" | "null") ~ !ASCII_ALPHANUMERIC
+}
