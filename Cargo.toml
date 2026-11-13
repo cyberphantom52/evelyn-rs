@@ -15,7 +15,7 @@ thiserror = "2.0.21"
 pest = "2.9.5"
 pest_derive = "2.9.5"
 smali = { path = "crates/smali" }
-apkscope-core = { git = "https://github.com/cyberphantom52/apkscope", rev = "b1b59f22f3badbe53364e10b939130f8e0bc2170" }
+apkscope-core = { git = "https://github.com/suffixing/apkscope", rev = "9b3de35573c90cc7587699bbd270ea62aa732d0d" }
 clap = { version = "4.6.7", features = ["derive"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
