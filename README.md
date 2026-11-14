@@ -104,8 +104,8 @@ The operations:
   class, or in `class:`, or in its `method:`. The other edits take paths from
   its root, as the package has them (`/assets/…`, `/lib/…`), except that its
   resources and manifest are text (`/res/values/strings.xml`,
-  `/AndroidManifest.xml`). Only what they change is put back. Editing and
-  replacing resource files works, but adding a new one does not yet.
+  `/AndroidManifest.xml`). Only what they change is put back: a new file
+  under `/res/` adds its resource, and a removed one is removed.
 - `Assert(condition:, message:)` and `AssertHash(target:, sha256:)` fail the build
   when the firmware is not what the patch expects.
 - `ForEach(over:, name:, operations:)` applies operations once for each string of
