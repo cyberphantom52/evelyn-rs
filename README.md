@@ -89,9 +89,10 @@ The operations:
   Matching nothing is reported, not an error.
 - `SetMetadata(pattern:, uid:, gid:, mode:, selinux:)` sets what Android's
   defaults do not give.
-- `SetProperty(key:, value:, target:)` sets a property where init loads it, or in
-  a `Partition(…)` or a `Build(…)` file; `RemoveProperty(key:, target:)` removes
-  it, and reports a key defined nowhere.
+- `SetProperty(key:, value:, target:)` sets a property in every `.prop` file of
+  the build that defines it, or in a `Partition(…)` or a `Build(…)` file; a key
+  defined nowhere is added where init loads it last. `RemoveProperty(key:,
+  target:)` removes it the same way, and reports a key defined nowhere.
 - `ApplyDiff(target:, patch:)`, `WriteBytes(target:, edits: {offset: "hex"})`,
   `EditXml(target:, edits: [SetText, SetAttribute, Remove, PutChild])` and
   `Append(target:, content:)` edit a file.

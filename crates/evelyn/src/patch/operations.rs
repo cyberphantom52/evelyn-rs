@@ -354,8 +354,10 @@ impl Composition {
         Ok(())
     }
 
-    /// The property files a target names: those init loads, without one; else
-    /// those it loads from a `Partition(…)`, or what a location selects.
+    /// The property files an edit of a property changes: without a target, every
+    /// `.prop` file in the build, since a ROM's init can load files AOSP's does
+    /// not, and a definition left in one would override the edit; else those a
+    /// `Partition(…)` loads, or what a location selects.
     fn property_files(
         &self,
         target: Option<&Location>,
@@ -363,7 +365,7 @@ impl Composition {
         context: &Context<'_>,
     ) -> Result<Vec<Located>, Error> {
         match target {
-            None => Ok(self.loaded(context)?.files),
+            None => Ok(self.every_property_file()),
             Some(target) => self.select(target, bound, context),
         }
     }

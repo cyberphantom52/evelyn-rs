@@ -383,6 +383,31 @@ impl Composition {
         Ok(())
     }
 
+    /// Every `.prop` file in the build, regular or hardlinked, by partition and path.
+    pub(crate) fn every_property_file(&self) -> Vec<Located> {
+        self.targets
+            .iter()
+            .flat_map(|(partition, target)| {
+                target
+                    .tree
+                    .entries
+                    .iter()
+                    .filter(|(path, entry)| {
+                        path.as_ref().ends_with(".prop")
+                            && matches!(
+                                entry.kind,
+                                EntryKind::File { .. } | EntryKind::Hardlink { .. }
+                            )
+                    })
+                    .map(|(path, _)| Located {
+                        place: Place::Build,
+                        partition: partition.clone(),
+                        path: path.clone(),
+                    })
+            })
+            .collect()
+    }
+
     /// The regular file (or hardlink to one) at a device path in the build.
     fn property_file(&self, path: &str, context: &Context<'_>) -> Result<Option<Located>, Error> {
         let path = DevicePath::try_from(path.to_owned())?;
