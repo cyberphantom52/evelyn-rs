@@ -48,6 +48,8 @@ pub struct Build<'a> {
     pub extra_patches: &'a [PathBuf],
     /// Compose and apply every recipe, but build and write no images.
     pub dry_run: bool,
+    /// Apply the debug recipe built into Evelyn after every other patch.
+    pub debug: bool,
     pub tools: &'a Tools,
 }
 
@@ -100,6 +102,14 @@ const BUILT_IN_RECIPES: [(&str, &str); 1] = [(
     include_str!("../../../../assets/recipes/vndk.ron"),
 )];
 
+/// The recipe a debug build applies after every other patch, and its assets,
+/// written to the work directory for the build.
+const DEBUG_RECIPE: &str = include_str!("../../../../assets/recipes/debug.ron");
+const DEBUG_ASSETS: [(&str, &str); 1] = [(
+    "logcat.rc",
+    include_str!("../../../../assets/recipes/debug/logcat.rc"),
+)];
+
 /// Build the repository: the recipes built into Evelyn, the port's patches, then
 /// the extra patch directories, applied to the partitions the port takes. Of
 /// firmware given as an OTA package, only the partitions the build reads are
@@ -142,7 +152,10 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
             .map(|partition| (partition.mount_point.clone(), partition.name.clone())),
     );
 
-    let recipes = recipes(&profile, build.extra_patches)?;
+    let mut recipes = recipes(&profile, build.extra_patches)?;
+    if build.debug {
+        recipes.push(debug_recipe(&build.work_dir.join("debug"))?);
+    }
 
     let read = read(&partitions, &recipes, &mounts)?;
     let of = |source: Firmware| -> Vec<String> {
@@ -325,6 +338,18 @@ fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Patch>, Error> {
         });
     }
     Ok(recipes)
+}
+
+/// The debug recipe, with its assets written to `assets`.
+fn debug_recipe(assets: &Path) -> Result<Patch, Error> {
+    fs::create_dir_all(assets)?;
+    for (name, text) in DEBUG_ASSETS {
+        fs::write(assets.join(name), text)?;
+    }
+    Ok(Patch {
+        recipe: Recipe::parse(DEBUG_RECIPE, Path::new("debug.ron"))?,
+        assets: Some(assets.to_path_buf()),
+    })
 }
 
 /// What the build reads of the firmware: each partition's base, and the firmware

@@ -167,7 +167,9 @@ flashes the stock OTA's partitions outside `super`, or the images in
 `firmware/stock/firmware/`. Of a package at a URL, only the partitions extracted
 are downloaded, so a CI job can build from links alone:
 `evelyn build --rom <url> --stock <url>`. `--patch <directory>` applies an extra patch for one
-build, such as a debug build's. `--dry-run` applies every patch to the firmware
+build. `--debug` makes a debug build: after every other patch, a recipe built into
+Evelyn writes logcat and the kernel log to `/data/local/tmp/logs` until boot
+completes, and turns adb on from boot without authorisation. `--dry-run` applies every patch to the firmware
 but writes no images, and prints what the build composed: the port, each
 partition and the firmware it comes from, the patches in order, the ROM
 partitions left out and the steps skipped.
