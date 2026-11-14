@@ -434,16 +434,24 @@ impl Composition {
                 .map(|path| (*path, Some(partition.as_str())))
                 .collect(),
             Some(file) => return self.select(file, bound, context),
-            // Last loaded first: within a group the canonical file, else the legacy
-            // ones from the last loaded.
-            None => android::property::PROPERTY_FILES
+            // Last loaded first: the kits' files, from the last; then Android's,
+            // within a group the canonical file, else the legacy ones from the last
+            // loaded.
+            None => crate::recipe::kit::property_files()?
                 .iter()
                 .rev()
-                .flat_map(|group| {
-                    let (canonical, legacy) = group.split_first().expect("a file");
-                    std::iter::once(canonical).chain(legacy.iter().rev())
-                })
-                .map(|path| (*path, None))
+                .map(String::as_str)
+                .chain(
+                    android::property::PROPERTY_FILES
+                        .iter()
+                        .rev()
+                        .flat_map(|group| {
+                            let (canonical, legacy) = group.split_first().expect("a file");
+                            std::iter::once(canonical).chain(legacy.iter().rev())
+                        })
+                        .copied(),
+                )
+                .map(|path| (path, None))
                 .collect(),
         };
         for (path, partition) in candidates {
