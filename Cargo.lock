@@ -2049,8 +2049,7 @@ checksum = "9bd7693404cc43fc8f3c5f92f3808c30277e2e2682440513d58f10e3d9bac815"
 [[package]]
 name = "rust-fs-erofs"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20497b079a994e4ce4dccd2f4d5026eec88be9fb5901e7912ace59037ddf3b85"
+source = "git+https://github.com/cyberphantom52/rust-fs-erofs?rev=a65e711869612ae3a50ddd48139a2487b5732d82#a65e711869612ae3a50ddd48139a2487b5732d82"
 dependencies = [
  "am-lz4-flex",
  "crc32c",
