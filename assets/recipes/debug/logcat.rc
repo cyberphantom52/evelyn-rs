@@ -1,0 +1,18 @@
+on post-fs-data
+    mkdir /data/local/tmp/logs 0775 system system
+    start persistentLogging
+    start KernelLogging
+
+on property:sys.boot_completed=1
+    stop persistentLogging
+    stop KernelLogging
+
+service persistentLogging /system/bin/sh -c "logcat -b all > /data/local/tmp/logs/log"
+    user system
+    group root system log
+    disabled
+
+service KernelLogging /system/bin/sh -c "dmesg -w > /data/local/tmp/logs/kernel_log"
+    user system
+    group root system log
+    disabled

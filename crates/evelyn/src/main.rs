@@ -51,6 +51,10 @@ enum Command {
         /// the build composed.
         #[arg(long)]
         dry_run: bool,
+        /// Make a debug build: boot logs in /data/local/tmp/logs and adb on from
+        /// boot without authorisation, applied after every other patch.
+        #[arg(long)]
+        debug: bool,
     },
     /// Replace the OTA package in firmware/rom or firmware/stock, or both, by its
     /// images, so builds read them in place instead of extracting the package
@@ -180,6 +184,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             output_dir,
             patches,
             dry_run,
+            debug,
         } => {
             let root = evelyn::engine::profile::find(Path::new("."))?;
             print(&evelyn::engine::build(&evelyn::engine::Build {
@@ -191,6 +196,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 output_dir: output_dir.as_deref(),
                 extra_patches: &patches,
                 dry_run,
+                debug,
                 tools: &evelyn::toolchain::Tools::user()?,
             })?)
         }
