@@ -60,7 +60,7 @@ enum Command {
         firmware: Option<FirmwareArg>,
     },
     /// Download every file builds need that Evelyn lacks, check those it has,
-    /// generate the signing key if there is none, and check for Java.
+    /// and generate the signing key if there is none.
     Check,
 }
 
@@ -109,8 +109,6 @@ enum Error {
     Profile(#[from] evelyn::engine::profile::Error),
     #[error(transparent)]
     Toolchain(#[from] evelyn::toolchain::Error),
-    #[error("Java is needed for apktool: {0}")]
-    Java(String),
     #[error("{0} of what builds need could not be set up")]
     Unchecked(usize),
     #[error("cannot write JSON result: {0}")]
@@ -119,28 +117,11 @@ enum Error {
     Output(#[from] io::Error),
 }
 
-/// What builds need beyond Evelyn, each with its state: Java, the pinned files
+/// What builds need beyond Evelyn, each with its state: the pinned files
 /// and the signing key, printed whether or not some fail.
 fn check(tools: &evelyn::toolchain::Tools) -> Result<serde_json::Value, Error> {
-    let java = match std::process::Command::new("java").arg("-version").output() {
-        Ok(output) if output.status.success() => Ok(String::from_utf8_lossy(&output.stderr)
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .to_owned()),
-        Ok(output) => Err(String::from_utf8_lossy(&output.stderr).into_owned()),
-        Err(error) => Err(error.to_string()),
-    };
     let mut failed = 0;
-    let mut checked = vec![match java {
-        Ok(version) => {
-            serde_json::json!({ "name": "java", "state": "present", "version": version })
-        }
-        Err(error) => {
-            failed += 1;
-            serde_json::json!({ "name": "java", "state": "failed", "error": Error::Java(error).to_string() })
-        }
-    }];
+    let mut checked = vec![];
     for status in tools.check() {
         let (state, error) = match status.state {
             Ok(evelyn::toolchain::State::Present) => ("present", None),
