@@ -19,6 +19,10 @@ const KITS: [(&str, &str); 1] = [(
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Kit {
+    /// The property files the ROM family's init loads after Android's own, in the
+    /// order it loads them. A build without one leaves it out.
+    #[serde(default)]
+    property_files: Vec<String>,
     operations: BTreeMap<String, Definition>,
 }
 
@@ -45,17 +49,35 @@ pub struct Definition {
 /// The operations of every kit, once they are parsed.
 pub(crate) static OPERATIONS: OnceLock<BTreeMap<String, Definition>> = OnceLock::new();
 
+/// The property files the kits name, kit by kit, once they are parsed.
+static PROPERTY_FILES: OnceLock<Vec<String>> = OnceLock::new();
+
+/// The property files the kits' ROM families load after Android's, in order.
+pub fn property_files() -> Result<&'static [String], Error> {
+    operations()?;
+    Ok(PROPERTY_FILES.get().map_or(&[], Vec::as_slice))
+}
+
 /// The operations of every kit, by name.
 pub fn operations() -> Result<&'static BTreeMap<String, Definition>, Error> {
     if let Some(operations) = OPERATIONS.get() {
         return Ok(operations);
     }
     let mut operations = BTreeMap::new();
+    let mut property_files = Vec::new();
     for (path, text) in KITS {
         let kit: Kit = ron_options().from_str(text).map_err(|source| Error::Ron {
             path: path.into(),
             source: Box::new(source),
         })?;
+        for file in kit.property_files {
+            if !file.starts_with('/') || !file.ends_with(".prop") {
+                return Err(Error::Invalid(format!(
+                    "{path} names {file}, which is not a device path to a property file"
+                )));
+            }
+            property_files.push(file);
+        }
         for (name, definition) in kit.operations {
             if BUILT_IN_OPERATIONS.contains(&name.as_str()) || operations.contains_key(&name) {
                 return Err(Error::Invalid(format!(
@@ -65,6 +87,7 @@ pub fn operations() -> Result<&'static BTreeMap<String, Definition>, Error> {
             operations.insert(name, definition);
         }
     }
+    PROPERTY_FILES.get_or_init(|| property_files);
     Ok(OPERATIONS.get_or_init(|| operations))
 }
 

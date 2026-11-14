@@ -1,6 +1,22 @@
-// Oplus ROMs (ColorOS, OxygenOS): the features their permissions and extension
-// XML declare.
+// Oplus ROMs (ColorOS, OxygenOS): the property files their init loads, and the
+// features their permissions and extension XML declare.
 Kit(
+    // Oplus's init loads each my_* partition's properties after Android's, so a
+    // value there wins. Seen on a device: my_product after product, my_region
+    // after my_product, and my_manifest after all of them; no two of the others
+    // gave a key different values, so their order among themselves is not known.
+    property_files: [
+        "/my_product/build.prop",
+        "/my_region/build.prop",
+        "/my_stock/build.prop",
+        "/my_heytap/build.prop",
+        "/my_carrier/build.prop",
+        "/my_company/build.prop",
+        "/my_preload/build.prop",
+        "/my_bigball/build.prop",
+        "/my_engineering/build.prop",
+        "/my_manifest/build.prop",
+    ],
     operations: {
         // `EnableFeature(Android("…"))`: `<feature name=…>`, in the Android features'
         // file, or in `file`; one already declared is replaced.

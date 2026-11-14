@@ -33,10 +33,10 @@ impl Composition {
             Expr::Property { key, target } => {
                 let key = crate::recipe::substitute(key, bound)?;
                 let Some(target) = target else {
-                    return Ok(self
-                        .loaded(context)?
-                        .device_property(&key)
-                        .map_or(Value::Unset, Value::Str));
+                    let loaded = self.loaded(context)?;
+                    let value = loaded.device_property(&key);
+                    self.report_unloaded(&key, value.as_deref(), &loaded.files, context)?;
+                    return Ok(value.map_or(Value::Unset, Value::Str));
                 };
                 let mut value = Value::Unset;
                 for file in self.select(target, bound, context)? {

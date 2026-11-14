@@ -125,6 +125,12 @@ which define them out of the operations above. Every recipe can call any kit's
 operation as it calls a built-in one: the one parameter it must give bare, or
 any by name, those with a default included.
 
+A kit also names, in `property_files`, the property files its ROM family's init
+loads after Android's, in the order it loads them. A property read with no
+target, and a new key's file, follow that order; a property file outside it that
+gives a read key another value is reported. `oplus.ron` names each `my_*`
+partition's `build.prop`.
+
 - `oplus.ron`: `EnableFeature(Android("…"))`, `EnableFeature(Oplus("…"))` and
   `EnableFeature(App(name:, file:))` declare a feature, replacing one declared
   with that name. An Android or Oplus feature goes in its kind's file under

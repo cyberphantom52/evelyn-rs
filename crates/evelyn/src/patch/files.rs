@@ -318,10 +318,11 @@ impl Composition {
         }
     }
 
-    /// What init loads at boot: the property files, in order, the files their
-    /// `import` lines name included, and the assignments it takes from them, in
-    /// the order it takes them. An import whose path holds a `${property}` is not
-    /// followed: only the device can expand it.
+    /// What init loads at boot: the property files, in order -- Android's, then
+    /// those the kits' ROM families load after them -- the files their `import`
+    /// lines name included, and the assignments it takes from them, in the order
+    /// it takes them. An import whose path holds a `${property}` is not followed:
+    /// only the device can expand it.
     pub(crate) fn loaded(&self, context: &Context<'_>) -> Result<Loaded, Error> {
         let mut loaded = Loaded::default();
         for group in android::property::PROPERTY_FILES {
@@ -335,6 +336,11 @@ impl Composition {
             };
             for file in &files {
                 self.load(file, None, 0, &mut loaded, context)?;
+            }
+        }
+        for path in crate::recipe::kit::property_files()? {
+            if let Some(file) = self.property_file(path, context)? {
+                self.load(&file, None, 0, &mut loaded, context)?;
             }
         }
         Ok(loaded)
@@ -378,6 +384,36 @@ impl Composition {
                             .push((entry.key.to_owned(), entry.value.to_owned()));
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Warn of each property file outside those init loads that gives `key` a value
+    /// other than `value`, the one init ends up with: if the device loads it after
+    /// all, the read was wrong.
+    pub(crate) fn report_unloaded(
+        &self,
+        key: &str,
+        value: Option<&str>,
+        loaded: &[Located],
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
+        for file in self.every_property_file() {
+            if loaded.contains(&file) {
+                continue;
+            }
+            let text = String::from_utf8_lossy(&self.content(&file, context)?).into_owned();
+            if let Some(other) = android::property::get(&text, key)
+                && value != Some(other)
+            {
+                tracing::warn!(
+                    key,
+                    value = value.unwrap_or("(unset)"),
+                    other,
+                    file = format!("{}/{}", file.partition, file.path),
+                    "a property file init is not known to load gives the property another value"
+                );
             }
         }
         Ok(())
