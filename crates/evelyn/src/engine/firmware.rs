@@ -117,7 +117,16 @@ impl OpenFirmware {
             .enable_all()
             .build()?;
         let (manifest, offset, reader, remote) = runtime.block_on(open_payload(&given))?;
-        if manifest.minor_version.is_some_and(|version| version != 0) {
+        // A delta payload reads the partitions it updates; some full ones still
+        // set a delta minor version, so that alone does not make one incremental.
+        let incremental = manifest.partitions.iter().any(|partition| {
+            partition.old_partition_info.is_some()
+                || partition
+                    .operations
+                    .iter()
+                    .any(|operation| !operation.src_extents.is_empty())
+        });
+        if incremental {
             return Err(Error::IncrementalOta(given.to_string()));
         }
         // Without dynamic partitions, every partition is one the build may take.
