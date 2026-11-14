@@ -11,7 +11,6 @@ use std::{
     fs,
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::{Command, ExitStatus},
 };
 use thiserror::Error;
 
@@ -40,18 +39,6 @@ pub enum Error {
         path: PathBuf,
         #[source]
         source: io::Error,
-    },
-    #[error("cannot run {tool}: {source}")]
-    Spawn {
-        tool: String,
-        #[source]
-        source: io::Error,
-    },
-    #[error("{tool} failed ({status}):\n{output}")]
-    Failed {
-        tool: String,
-        status: ExitStatus,
-        output: String,
     },
 }
 
@@ -104,20 +91,12 @@ impl Tools {
         ))
     }
 
-    /// A pinned Java tool, run with the host `java`.
-    pub(crate) fn jar(&self, name: &str) -> Result<Command, Error> {
-        let path = self.file(name)?;
-        let mut command = Command::new("java");
-        command.arg("-jar").arg(path);
-        Ok(command)
-    }
-
     /// Whether `name` is a file Evelyn has pinned, fetched or not.
     pub(crate) fn pinned(&self, name: &str) -> bool {
         pin(name).is_ok()
     }
 
-    /// A pinned file, such as `apktool.jar`, downloaded if it is not yet.
+    /// A pinned file, such as a VNDK APEX, downloaded if it is not yet.
     pub(crate) fn file(&self, name: &str) -> Result<PathBuf, Error> {
         let pin = pin(name)?;
         let path = self.root.join(pin.path);
@@ -281,38 +260,4 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), Error> {
         .open(path)
         .and_then(|mut file| file.write_all(bytes))
         .map_err(io_at(path))
-}
-
-/// Run to completion, returning stdout. Failures carry the combined output.
-pub(crate) fn run(command: &mut Command) -> Result<Vec<u8>, Error> {
-    let tool = command_name(command);
-    tracing::debug!(command = ?command, "running");
-    let output = command.output().map_err(|source| Error::Spawn {
-        tool: tool.clone(),
-        source,
-    })?;
-    if !output.status.success() {
-        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-        text.push_str(&String::from_utf8_lossy(&output.stderr));
-        return Err(Error::Failed {
-            tool,
-            status: output.status,
-            output: text,
-        });
-    }
-    Ok(output.stdout)
-}
-
-fn command_name(command: &Command) -> String {
-    let program = command.get_program();
-    let program = if program == "java" {
-        command.get_args().nth(1).unwrap_or(program)
-    } else {
-        program
-    };
-    Path::new(program)
-        .file_name()
-        .unwrap_or(program)
-        .to_string_lossy()
-        .into_owned()
 }

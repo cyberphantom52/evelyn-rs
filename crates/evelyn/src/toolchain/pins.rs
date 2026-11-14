@@ -30,13 +30,7 @@ macro_rules! sepolicy {
     };
 }
 
-pub(crate) const PINS: [Pin; 4] = [
-    Pin {
-        path: "apktool.jar",
-        url: "https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar",
-        encoding: Encoding::Raw,
-        sha256: "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423",
-    },
+pub(crate) const PINS: [Pin; 3] = [
     // VNDK APEXes for vendors older than Android 15, which ROMs from Android 15 on
     // no longer ship; built from AOSP and published with Evelyn.
     Pin {

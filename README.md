@@ -102,7 +102,10 @@ The operations:
   one method of a class, and `ReplaceOperand(from:, to:)` replaces what
   instructions name (a method, a field, a type, a string, a number) in every
   class, or in `class:`, or in its `method:`. The other edits take paths from
-  its root (`/res/values/strings.xml`), for which it is decoded with apktool.
+  its root, as the package has them (`/assets/…`, `/lib/…`), except that its
+  resources and manifest are text (`/res/values/strings.xml`,
+  `/AndroidManifest.xml`). Only what they change is put back. Editing and
+  replacing resource files works, but adding a new one does not yet.
 - `Assert(condition:, message:)` and `AssertHash(target:, sha256:)` fail the build
   when the firmware is not what the patch expects.
 - `ForEach(over:, name:, operations:)` applies operations once for each string of
@@ -133,11 +136,10 @@ any by name, those with a default included.
 
 - Rust (the toolchain is pinned in `rust-toolchain.toml`)
 - A C compiler, which builds liblz4 for EROFS compression
-- Java, for apktool: only patches that edit a package's resources or files need it
 
 What else a build needs Evelyn keeps in its data directory
 (`~/Library/Application Support/evelyn` on macOS, `~/.local/share/evelyn` on
-Linux): apktool, VNDK APEXes and Android's SELinux macros, downloaded the first time one is
+Linux): VNDK APEXes and Android's SELinux macros, downloaded the first time one is
 needed and checked against the SHA-256 Evelyn pins, and the key it signs APKs
 with, generated the first time. `evelyn check` sets all of it up at once,
 checks what is there and reports what is missing; `evelyn init` runs it too.
