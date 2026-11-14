@@ -27,7 +27,7 @@ base64 = "0.23.1"
 fs-core = { package = "rust-fs-core", version = "0.4.4" }
 fs-ext4 = { package = "rust-fs-ext4", git = "https://github.com/cyberphantom52/rust-fs-ext4", rev = "91677a6bd9535bef4bace45b5f08172f1a1e8164" }
 sepolicy = { package = "sepolicy-inject-rs", git = "https://github.com/cyberphantom52/sepolicy-inject-rs", rev = "dc66735cf18ec14ee59f4605831408f77a796425" }
-fs-erofs = { package = "rust-fs-erofs", version = "0.6.0" }
+fs-erofs = { package = "rust-fs-erofs", git = "https://github.com/cyberphantom52/rust-fs-erofs", rev = "a65e711869612ae3a50ddd48139a2487b5732d82" }
 payload-dumper = { package = "payload_dumper", git = "https://github.com/cyberphantom52/payload-dumper-rust", rev = "321585db553c93367f0f4d7005fa79a163d4c95a", default-features = false, features = ["local_zip", "remote_zip", "prefetch"] }
 tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread"] }
 diffy = "0.5.2"
@@ -42,8 +42,12 @@ zip = { version = "9.0.5", default-features = false }
 zstd = { version = "0.14.3", default-features = false, features = ["zstdmt"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "fmt", "env-filter"] }
 
-# The rust-fs-ext4 fork depends on rust-fs-core by a path outside its own repository.
+# The rust-fs-ext4 and rust-fs-erofs forks depend on rust-fs-core by a path outside
+# their own repositories.
 [patch."https://github.com/cyberphantom52/rust-fs-ext4"]
+rust-fs-core = { version = "=0.4.4" }
+
+[patch."https://github.com/cyberphantom52/rust-fs-erofs"]
 rust-fs-core = { version = "=0.4.4" }
 
 [workspace.lints.rust]
