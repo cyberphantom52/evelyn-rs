@@ -98,7 +98,9 @@ The operations:
   `Append(target:, content:)` edit a file.
 - `AddPolicy(target:, policies:)` adds TE policies to one of the vendor's CIL
   files, checked to resolve with the rest of the device's policy.
-- `Package(target:, edits:)` applies edits to an APK or JAR. Its code is edited
+- `Package(target:, edits:)` applies edits to an APK or JAR, and with
+  `sign: true` signs the rebuilt package with Evelyn's key, as an APK Android
+  verifies needs. Its code is edited
   as smali, in place: `StubMethod`, `ReplaceMethod` and `InsertMethod` change
   one method of a class, and `ReplaceOperand(from:, to:)` replaces what
   instructions name (a method, a field, a type, a string, a number) in every

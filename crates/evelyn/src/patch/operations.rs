@@ -102,7 +102,11 @@ impl Composition {
                 self.write_bytes(target, edits, bound, context)
             }
             Operation::EditXml { target, edits } => self.edit_xml(target, edits, bound, context),
-            Operation::Package { target, edits } => self.package(target, edits, bound, context),
+            Operation::Package {
+                target,
+                sign,
+                edits,
+            } => self.package(target, *sign, edits, bound, context),
             Operation::StubMethod {
                 class,
                 method,
@@ -512,6 +516,7 @@ impl Composition {
     fn package(
         &mut self,
         target: &str,
+        sign: bool,
         edits: &[Operation],
         bound: &Bound,
         context: &Context<'_>,
@@ -525,7 +530,7 @@ impl Composition {
             .try_for_each(|edit| self.run(edit, bound, context));
         let opened = self.package.take().expect("opened above");
         ran?;
-        crate::patch::package::close(self.target(&at.partition)?, &at.path, opened, context)
+        crate::patch::package::close(self.target(&at.partition)?, &at.path, opened, sign, context)
     }
 
     /// Change one method of a class in the open package.

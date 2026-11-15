@@ -164,6 +164,10 @@ pub enum Operation {
     Package {
         /// A device path, in which `{name}` is a bound value.
         target: String,
+        /// Whether to sign the rebuilt package with Evelyn's key, as an APK
+        /// Android verifies needs once its contents change.
+        #[serde(default)]
+        sign: bool,
         edits: Vec<Operation>,
     },
     /// Inside a `Package`: replace a smali method with the asset `body`.
