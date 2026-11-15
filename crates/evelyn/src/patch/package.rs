@@ -215,12 +215,12 @@ impl Opened {
 }
 
 /// Put the package back at `path` in `target`, with only what its edits changed
-/// changed and stored entries aligned. An APK is signed with Evelyn's key; a JAR
-/// is not verified and stays unsigned.
+/// changed and stored entries aligned, and signed with Evelyn's key if `sign`.
 pub(crate) fn close(
     target: &mut Target,
     path: &RelativePath,
     opened: Opened,
+    sign: bool,
     context: &Context<'_>,
 ) -> Result<(), crate::patch::Error> {
     let source = opened.source.clone();
@@ -230,7 +230,7 @@ pub(crate) fn close(
     let file = fs::File::open(&source).map_err(io(&source))?;
     let (mut bytes, central_directory) =
         rebuild::rebuild_from(file, &edits).map_err(Error::from)?;
-    if path.as_ref().ends_with(".apk") {
+    if sign {
         let keys = context.tools.keys()?;
         let key = apksign::load(&keys.key, &keys.certificate).map_err(Error::from)?;
         bytes = apksign::sign(bytes, central_directory, &key).map_err(Error::from)?;
