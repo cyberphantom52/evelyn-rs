@@ -2050,7 +2050,7 @@ checksum = "9bd7693404cc43fc8f3c5f92f3808c30277e2e2682440513d58f10e3d9bac815"
 [[package]]
 name = "rust-fs-erofs"
 version = "0.6.0"
-source = "git+https://github.com/cyberphantom52/rust-fs-erofs?rev=b36fe81d554ecf11faf62a10f5ab1148e7c60082#b36fe81d554ecf11faf62a10f5ab1148e7c60082"
+source = "git+https://github.com/cyberphantom52/rust-fs-erofs?rev=2025152b8d51d0d3151a7942b26b433ff7e31114#2025152b8d51d0d3151a7942b26b433ff7e31114"
 dependencies = [
  "am-lz4-flex",
  "crc32c",

@@ -2,6 +2,7 @@
 
 use crate::hash::Sha256Digest;
 use crate::{Content, Error, File, Image, IoAt, PartitionTree};
+use fs_erofs::mkfs::Transplant;
 use std::{
     fs,
     io::Read,
@@ -36,6 +37,15 @@ impl<'a> Store<'a> {
                 let path = self.blob_path(blob)?;
                 Ok(Box::new(fs::File::open(&path).at(&path)?))
             }
+        }
+    }
+
+    /// The pclusters a source image stores `content` in, when it is unchanged in an
+    /// EROFS image that stores it as an EROFS image built here can take it.
+    pub fn transplant(&self, content: &Content) -> Result<Option<Transplant<'a>>, Error> {
+        match content {
+            Content::Image { image, inode } => self.images[*image].transplant(*inode),
+            Content::Blob(_) => Ok(None),
         }
     }
 

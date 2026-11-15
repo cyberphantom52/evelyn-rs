@@ -23,6 +23,9 @@ fn meta(metadata: &AndroidMetadata) -> NodeMeta {
     }
 }
 
+/// Images are built in 4 KiB blocks.
+const BLOCK_BITS: u8 = 12;
+
 /// Add `node` at `path` under the directory entries of the root.
 fn insert<'a>(
     root: &mut BTreeMap<String, Node<'a>>,
@@ -45,8 +48,9 @@ fn insert<'a>(
     Ok(())
 }
 
-/// Build `tree` as EROFS in `region`, LZ4HC-compressed into 32 KiB pclusters: file
-/// contents are read from `store` as they are written. Returns the image's size.
+/// Build `tree` as EROFS in `region`: a file unchanged in an EROFS source keeps the
+/// pclusters that image stores it in, and every other is LZ4HC-compressed into 32 KiB
+/// pclusters, its content read from `store` as it is written. Returns the image's size.
 pub(super) fn write(
     store: &Store<'_>,
     tree: &PartitionTree,
@@ -65,13 +69,26 @@ pub(super) fn write(
                 meta: meta(&entry.metadata),
                 xattrs: xattrs(&entry.metadata)?,
             },
-            EntryKind::File { content, size, .. } => Node::StreamedFile {
-                mode: mode::FILE | mode,
-                content: Content::new(*size, move || {
-                    store.open(content, *size).map_err(io::Error::other)
-                }),
-                meta: meta(&entry.metadata),
-                xattrs: xattrs(&entry.metadata)?,
+            // A file unchanged in an EROFS source is not compressed again: its
+            // pclusters are copied as that image stores them.
+            EntryKind::File { content, size, .. } => match store
+                .transplant(content)?
+                .filter(|data| data.blkszbits() == BLOCK_BITS && data.size() == *size)
+            {
+                Some(data) => Node::TransplantedFile {
+                    mode: mode::FILE | mode,
+                    data,
+                    meta: meta(&entry.metadata),
+                    xattrs: xattrs(&entry.metadata)?,
+                },
+                None => Node::StreamedFile {
+                    mode: mode::FILE | mode,
+                    content: Content::new(*size, move || {
+                        store.open(content, *size).map_err(io::Error::other)
+                    }),
+                    meta: meta(&entry.metadata),
+                    xattrs: xattrs(&entry.metadata)?,
+                },
             },
             EntryKind::Symlink { target } => Node::Symlink {
                 mode: mode::SYMLINK | mode,
@@ -102,7 +119,7 @@ pub(super) fn write(
         ..BuildOptions::default()
     };
     let mut sink = BufWriter::new(region);
-    let size = mkfs::build_image_to(root, 12, options, &mut sink)?;
+    let size = mkfs::build_image_to(root, BLOCK_BITS, options, &mut sink)?;
     sink.flush().map_err(Error::Write)?;
     Ok(size)
 }

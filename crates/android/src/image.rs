@@ -5,6 +5,7 @@ use crate::metadata::AndroidMetadata;
 use crate::{Error, ImageFormat};
 use crate::{Filesystem, IoAt};
 use fs_core::BlockRead;
+use fs_erofs::mkfs::Transplant;
 use fs_ext4::fs_core_bridge::CoreDevice;
 use std::{
     collections::BTreeMap,
@@ -192,6 +193,15 @@ impl Image {
         Ok(match &self.0 {
             Backend::Erofs(fs) => fs.read_symlink_target(&fs.read_inode(id)?)?,
             Backend::Ext4(fs) => fs.read_link_ino(id as u32)?,
+        })
+    }
+
+    /// The pclusters an EROFS image stores a regular file in, to be built into another
+    /// image as they are; `None` for a file that has to be read and compressed again.
+    pub fn transplant(&self, id: u64) -> Result<Option<Transplant<'_>>, Error> {
+        Ok(match &self.0 {
+            Backend::Erofs(fs) => Transplant::of(fs, &fs.read_inode(id)?)?,
+            Backend::Ext4(_) => None,
         })
     }
 
