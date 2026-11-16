@@ -154,6 +154,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
             .map(|partition| (partition.mount_point.clone(), partition.name.clone())),
     );
 
+    crate::recipe::kit::load(&profile.root)?;
     let mut recipes = recipes(&profile, build.extra_patches)?;
     if build.debug {
         recipes.push(debug_recipe(&build.work_dir.join("debug"))?);
