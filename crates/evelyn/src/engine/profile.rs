@@ -57,8 +57,35 @@ pub enum Error {
         #[source]
         source: toml::de::Error,
     },
-    #[error("invalid profile: {0}")]
-    Invalid(String),
+    #[error("{MANIFEST} sets no device.product_ids", MANIFEST = MANIFEST)]
+    NoProductIds,
+    #[error("{MANIFEST} sets no device.stock.fingerprint", MANIFEST = MANIFEST)]
+    NoFingerprint,
+    #[error("device partition {0} is system side, which comes from the ROM")]
+    SystemSidePartition(String),
+    #[error("partition {0} mount point must be absolute")]
+    RelativeMountPoint(String),
+    #[error(
+        "port partition {pattern} matches {vendor}, which comes from the stock firmware; set it in {MANIFEST}",
+        MANIFEST = MANIFEST
+    )]
+    VendorSidePartition { pattern: String, vendor: String },
+    #[error("patch {0:?} is not a directory name: a patch is patches/<name>")]
+    NestedPatch(String),
+    #[error("patch {0} is listed twice")]
+    DuplicatePatch(String),
+    #[error("patch {0} has no patches/{0}/{PATCH}", PATCH = PATCH)]
+    MissingPatch(String),
+    #[error("partition {partition} matches {a} and {b} equally, with different settings")]
+    AmbiguousSettings {
+        partition: String,
+        a: String,
+        b: String,
+    },
+    #[error("{0} is already a device repository")]
+    AlreadyRepository(PathBuf),
+    #[error("{0} is not in a device repository: no {MANIFEST} here or above", MANIFEST = MANIFEST)]
+    NotInRepository(PathBuf),
 }
 
 /// `evelyn.toml`: the ROM a repository ports and the device it ports it to.
@@ -157,14 +184,10 @@ impl Profile {
 
     fn validate(&self) -> Result<(), Error> {
         if self.device.product_ids.is_empty() {
-            return Err(Error::Invalid(format!(
-                "{MANIFEST} sets no device.product_ids"
-            )));
+            return Err(Error::NoProductIds);
         }
         if self.device.stock.fingerprint.is_empty() {
-            return Err(Error::Invalid(format!(
-                "{MANIFEST} sets no device.stock.fingerprint"
-            )));
+            return Err(Error::NoFingerprint);
         }
         if let Some(standard) = self
             .device
@@ -172,9 +195,7 @@ impl Profile {
             .keys()
             .find(|name| STANDARD_SYSTEM.contains(&name.as_str()))
         {
-            return Err(Error::Invalid(format!(
-                "device partition {standard} is system side, which comes from the ROM"
-            )));
+            return Err(Error::SystemSidePartition(standard.clone()));
         }
         let settings = self
             .device
@@ -192,32 +213,27 @@ impl Profile {
                 .as_ref()
                 .is_some_and(|mount| !mount.starts_with('/'))
             {
-                return Err(Error::Invalid(format!(
-                    "partition {pattern} mount point must be absolute"
-                )));
+                return Err(Error::RelativeMountPoint(pattern.to_owned()));
             }
         }
         for pattern in self.port.partitions.keys() {
             if let Some(vendor) = self.vendor_side().find(|vendor| glob(pattern, vendor)) {
-                return Err(Error::Invalid(format!(
-                    "port partition {pattern} matches {vendor}, which comes from the stock firmware; set it in {MANIFEST}"
-                )));
+                return Err(Error::VendorSidePartition {
+                    pattern: pattern.clone(),
+                    vendor: vendor.to_owned(),
+                });
             }
         }
         let mut listed = BTreeSet::new();
         for patch in &self.port.patches {
             if patch.is_empty() || patch == "." || patch == ".." || patch.contains(['/', '\\']) {
-                return Err(Error::Invalid(format!(
-                    "patch {patch:?} is not a directory name: a patch is patches/<name>"
-                )));
+                return Err(Error::NestedPatch(patch.clone()));
             }
             if !listed.insert(patch) {
-                return Err(Error::Invalid(format!("patch {patch} is listed twice")));
+                return Err(Error::DuplicatePatch(patch.clone()));
             }
             if !self.root.join(Self::patch(patch)).is_file() {
-                return Err(Error::Invalid(format!(
-                    "patch {patch} has no patches/{patch}/{PATCH}"
-                )));
+                return Err(Error::MissingPatch(patch.clone()));
             }
         }
         Ok(())
@@ -264,9 +280,11 @@ impl Profile {
             [(first, a, settings), (second, b, other), ..]
                 if first == second && settings != other =>
             {
-                Err(Error::Invalid(format!(
-                    "partition {partition} matches {a} and {b} equally, with different settings"
-                )))
+                Err(Error::AmbiguousSettings {
+                    partition: partition.to_owned(),
+                    a: a.to_string(),
+                    b: b.to_string(),
+                })
             }
             [(.., settings), ..] => Ok(Some(settings)),
         }
@@ -321,10 +339,7 @@ pub struct Initialized {
 pub fn init(root: &Path, device: &str, rom: &str) -> Result<Initialized, Error> {
     let manifest = root.join(MANIFEST);
     if manifest.exists() {
-        return Err(Error::Invalid(format!(
-            "{} is already a device repository",
-            root.display()
-        )));
+        return Err(Error::AlreadyRepository(root.to_path_buf()));
     }
     let write = |path: &Path| {
         let path = path.to_path_buf();
@@ -416,12 +431,7 @@ pub fn find(start: &Path) -> Result<PathBuf, Error> {
         .ancestors()
         .find(|dir| dir.join(MANIFEST).is_file())
         .map(Path::to_path_buf)
-        .ok_or_else(|| {
-            Error::Invalid(format!(
-                "{} is not in a device repository: no {MANIFEST} here or above",
-                start.display()
-            ))
-        })
+        .ok_or_else(|| Error::NotInRepository(start.clone()))
 }
 
 /// The ports of the repository at `root`, by name.
