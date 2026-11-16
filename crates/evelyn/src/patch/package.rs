@@ -312,24 +312,23 @@ fn resource(edit: &Operation) -> bool {
         _ => true,
     };
     match edit {
-        Operation::Remove { pattern: path, .. }
-        | Operation::ApplyDiff { target: path, .. }
-        | Operation::WriteBytes { target: path, .. }
-        | Operation::EditXml { target: path, .. }
-        | Operation::AssertHash { target: path, .. } => resource(path),
-        Operation::Append { target, content } => resource(target) || selects(content),
+        Operation::Remove(path)
+        | Operation::Text(path, _)
+        | Operation::Bytes(path, _)
+        | Operation::Xml(path, _)
+        | Operation::AssertHash(path, _) => {
+            resource(path)
+                || edit.locations().iter().any(|location| {
+                    !matches!(location, Location::Partition(_)) && resource(location.path())
+                })
+        }
         Operation::Copy { from, to: dest, .. } => {
             resource(from.path()) || dest.as_ref().is_some_and(to)
         }
-        Operation::Install { asset, to: dest } => resource(asset) || to(dest),
-        Operation::Assert { condition, .. } => selects(condition),
-        Operation::ForEach {
-            over, operations, ..
-        } => selects(over) || resources(operations),
-        Operation::When {
-            condition,
-            operations,
-        } => selects(condition) || resources(operations),
+        Operation::Install(asset, dest) => resource(asset) || to(dest),
+        Operation::Assert(condition, _) | Operation::Let(_, condition) => selects(condition),
+        Operation::ForEach(over, _, operations) => selects(over) || resources(operations),
+        Operation::When(condition, operations) => selects(condition) || resources(operations),
         _ => false,
     }
 }

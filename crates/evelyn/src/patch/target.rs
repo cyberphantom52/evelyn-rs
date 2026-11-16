@@ -76,6 +76,8 @@ pub enum Error {
         #[source]
         source: Box<Error>,
     },
+    #[error("Remove takes a path from the root, /…, not {0}")]
+    RelativeRemove(String),
     #[error("{0} does not work inside a Package")]
     OutsidePackage(String),
     #[error("no target partition {0}")]

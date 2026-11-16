@@ -50,95 +50,96 @@ ROM. Other ROM partitions are taken only when the port lists them.
 
 ## Recipes
 
-A patch's `patch.ron` is a recipe: steps, each a list of operations, applied in
-the order their `after:` lists allow, declaration order breaking ties.
+A patch's `patch.ron` is a recipe: a list of steps, applied in the order they
+are written, each a name and a list of operations, applied in order.
 
 ```ron
-Recipe(
-    steps: [
-        Step(
-            id: "vndk-apex",
-            let: { "vndk": Property(key: "ro.vndk.version", target: Partition("vendor")) },
-            when: Not(Exists(Build("/system_ext/apex/com.android.vndk.v{vndk}.apex"))),
-            operations: [
-                Remove(pattern: "/system_ext/apex/com.android.vndk*.apex"),
-                Install(asset: "apex/com.android.vndk.v{vndk}.apex", to: "/system_ext/apex/com.android.vndk.v{vndk}.apex"),
-            ],
-        ),
-    ],
-)
+[
+    Step("vndk-apex", [
+        Let("vndk", Property(Partition("vendor"), "ro.vndk.version")),
+        When(Not(Exists(Build("/system_ext/apex/com.android.vndk.v{vndk}.apex"))), [
+            Remove("/system_ext/apex/com.android.vndk*.apex"),
+            Install("apex/com.android.vndk.v{vndk}.apex", "/system_ext/apex/com.android.vndk.v{vndk}.apex"),
+        ]),
+    ]),
+]
 ```
 
-`let:` binds names to values read from the build so far, which any string in
-the step names as `{name}`; `when:` is a condition the step needs. A value that
-is not set, or a condition that does not hold, skips the step and is reported.
-Paths are device paths (`/vendor/etc/fstab.qcom`), globs allowed; asset paths
-are relative to the patch's directory. Beyond its syntax, nothing is checked
-before a recipe is applied: a wrong path or value fails the build at its step.
+`Let(name, value)` binds a name to a string read from the build so far, which the
+strings of the operations after it name as `{name}`; one that is not set skips
+them and is reported. Paths are device paths (`/vendor/etc/fstab.qcom`), globs
+allowed, and always start with `/`; asset paths are relative to the patch's
+directory. Write a regular expression or a string full of quotes raw: `r"a\.b"`,
+`r#"<a name="b"/>"#`. Beyond its syntax, nothing is checked before a recipe is
+applied: a wrong path or value fails the build at its step.
 
-The operations:
+The operations change the build, or inside a `Package`, the package:
 
 - `Copy(from:, to:, metadata: Source | Default, overwrite:, create_parent:)`
   copies from a firmware, `Rom("/…")` or `Stock("/…")`, from the build,
   `Build("/…")`, or an asset, `Asset("…")`. `Import(Rom("/…"))` is a copy to the
-  same path with the firmware's metadata; `Install(asset:, to:)` a copy of an
+  same path with the firmware's metadata; `Install(asset, to)` a copy of an
   asset with Android's default metadata.
-- `Remove(pattern:)` removes from the build; a relative pattern is tried in every
-  partition that came from `origin: Rom | Stock` or is named by `partition:`.
-  Matching nothing is reported, not an error.
+- `Remove("/…")` removes what a path matches. Matching nothing is reported, not
+  an error.
 - `SetMetadata(pattern:, uid:, gid:, mode:, selinux:)` sets what Android's
   defaults do not give.
-- `SetProperty(key:, value:, target:)` sets a property in every `.prop` file of
-  the build that defines it, or in a `Partition(…)` or a `Build(…)` file; a key
-  defined nowhere is added where init loads it last. `RemoveProperty(key:,
-  target:)` removes it the same way, and reports a key defined nowhere.
-- `ApplyDiff(target:, patch:)`, `WriteBytes(target:, edits: {offset: "hex"})`,
-  `EditXml(target:, edits: [SetText, SetAttribute, Remove, PutChild])` and
-  `Append(target:, content:)` edit a file.
-- `AddPolicy(target:, policies:)` adds TE policies to one of the vendor's CIL
-  files, checked to resolve with the rest of the device's policy.
-- `ImportPolicy(target:, types:, from:)` adds to one of the vendor's CIL files
-  what the compiled policy `from` (the ROM's
-  `/odm/etc/selinux/precompiled_sepolicy` by default) has for `types`, names or
-  globs: their declarations, less what the device's policy already declares,
-  and the rules that name them. A rule needing a name no policy defines is left
-  out until a later import defines it; what is still left out at the end is
-  reported with its step. `RUST_LOG=evelyn::patch::operations=debug` prints
-  each import.
-- `Package(target:, edits:)` applies edits to an APK or JAR, and with
-  `sign: true` signs the rebuilt package with Evelyn's key, as an APK Android
-  verifies needs. Its code is edited
-  as smali, in place: `StubMethod`, `ReplaceMethod` and `InsertMethod` change
-  one method of a class, and `ReplaceOperand(from:, to:)` replaces what
-  instructions name (a method, a field, a type, a string, a number) in every
-  class, or in `class:`, or in its `method:`. The other edits take paths from
-  its root, as the package has them (`/assets/…`, `/lib/…`), except that its
-  resources and manifest are text (`/res/values/strings.xml`,
-  `/AndroidManifest.xml`). Only what they change is put back: a new file
-  under `/res/` adds its resource, and a removed one is removed.
-- `Assert(condition:, message:)` and `AssertHash(target:, sha256:)` fail the build
+- `Props(scope, [Set(key, value), Remove(key)])` edits properties: `All` of the
+  build's property files, as init loads them, a `Partition("…")`'s, or one
+  `Build("/…")` file. A key is set in every file of the scope that defines it,
+  else added where init loads it last, or to the partition's `build.prop`; a
+  key removed that none defines is reported.
+- `Text(path, [Append(text), Diff(asset)])`, `Bytes(path, {offset: "hex"})` and
+  `Xml(path, [SetText, SetAttribute, Remove, PutChild])` edit a file.
+- `Policy(path, [Add(asset), Import(types:, from:)])` patches one of the vendor's
+  CIL files, checked to resolve with the rest of the device's policy. `Add` adds
+  a TE policy; policies added one after another are added together, so one can
+  use what another declares. `Import` adds what the compiled policy `from` (the
+  ROM's `/odm/etc/selinux/precompiled_sepolicy` by default) has for `types`,
+  names or globs: their declarations, less what the device's policy already
+  declares, and the rules that name them. A rule needing a name no policy
+  defines is left out until a later import defines it; what is still left out
+  at the end is reported with its step. `RUST_LOG=evelyn::patch::operations=debug`
+  prints each import.
+- `Package(path, Signed | Unsigned, [ … ])` applies operations to an APK or JAR,
+  and signs the rebuilt package with Evelyn's key or not, as an APK Android
+  verifies needs. Inside it, paths are from its root, as the package has them
+  (`/assets/…`, `/lib/…`), except that its resources and manifest are text
+  (`/res/values/strings.xml`, `/AndroidManifest.xml`). Only what they change is
+  put back: a new file under `/res/` adds its resource, and a removed one is
+  removed. Its code is edited as smali, in place:
+  `StubMethod`, `ReplaceMethod` and `InsertMethod` change one method of a class,
+  and `ReplaceOperand(from:, to:)` replaces what instructions name (a method, a
+  field, a type, a string, a number) in every class, or in `class:`, or in its
+  `method:`.
+- `Assert(condition, message)` and `AssertHash(path, sha256)` fail the build
   when the firmware is not what the patch expects.
-- `ForEach(over:, name:, operations:)` applies operations once for each string of
-  a list, or each file of a selection, with `{name}` bound to it.
-- `When(condition:, operations:)` applies operations if the condition holds.
+- `ForEach(over, name, [ … ])` applies operations once for each string of a
+  list, or each file of a selection, with `{name}` bound to it. What its
+  operations report for every one is reported once. `ForEach(Partitions(Rom),
+  "p", [Remove("{p}/app/Foo")])` removes from every partition the ROM supplies.
+- `When(condition, [ … ])` applies operations if the condition holds.
 
 Expressions select files (`Build`, `Rom`, `Stock`, `Asset`, `Package`), read them
-(`Read`, `Property(key:, target:)`, `Lines`), test values (`Exists`, which also
-takes a `Partition(…)`, `Not`, `All`, `Matches(text, "regex")`, `Contains(text,
-"…")`) and combine them (`Union`, `Filter(over:, name:, keep:)`, `Join`).
+(`Read`, `Property(scope, key)`, `Lines`), list the directories of the
+partitions a firmware supplies (`Partitions(Rom | Stock)`), test values
+(`Exists`, which also takes a `Partition(…)`, `Not`, `All`, `Matches(text,
+"regex")`, `Contains(text, "…")`) and combine them (`Union`, `Filter(over:,
+name:, keep:)`, `Join`).
 
 ### Kits
 
 Operations specific to a ROM family come in kits Evelyn ships, `assets/kits/`,
 which define them out of the operations above. Every recipe can call any kit's
 operation as it calls a built-in one: the one parameter it must give bare, or
-any by name, those with a default included.
+any by name, those with a default included. An asset a kit's operation names is
+the calling patch's.
 
 A kit also names, in `property_files`, the property files its ROM family's init
-loads after Android's, in the order it loads them. A property read with no
-target, and a new key's file, follow that order; a property file outside it that
-gives a read key another value is reported. `oplus.ron` names each `my_*`
-partition's `build.prop`.
+loads after Android's, in the order it loads them. A property read of `All`, and
+a new key's file, follow that order; a property file outside it that gives a
+read key another value is reported. `oplus.ron` names each `my_*` partition's
+`build.prop`.
 
 - `oplus.ron`: `EnableFeature(Android("…"))`, `EnableFeature(Oplus("…"))` and
   `EnableFeature(App(name:, file:))` declare a feature, replacing one declared

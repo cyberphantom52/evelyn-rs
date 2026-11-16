@@ -1,22 +1,16 @@
 // A debug build (`evelyn build --debug`), applied after every other patch: logcat
 // and the kernel log written to /data/local/tmp/logs until boot completes, and adb
 // on from boot without authorisation.
-Recipe(
-    steps: [
-        Step(
-            id: "debug-logging",
-            operations: [
-                Install(asset: "logcat.rc", to: "/vendor/etc/init/logcat.rc"),
-            ],
-        ),
-        Step(
-            id: "debug-adb",
-            operations: [
-                SetProperty(key: "ro.adb.secure", value: "0", target: Build("/vendor/build.prop")),
-                SetProperty(key: "ro.secure", value: "0", target: Build("/vendor/build.prop")),
-                SetProperty(key: "ro.debuggable", value: "1", target: Build("/vendor/build.prop")),
-                SetProperty(key: "persist.sys.usb.config", value: "mtp,adb", target: Build("/vendor/build.prop")),
-            ],
-        ),
-    ],
-)
+[
+    Step("debug-logging", [
+        Install("logcat.rc", "/vendor/etc/init/logcat.rc"),
+    ]),
+    Step("debug-adb", [
+        Props(Build("/vendor/build.prop"), [
+            Set("ro.adb.secure", "0"),
+            Set("ro.secure", "0"),
+            Set("ro.debuggable", "1"),
+            Set("persist.sys.usb.config", "mtp,adb"),
+        ]),
+    ]),
+]

@@ -1,7 +1,6 @@
 //! Each operation a recipe can name, over the files of the build or of the open
 //! package: what [`crate::patch::files`] selects, reads and writes.
 
-use crate::Firmware;
 use crate::patch::target::IoAt;
 use crate::patch::{
     Composition, Error,
@@ -9,7 +8,10 @@ use crate::patch::{
     target::{Overrides, Placing},
     value::{Located, Place, Value, ValueError},
 };
-use crate::recipe::{Expr, Hex, Location, Metadata, Operation, Returns, XmlEdit};
+use crate::recipe::{
+    Expr, Hex, Location, Metadata, Operation, PolicyEdit, PropEdit, Returns, Signing, TextEdit,
+    XmlEdit,
+};
 use android::hash::Sha256Digest;
 use android::path::{DevicePath, RelativePath};
 use std::collections::BTreeMap;
@@ -48,7 +50,7 @@ impl Composition {
                 };
                 self.copy(from, None, placing, bound, context)
             }
-            Operation::Install { asset, to } => {
+            Operation::Install(asset, to) => {
                 let placing = Placing {
                     metadata: Metadata::Default,
                     overwrite: true,
@@ -57,11 +59,7 @@ impl Composition {
                 let from = Location::Asset(asset.clone());
                 self.copy(&from, Some(to), placing, bound, context)
             }
-            Operation::Remove {
-                pattern,
-                origin,
-                partition,
-            } => self.remove(pattern, *origin, partition.as_deref(), bound, context),
+            Operation::Remove(pattern) => self.remove(pattern, bound, context),
             Operation::SetMetadata {
                 pattern,
                 uid,
@@ -87,27 +85,46 @@ impl Composition {
                 };
                 self.set_metadata(pattern, &overrides, bound, context)
             }
-            Operation::SetProperty { key, value, target } => {
-                self.set_property(key, value, target.as_ref(), bound, context)
+            Operation::Props(scope, edits) => {
+                let target = scope.location();
+                for edit in edits {
+                    match edit {
+                        PropEdit::Set(key, value) => {
+                            self.set_property(key, value, target.as_ref(), bound, context)?
+                        }
+                        PropEdit::Remove(key) => {
+                            self.remove_property(key, target.as_ref(), bound, context)?
+                        }
+                    }
+                }
+                Ok(())
             }
-            Operation::RemoveProperty { key, target } => {
-                self.remove_property(key, target.as_ref(), bound, context)
+            Operation::Text(target, edits) => {
+                for edit in edits {
+                    match edit {
+                        TextEdit::Append(content) => {
+                            let added = self.string(content, bound, context)?;
+                            self.edit_named(target, bound, context, |bytes| {
+                                Ok(appended(&text(bytes)?, &added).into_bytes())
+                            })?
+                        }
+                        TextEdit::Diff(patch) => {
+                            let patch = self.asset(patch, bound, context)?;
+                            self.edit_named(target, bound, context, |bytes| {
+                                Ok(crate::patch::text::apply(&text(bytes)?, &patch)?.into_bytes())
+                            })?
+                        }
+                    }
+                }
+                Ok(())
             }
-            Operation::ApplyDiff { target, patch } => {
-                let patch = self.asset(patch, bound, context)?;
-                self.edit_named(target, bound, context, |bytes| {
-                    Ok(crate::patch::text::apply(&text(bytes)?, &patch)?.into_bytes())
-                })
+            Operation::Bytes(target, edits) => self.write_bytes(target, edits, bound, context),
+            Operation::Xml(target, edits) => self.edit_xml(target, edits, bound, context),
+            Operation::Policy(target, edits) => self.policy(target, edits, bound, context),
+            Operation::Package(target, signing, edits) => {
+                let sign = *signing == Signing::Signed;
+                self.package(target, sign, edits, bound, context)
             }
-            Operation::WriteBytes { target, edits } => {
-                self.write_bytes(target, edits, bound, context)
-            }
-            Operation::EditXml { target, edits } => self.edit_xml(target, edits, bound, context),
-            Operation::Package {
-                target,
-                sign,
-                edits,
-            } => self.package(target, *sign, edits, bound, context),
             Operation::StubMethod {
                 class,
                 method,
@@ -148,45 +165,64 @@ impl Composition {
                 class,
                 method,
             } => self.replace_operand((from, to), class.as_deref(), method.as_deref(), bound),
-            Operation::Assert { condition, message } => {
+            Operation::Assert(condition, message) => {
                 match self.eval(condition, bound, context)?.as_bool()? {
                     true => Ok(()),
                     false => Err(Error::Assertion(crate::recipe::substitute(message, bound)?)),
                 }
             }
-            Operation::AssertHash { target, sha256 } => {
+            Operation::AssertHash(target, sha256) => {
                 self.assert_hash(target, sha256, bound, context)
             }
-            Operation::Append { target, content } => {
-                let added = self.string(content, bound, context)?;
-                self.edit_named(target, bound, context, |bytes| {
-                    Ok(appended(&text(bytes)?, &added).into_bytes())
-                })
+            // `operations` binds a `Let` for the operations after it.
+            Operation::Let(..) => Err(Error::Unsupported(
+                "a Let binds only for the operations after it in a list",
+            )),
+            Operation::ForEach(over, name, operations) => {
+                self.for_each(over, name, operations, bound, context)
             }
-            Operation::AddPolicy { target, policies } => {
-                self.add_policy(target, policies, bound, context)
+            Operation::When(condition, operations) => {
+                match self.eval(condition, bound, context)?.as_bool()? {
+                    true => self.operations(operations, bound.clone(), context),
+                    false => Ok(()),
+                }
             }
-            Operation::ImportPolicy {
-                target,
-                types,
-                from,
-            } => self.import_policy(target, types, from, bound, context),
-            Operation::ForEach {
-                over,
-                name,
-                operations,
-            } => self.for_each(over, name, operations, bound, context),
-            Operation::When {
-                condition,
-                operations,
-            } => match self.eval(condition, bound, context)?.as_bool()? {
-                true => operations
-                    .iter()
-                    .try_for_each(|operation| self.run(operation, bound, context)),
-                false => Ok(()),
-            },
             Operation::Call { name, args } => self.call(name, args, bound, context),
         }
+    }
+
+    /// Apply operations in order. A `Let` binds its name for those after it; one
+    /// that has no value skips them, and is reported. A bound string is a token,
+    /// `[A-Za-z0-9._-]`: it comes from firmware and goes into paths.
+    pub(crate) fn operations(
+        &mut self,
+        operations: &[Operation],
+        mut bound: Bound,
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
+        for operation in operations {
+            let Operation::Let(name, value) = operation else {
+                self.run(operation, &bound, context)?;
+                continue;
+            };
+            let Some(text) = self
+                .eval(value, &bound, context)?
+                .as_str()?
+                .map(str::to_owned)
+            else {
+                self.skip(format!("{name} is not set: {value}"));
+                return Ok(());
+            };
+            if !crate::patch::compose::is_token(&text) {
+                return Err(crate::recipe::Error::Token {
+                    name: name.clone(),
+                    value: text,
+                }
+                .into());
+            }
+            bound.insert(name.clone(), text);
+        }
+        Ok(())
     }
 
     /// Apply `operations` for each string of a list, or with each device path of
@@ -216,11 +252,26 @@ impl Composition {
         if each.is_empty() {
             self.skip(format!("no {name} to apply to"));
         }
+        // What every item reports is reported once; what only some do is not.
+        let before = self.skips.len();
+        let mut common: Option<Vec<String>> = None;
         for value in each {
             let mut bound = bound.clone();
             bound.insert(name.to_owned(), value);
-            for operation in operations {
-                self.run(operation, &bound, context)?;
+            self.operations(operations, bound, context)?;
+            let reported: Vec<String> = self.skips.drain(before..).collect();
+            common = Some(match common {
+                None => reported,
+                Some(common) => common
+                    .into_iter()
+                    .filter(|reason| reported.contains(reason))
+                    .collect(),
+            });
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for reason in common.into_iter().flatten() {
+            if seen.insert(reason.clone()) {
+                self.skip(reason);
             }
         }
         Ok(())
@@ -243,12 +294,7 @@ impl Composition {
         }
         let shown = shown(name, args);
         let skipped = self.skips.len();
-        let applied = self.body(
-            (&definition.bindings, definition.when.as_ref()),
-            &definition.operations,
-            given,
-            context,
-        );
+        let applied = self.operations(&definition.operations, given, context);
         for reason in &mut self.skips[skipped..] {
             *reason = format!("{shown}: {reason}");
         }
@@ -322,19 +368,16 @@ impl Composition {
         Ok(())
     }
 
-    /// Remove what `pattern` matches; matching nothing is reported, not an error.
-    fn remove(
-        &mut self,
-        pattern: &str,
-        origin: Option<Firmware>,
-        partition: Option<&str>,
-        bound: &Bound,
-        context: &Context<'_>,
-    ) -> Result<(), Error> {
+    /// Remove what `pattern`, a path from the root, matches; matching nothing is
+    /// reported, not an error.
+    fn remove(&mut self, pattern: &str, bound: &Bound, context: &Context<'_>) -> Result<(), Error> {
         let path = crate::recipe::substitute(pattern, bound)?;
+        if !path.starts_with('/') {
+            return Err(Error::RelativeRemove(path));
+        }
         let selected = match self.package {
             Some(_) => self.select_package(&path)?,
-            None => self.select_build(&path, origin, partition, context)?,
+            None => self.select_build(&path, None, None, context)?,
         };
         if selected.is_empty() {
             self.skip(format!("nothing to remove: {pattern}"));
@@ -532,9 +575,7 @@ impl Composition {
         let at = self.resolve_one(&path, context)?;
         let opened = crate::patch::package::open(self.target(&at.partition)?, &at, edits, context)?;
         self.package = Some(opened);
-        let ran = edits
-            .iter()
-            .try_for_each(|edit| self.run(edit, bound, context));
+        let ran = self.operations(edits, bound.clone(), context);
         let opened = self.package.take().expect("opened above");
         ran?;
         crate::patch::package::close(self.target(&at.partition)?, &at.path, opened, sign, context)
@@ -615,6 +656,33 @@ impl Composition {
                 crate::recipe::substitute(target, bound)?
             ))),
         }
+    }
+
+    /// Apply a `Policy`'s edits in order; policies added one after another are
+    /// added together.
+    fn policy(
+        &mut self,
+        target: &str,
+        edits: &[PolicyEdit],
+        bound: &Bound,
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
+        let mut added = Vec::new();
+        for edit in edits {
+            match edit {
+                PolicyEdit::Add(policy) => added.push(policy.clone()),
+                PolicyEdit::Import { types, from } => {
+                    if !added.is_empty() {
+                        self.add_policy(target, &std::mem::take(&mut added), bound, context)?;
+                    }
+                    self.import_policy(target, types, from, bound, context)?;
+                }
+            }
+        }
+        if !added.is_empty() {
+            self.add_policy(target, &added, bound, context)?;
+        }
+        Ok(())
     }
 
     /// Patch a CIL policy file with TE policies, checked against the files init

@@ -1,9 +1,10 @@
-//! The expressions recipes are written with: conditions, the strings `let:` binds
+//! The expressions recipes are written with: conditions, the strings `Let` binds
 //! and the values of operations' fields. A file is named by where it is looked
 //! for, a [`Location`], and a string can name a bound value as `{name}`:
 //! `Exists(Asset("apex/com.android.vndk.v{vndk}.apex"))`.
 
-use crate::recipe::{Error, location::Location};
+use crate::Firmware;
+use crate::recipe::{Error, PropScope, location::Location};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt};
 
@@ -12,13 +13,13 @@ use std::{collections::BTreeMap, fmt};
 pub enum Expr {
     /// The text of the one file selected.
     Read(Box<Expr>),
-    /// A property's value, or unset: without a target the value the device ends
-    /// up with, as init loads it; with `Partition(…)` or `Build(…)`, from its files.
-    Property {
-        key: String,
-        #[serde(default)]
-        target: Option<Location>,
-    },
+    /// A property's value, or unset: `Property(All, "ro.vndk.version")` is the
+    /// value the device ends up with, as init loads it; with `Partition(…)` or
+    /// `Build(…)`, it is read from those files.
+    Property(PropScope, String),
+    /// The directories of the build's partitions that came from a firmware,
+    /// `Rom` or `Stock`, as a list: `/system`, `/product`, and so on.
+    Partitions(Firmware),
     /// A string is set, a selection is not empty, or the build has a `Partition(…)`.
     Exists(Box<Expr>),
     Not(Box<Expr>),
@@ -59,7 +60,7 @@ impl Expr {
     fn collect<'a>(&'a self, found: &mut Vec<&'a Location>) {
         match self {
             Self::At(location) => found.push(location),
-            Self::Property { target, .. } => found.extend(target),
+            Self::Property(..) | Self::Partitions(_) => {}
             Self::Read(inner)
             | Self::Exists(inner)
             | Self::Not(inner)

@@ -1,16 +1,12 @@
 // The VNDK APEX matching the vendor's VNDK version, when the ROM lacks it: one of
 // the files Evelyn downloads. Any other VNDK APEX is removed first. Vendors without
 // VNDK (Android 15+) skip it.
-Recipe(
-    steps: [
-        Step(
-            id: "vndk-apex",
-            let: { "vndk": Property(key: "ro.vndk.version", target: Partition("vendor")) },
-            when: Not(Exists(Build("/system_ext/apex/com.android.vndk.v{vndk}.apex"))),
-            operations: [
-                Remove(pattern: "/system_ext/apex/com.android.vndk*.apex"),
-                Install(asset: "apex/com.android.vndk.v{vndk}.apex", to: "/system_ext/apex/com.android.vndk.v{vndk}.apex"),
-            ],
-        ),
-    ],
-)
+[
+    Step("vndk-apex", [
+        Let("vndk", Property(Partition("vendor"), "ro.vndk.version")),
+        When(Not(Exists(Build("/system_ext/apex/com.android.vndk.v{vndk}.apex"))), [
+            Remove("/system_ext/apex/com.android.vndk*.apex"),
+            Install("apex/com.android.vndk.v{vndk}.apex", "/system_ext/apex/com.android.vndk.v{vndk}.apex"),
+        ]),
+    ]),
+]
