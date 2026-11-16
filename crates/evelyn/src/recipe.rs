@@ -48,7 +48,6 @@ fn read(path: &Path) -> Result<String, Error> {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recipe {
-    pub name: String,
     pub steps: Vec<Step>,
 }
 

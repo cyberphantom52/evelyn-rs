@@ -2,7 +2,6 @@
 // and the kernel log written to /data/local/tmp/logs until boot completes, and adb
 // on from boot without authorisation.
 Recipe(
-    name: "debug",
     steps: [
         Step(
             id: "debug-logging",

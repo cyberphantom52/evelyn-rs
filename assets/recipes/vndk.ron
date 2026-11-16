@@ -2,7 +2,6 @@
 // the files Evelyn downloads. Any other VNDK APEX is removed first. Vendors without
 // VNDK (Android 15+) skip it.
 Recipe(
-    name: "vndk",
     steps: [
         Step(
             id: "vndk-apex",

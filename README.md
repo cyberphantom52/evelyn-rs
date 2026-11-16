@@ -55,7 +55,6 @@ the order their `after:` lists allow, declaration order breaking ties.
 
 ```ron
 Recipe(
-    name: "vndk",
     steps: [
         Step(
             id: "vndk-apex",

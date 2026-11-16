@@ -62,7 +62,8 @@ impl Context<'_> {
 /// A step, or part of one, that did not apply, and why.
 #[derive(Clone, Debug, Serialize)]
 pub struct Skipped {
-    pub recipe: String,
+    /// The recipe's path.
+    pub recipe: PathBuf,
     pub step: String,
     pub reason: String,
 }
@@ -93,9 +94,14 @@ impl Composition {
         }
     }
 
-    /// Apply a recipe, its steps in dependency order. An error says which step
-    /// it came from.
-    pub fn apply(&mut self, recipe: &Recipe, context: &Context<'_>) -> Result<(), Error> {
+    /// Apply the recipe at `path`, its steps in dependency order. An error says
+    /// which step it came from.
+    pub fn apply(
+        &mut self,
+        recipe: &Recipe,
+        path: &Path,
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
         for step in recipe.ordered_steps()? {
             let bindings = (&step.bindings, step.when.as_ref());
             self.body(bindings, &step.operations, Bound::new(), context)
@@ -105,7 +111,7 @@ impl Composition {
                 })?;
             for reason in self.skips.drain(..) {
                 self.skipped.push(Skipped {
-                    recipe: recipe.name.clone(),
+                    recipe: path.to_path_buf(),
                     step: step.id.clone(),
                     reason,
                 });
