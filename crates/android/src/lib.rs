@@ -28,8 +28,34 @@ pub(crate) mod mode {
     pub const SYMLINK: u16 = 0o120000;
 }
 
-use std::{io, path::PathBuf};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 use thiserror::Error;
+
+/// An I/O result with what it was about attached to its error: a file on the
+/// host, or an entry of a partition.
+pub(crate) trait IoAt<T> {
+    fn at(self, path: impl AsRef<Path>) -> Result<T, Error>;
+    fn entry(self, path: impl ToString) -> Result<T, Error>;
+}
+
+impl<T> IoAt<T> for io::Result<T> {
+    fn at(self, path: impl AsRef<Path>) -> Result<T, Error> {
+        self.map_err(|source| Error::Io {
+            path: path.as_ref().to_path_buf(),
+            source,
+        })
+    }
+
+    fn entry(self, path: impl ToString) -> Result<T, Error> {
+        self.map_err(|source| Error::Entry {
+            path: path.to_string(),
+            source,
+        })
+    }
+}
 
 pub use format::{Filesystem, ImageFormat};
 pub use image::Image;
@@ -54,8 +80,26 @@ pub enum Error {
     Invalid { kind: &'static str, value: String },
     #[error("ext4 filesystem")]
     Ext4(#[from] fs_ext4::Error),
-    #[error("filesystem IO")]
-    Io(#[from] io::Error),
+    #[error("cannot access {path}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("cannot read {path}")]
+    Entry {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("cannot write the image")]
+    Write(#[source] io::Error),
+    #[error("cannot build {partition}")]
+    Build {
+        partition: String,
+        #[source]
+        source: Box<Error>,
+    },
     #[error("unsupported or inconsistent image data: {0}")]
     Unsupported(String),
     #[error("cannot build super image: {0}")]

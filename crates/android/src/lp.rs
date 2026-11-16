@@ -7,12 +7,12 @@
 //! the next 1 MiB boundary on, each starting at the next one after the last.
 
 use crate::hash::Sha256Digest;
-use crate::{Error, Region};
+use crate::{Error, IoAt, Region};
 use serde::Deserialize;
 use std::{
     fs::{self, File},
     os::unix::fs::FileExt,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 const SECTOR: u64 = 512;
@@ -38,6 +38,7 @@ const BLOCK_DEVICE_SIZE: u32 = 64;
 
 /// A `super` image being built.
 pub struct SuperImage {
+    path: PathBuf,
     file: File,
     layout: SuperLayout,
     /// Where the next partition goes.
@@ -68,8 +69,10 @@ impl SuperImage {
             .write(true)
             .create(true)
             .truncate(true)
-            .open(path)?;
+            .open(path)
+            .at(path)?;
         Ok(Self {
+            path: path.to_path_buf(),
             file,
             layout,
             next,
@@ -80,7 +83,10 @@ impl SuperImage {
 
     /// Where the next partition is built.
     pub fn region(&self) -> Result<Region, Error> {
-        Ok(Region::new(self.file.try_clone()?, self.next))
+        Ok(Region::new(
+            self.file.try_clone().at(&self.path)?,
+            self.next,
+        ))
     }
 
     /// Record the partition just built in [`Self::region`], `size` bytes long, if it
@@ -118,19 +124,23 @@ impl SuperImage {
                 metadata.len()
             )));
         }
-        self.file.set_len(self.layout.size)?;
-        let geometry = self.geometry();
-        self.file.write_all_at(&geometry, RESERVED)?;
-        self.file
-            .write_all_at(&geometry, RESERVED + GEOMETRY_SIZE)?;
-        let slots = u64::from(self.layout.metadata_slots());
-        let primary = RESERVED + 2 * GEOMETRY_SIZE;
-        for slot in 0..slots {
+        let write = || -> std::io::Result<()> {
+            self.file.set_len(self.layout.size)?;
+            let geometry = self.geometry();
+            self.file.write_all_at(&geometry, RESERVED)?;
             self.file
-                .write_all_at(&metadata, primary + max_size * slot)?;
-            self.file
-                .write_all_at(&metadata, primary + max_size * (slots + slot))?;
-        }
+                .write_all_at(&geometry, RESERVED + GEOMETRY_SIZE)?;
+            let slots = u64::from(self.layout.metadata_slots());
+            let primary = RESERVED + 2 * GEOMETRY_SIZE;
+            for slot in 0..slots {
+                self.file
+                    .write_all_at(&metadata, primary + max_size * slot)?;
+                self.file
+                    .write_all_at(&metadata, primary + max_size * (slots + slot))?;
+            }
+            Ok(())
+        };
+        write().at(&self.path)?;
         Ok(())
     }
 

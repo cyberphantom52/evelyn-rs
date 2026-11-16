@@ -1,7 +1,7 @@
 //! Construct EROFS and ext4 filesystem images.
 
 use crate::PartitionTree;
-use crate::{Error, Store};
+use crate::{Error, IoAt, Store};
 
 mod erofs;
 mod ext4;
@@ -30,6 +30,10 @@ pub fn image(
             ext4::write(store, tree, region, label, uuid, EPOCH)
         }
     }
+    .map_err(|source| Error::Build {
+        partition: partition.to_owned(),
+        source: Box::new(source),
+    })
 }
 
 /// Build `tree` into a new image file at `output`, as [`image`] builds it in a region.
@@ -46,10 +50,11 @@ pub fn image_file(
         .write(true)
         .create(true)
         .truncate(true)
-        .open(output)?;
-    let region = Region::new(file.try_clone()?, 0);
+        .open(output)
+        .at(output)?;
+    let region = Region::new(file.try_clone().at(output)?, 0);
     let size = image(tree, store, region, filesystem, partition, mount_point)?;
-    file.set_len(size)?;
+    file.set_len(size).at(output)?;
     Ok(size)
 }
 

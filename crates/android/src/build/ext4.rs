@@ -1,5 +1,5 @@
 use crate::metadata::AndroidMetadata;
-use crate::{EntryKind, PartitionTree, Region};
+use crate::{EntryKind, IoAt, PartitionTree, Region};
 use crate::{Error, Store};
 use std::{
     io::Read,
@@ -104,7 +104,7 @@ pub(super) fn write(
     let (blocks, inodes) = size(tree);
     let inodes = u32::try_from(inodes)
         .map_err(|_| Error::Unsupported(format!("{inodes} inodes do not fit in ext4")))?;
-    region.reserve(blocks * BLOCK_SIZE)?;
+    region.reserve(blocks * BLOCK_SIZE).map_err(Error::Write)?;
     let device = Arc::new(fs_ext4::fs_core_bridge::CoreDevice::new(ImageDevice {
         size: blocks * BLOCK_SIZE,
         region,
@@ -136,7 +136,7 @@ pub(super) fn write(
                 let mut buffer = [0_u8; 64 * 1024];
                 let mut offset = 0_u64;
                 loop {
-                    let count = input.read(&mut buffer)?;
+                    let count = input.read(&mut buffer).entry(path)?;
                     if count == 0 {
                         break;
                     }
