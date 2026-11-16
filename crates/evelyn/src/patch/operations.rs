@@ -671,7 +671,7 @@ fn xml_ops(edits: &[XmlEdit], bound: &Bound) -> Result<Vec<crate::recipe::XmlOp>
         .map(|edit| {
             edit.map(|text| crate::recipe::substitute(text, bound))?
                 .parse()
-                .map_err(|error| Error::from(crate::recipe::Error::Invalid(error)))
+                .map_err(|error| Error::from(crate::recipe::Error::from(error)))
         })
         .collect()
 }

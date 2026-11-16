@@ -102,7 +102,7 @@ pub fn substitute(written: &str, bound: &BTreeMap<String, String>) -> Result<Str
             Part::Bound(name) => text.push_str(
                 bound
                     .get(&name)
-                    .ok_or_else(|| Error::Invalid(format!("{{{name}}} is not bound")))?,
+                    .ok_or_else(|| Error::Unbound(name.clone()))?,
             ),
         }
     }
