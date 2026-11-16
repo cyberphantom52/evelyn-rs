@@ -6,9 +6,9 @@
 //! is a directory under `ports/` whose `port.toml` says which ROM builds it is
 //! for, what it takes from the ROM and, in the order they apply, the patches it
 //! applies; a build takes the port the ROM it is given matches. A patch is a
-//! directory under `patches/` holding `patch.ron` and its assets; nothing applies
-//! unless a port lists it. Neither file names a firmware build: the firmware is
-//! supplied when building.
+//! directory directly under `patches/`, named for what it changes, holding
+//! `patch.ron` and its assets; nothing applies unless a port lists it. Neither
+//! file names a firmware build: the firmware is supplied when building.
 //!
 //! Partitions follow the Treble split. The device's own partitions (the vendor side
 //! the stock firmware supplies) always come from it, pinned by build fingerprint;
@@ -18,7 +18,7 @@
 use android::Filesystem;
 use android::lp::SuperLayout;
 use android::partition::{STANDARD_SYSTEM, VENDOR_SIDE};
-use android::path::{RelativePath, glob};
+use android::path::glob;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -104,9 +104,10 @@ pub(crate) struct Port {
     /// system-side partition. Keys are names or globs; the most specific wins.
     #[serde(default)]
     pub partitions: BTreeMap<String, Settings>,
-    /// The patches this port applies, in order: directories under `patches/`.
+    /// The patches this port applies, in order: directories directly under
+    /// `patches/`, by name.
     #[serde(default)]
-    pub patches: Vec<RelativePath>,
+    pub patches: Vec<String>,
 }
 
 impl Port {
@@ -205,6 +206,11 @@ impl Profile {
         }
         let mut listed = BTreeSet::new();
         for patch in &self.port.patches {
+            if patch.is_empty() || patch == "." || patch == ".." || patch.contains(['/', '\\']) {
+                return Err(Error::Invalid(format!(
+                    "patch {patch:?} is not a directory name: a patch is patches/<name>"
+                )));
+            }
             if !listed.insert(patch) {
                 return Err(Error::Invalid(format!("patch {patch} is listed twice")));
             }
@@ -223,12 +229,12 @@ impl Profile {
         self.port
             .patches
             .iter()
-            .map(Self::patch)
+            .map(|patch| Self::patch(patch))
             .collect()
     }
 
-    fn patch(patch: &RelativePath) -> PathBuf {
-        Path::new("patches").join(patch.as_ref()).join(PATCH)
+    fn patch(patch: &str) -> PathBuf {
+        Path::new("patches").join(patch).join(PATCH)
     }
 
     /// Settings for `partition` from its most specific entry: an exact name beats
@@ -351,12 +357,12 @@ fingerprint = ""
 # slots = "virtual_ab"
 # group = ""
 
-# A port is ports/<name>/port.toml: the patches it applies, in order, as
-# directories under patches/, each holding a {PATCH}; the ROM builds it is for,
+# A port is ports/<name>/port.toml: the patches it applies, as directories
+# under patches/, each holding a {PATCH}; the ROM builds it is for,
 # as globs over properties the ROM sets; and any ROM partitions it takes beyond
 # the standard system side. A build takes the port the ROM matches.
 #
-# patches = ["<topic>/<name>"]
+# patches = ["<name>"]
 #
 # [rom]
 # "ro.build.version.release" = "17"
