@@ -55,3 +55,8 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+
+# Dependencies are built without debug info, which keeps the debug build small;
+# the workspace crates keep theirs.
+[profile.dev.package."*"]
+debug = false
