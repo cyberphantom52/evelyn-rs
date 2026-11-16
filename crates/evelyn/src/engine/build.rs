@@ -435,7 +435,12 @@ fn compose(
             assets: recipe.assets.as_deref(),
             mounts,
         };
-        composition.apply(&recipe.recipe, &recipe.path, &context)?;
+        composition
+            .apply(&recipe.recipe, &recipe.path, &context)
+            .map_err(|source| Error::Apply {
+                recipe: recipe.path.clone(),
+                source,
+            })?;
     }
     let (trees, skipped) = composition.finish(mounts, images)?;
     let targets = trees
