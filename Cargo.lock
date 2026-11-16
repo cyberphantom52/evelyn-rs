@@ -1623,7 +1623,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 [[package]]
 name = "payload_dumper"
 version = "0.8.4"
-source = "git+https://github.com/cyberphantom52/payload-dumper-rust?rev=321585db553c93367f0f4d7005fa79a163d4c95a#321585db553c93367f0f4d7005fa79a163d4c95a"
+source = "git+https://github.com/cyberphantom52/payload-dumper-rust?rev=4eb9a3efac805c22632d04f6a350a4ca31bd8588#4eb9a3efac805c22632d04f6a350a4ca31bd8588"
 dependencies = [
  "ahash",
  "async-compression",
@@ -2050,7 +2050,7 @@ checksum = "9bd7693404cc43fc8f3c5f92f3808c30277e2e2682440513d58f10e3d9bac815"
 [[package]]
 name = "rust-fs-erofs"
 version = "0.6.0"
-source = "git+https://github.com/cyberphantom52/rust-fs-erofs?rev=a65e711869612ae3a50ddd48139a2487b5732d82#a65e711869612ae3a50ddd48139a2487b5732d82"
+source = "git+https://github.com/cyberphantom52/rust-fs-erofs?rev=b36fe81d554ecf11faf62a10f5ab1148e7c60082#b36fe81d554ecf11faf62a10f5ab1148e7c60082"
 dependencies = [
  "am-lz4-flex",
  "crc32c",
