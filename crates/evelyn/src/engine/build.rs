@@ -59,8 +59,8 @@ pub struct Built {
     pub port: String,
     /// In `super` order.
     pub partitions: Vec<Composed>,
-    /// The recipes applied, in order.
-    pub recipes: Vec<String>,
+    /// The recipes applied, in order, by path.
+    pub recipes: Vec<PathBuf>,
     /// ROM partitions the port does not take.
     pub ignored: Vec<String>,
     /// Steps whose bindings or condition did not apply here.
@@ -88,14 +88,17 @@ struct Partition {
     mount_point: String,
 }
 
-/// A recipe, and the directory its assets are in, `None` for a recipe built into
-/// Evelyn, whose assets are in the tools.
+/// A recipe, the path it is reported by, and the directory its assets are in,
+/// `None` for a recipe built into Evelyn, whose assets are in the tools.
 struct Patch {
     recipe: Recipe,
+    /// A port's patch by its path in the repository, a recipe built into Evelyn
+    /// by its file name.
+    path: PathBuf,
     assets: Option<PathBuf>,
 }
 
-/// Recipes every build applies before the port's patches, by name and text.
+/// Recipes every build applies before the port's patches, by file name and text.
 const BUILT_IN_RECIPES: [(&str, &str); 1] = [(
     "vndk.ron",
     include_str!("../../../../assets/recipes/vndk.ron"),
@@ -185,7 +188,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
 
     let (targets, skipped) = compose(build, &partitions, &recipes, &sources, &images, &mounts)?;
     for skip in &skipped {
-        tracing::warn!(recipe = %skip.recipe, step = %skip.step, reason = %skip.reason, "skipped step");
+        tracing::warn!(recipe = %skip.recipe.display(), step = %skip.step, reason = %skip.reason, "skipped step");
     }
     crate::engine::fstab::check(&targets, &images)?;
     let mut built = Built {
@@ -199,10 +202,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
                 mount_point: partition.mount_point.clone(),
             })
             .collect(),
-        recipes: recipes
-            .iter()
-            .map(|recipe| recipe.recipe.name.clone())
-            .collect(),
+        recipes: recipes.iter().map(|recipe| recipe.path.clone()).collect(),
         ignored,
         skipped,
         outputs: Vec::new(),
@@ -321,18 +321,25 @@ fn partition(
 fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Patch>, Error> {
     let mut recipes = Vec::new();
     for (name, text) in BUILT_IN_RECIPES {
-        let recipe = Recipe::parse(text, Path::new(name))?;
         recipes.push(Patch {
-            recipe,
+            recipe: Recipe::parse(text, Path::new(name))?,
+            path: PathBuf::from(name),
             assets: None,
         });
     }
-    let extra = extra.iter().map(|patch| patch.join(profile::PATCH));
-    for path in profile.patches().into_iter().chain(extra) {
-        let assets = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let recipe = Recipe::load(&path)?;
+    let patches = profile
+        .patches()
+        .into_iter()
+        .map(|path| (profile.root.join(&path), path));
+    let extra = extra.iter().map(|patch| {
+        let path = patch.join(profile::PATCH);
+        (path.clone(), path)
+    });
+    for (file, path) in patches.chain(extra) {
+        let assets = file.parent().unwrap_or(Path::new(".")).to_path_buf();
         recipes.push(Patch {
-            recipe,
+            recipe: Recipe::load(&file)?,
+            path,
             assets: Some(assets),
         });
     }
@@ -347,6 +354,7 @@ fn debug_recipe(assets: &Path) -> Result<Patch, Error> {
     }
     Ok(Patch {
         recipe: Recipe::parse(DEBUG_RECIPE, Path::new("debug.ron"))?,
+        path: PathBuf::from("debug.ron"),
         assets: Some(assets.to_path_buf()),
     })
 }
@@ -418,7 +426,7 @@ fn compose(
         .collect();
     let mut composition = crate::patch::Composition::new(targets, origins);
     for recipe in recipes {
-        tracing::info!(recipe = %recipe.recipe.name, "applying recipe");
+        tracing::info!(recipe = %recipe.path.display(), "applying recipe");
         let context = crate::patch::Context {
             sources,
             images,
@@ -426,7 +434,7 @@ fn compose(
             assets: recipe.assets.as_deref(),
             mounts,
         };
-        composition.apply(&recipe.recipe, &context)?;
+        composition.apply(&recipe.recipe, &recipe.path, &context)?;
     }
     let (trees, skipped) = composition.finish(mounts, images)?;
     let targets = trees

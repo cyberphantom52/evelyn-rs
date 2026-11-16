@@ -208,7 +208,7 @@ impl Profile {
             if !listed.insert(patch) {
                 return Err(Error::Invalid(format!("patch {patch} is listed twice")));
             }
-            if !self.patch(patch).is_file() {
+            if !self.root.join(Self::patch(patch)).is_file() {
                 return Err(Error::Invalid(format!(
                     "patch {patch} has no patches/{patch}/{PATCH}"
                 )));
@@ -217,17 +217,18 @@ impl Profile {
         Ok(())
     }
 
-    /// The recipes of the patches this port applies, in the order they apply.
+    /// The recipes of the patches this port applies, in the order they apply,
+    /// by their paths in the repository.
     pub(crate) fn patches(&self) -> Vec<PathBuf> {
         self.port
             .patches
             .iter()
-            .map(|patch| self.patch(patch))
+            .map(Self::patch)
             .collect()
     }
 
-    fn patch(&self, patch: &RelativePath) -> PathBuf {
-        self.root.join("patches").join(patch.as_ref()).join(PATCH)
+    fn patch(patch: &RelativePath) -> PathBuf {
+        Path::new("patches").join(patch.as_ref()).join(PATCH)
     }
 
     /// Settings for `partition` from its most specific entry: an exact name beats
