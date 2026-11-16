@@ -115,10 +115,26 @@ enum Error {
     Toolchain(#[from] evelyn::toolchain::Error),
     #[error("{0} of what builds need could not be set up")]
     Unchecked(usize),
-    #[error("cannot write JSON result: {0}")]
+    #[error("cannot write JSON result")]
     Json(#[from] serde_json::Error),
-    #[error("cannot write output: {0}")]
+    #[error("cannot write output")]
     Output(#[from] io::Error),
+}
+
+/// An error's message, then each of its causes': every error says what it was
+/// doing and leaves its cause to its source. A cause whose message the one
+/// before it already ends with, as some libraries write theirs, is left out.
+fn messages(error: &dyn std::error::Error) -> Vec<String> {
+    let mut messages = vec![error.to_string()];
+    let mut cause = error.source();
+    while let Some(error) = cause {
+        let message = error.to_string();
+        if !messages.last().is_some_and(|last| last.ends_with(&message)) {
+            messages.push(message);
+        }
+        cause = error.source();
+    }
+    messages
 }
 
 /// What builds need beyond Evelyn, each with its state: the pinned files
@@ -132,7 +148,7 @@ fn check(tools: &evelyn::toolchain::Tools) -> Result<serde_json::Value, Error> {
             Ok(evelyn::toolchain::State::New) => ("new", None),
             Err(error) => {
                 failed += 1;
-                ("failed", Some(error.to_string()))
+                ("failed", Some(messages(&error).join(": ")))
             }
         };
         checked.push(serde_json::json!({
@@ -216,7 +232,11 @@ fn main() -> ExitCode {
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("error: {error}");
+            let mut messages = messages(&error).into_iter();
+            eprintln!("error: {}", messages.next().unwrap_or_default());
+            for cause in messages {
+                eprintln!("  caused by: {cause}");
+            }
             ExitCode::FAILURE
         }
     }
