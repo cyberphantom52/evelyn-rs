@@ -32,8 +32,8 @@ pub enum Error {
     Hash { url: &'static str, found: String },
     #[error("{0} is not the pinned file; delete it and run evelyn check")]
     Changed(PathBuf),
-    #[error("cannot generate the signing key: {0}")]
-    Key(String),
+    #[error("cannot generate the signing key")]
+    Key(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("cannot access {path}")]
     Io {
         path: PathBuf,
@@ -49,8 +49,8 @@ fn io_at(path: &Path) -> impl FnOnce(io::Error) -> Error + '_ {
     }
 }
 
-fn key_error(error: impl std::fmt::Display) -> Error {
-    Error::Key(error.to_string())
+fn key_error(error: impl std::error::Error + Send + Sync + 'static) -> Error {
+    Error::Key(Box::new(error))
 }
 
 /// The key APKs are signed with: a PKCS#8 private key and its certificate.

@@ -9,12 +9,12 @@ use xot::{
     output::xml::{Declaration, Parameters},
 };
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum Error {
     #[error("XML document is not UTF-8")]
     Utf8,
-    #[error("invalid XML: {0}")]
-    Parse(String),
+    #[error("invalid XML")]
+    Parse(#[source] xot::ParseError),
     #[error("XML edit failed")]
     InvalidXml,
     #[error("XML scalar edit cannot replace element children")]
@@ -23,17 +23,15 @@ pub enum Error {
     RemoveRoot,
     #[error("XML fragment must be one element")]
     Fragment,
-    #[error("XML could not be written: {0}")]
-    Write(String),
+    #[error("XML could not be written")]
+    Write(#[source] xot::Error),
 }
 
 /// Later edits see earlier edits. A `PutChild` fragment must be exactly one element.
 pub fn apply(input: &[u8], edits: &[XmlOp]) -> Result<Vec<u8>, Error> {
     let source = std::str::from_utf8(input).map_err(|_| Error::Utf8)?;
     let mut xot = Xot::new();
-    let document = xot
-        .parse(source)
-        .map_err(|error| Error::Parse(error.to_string()))?;
+    let document = xot.parse(source).map_err(Error::Parse)?;
     let mut changed = false;
     for edit in edits {
         changed |= apply_one(&mut xot, document, edit)?;
@@ -51,7 +49,7 @@ pub fn apply(input: &[u8], edits: &[XmlOp]) -> Result<Vec<u8>, Error> {
     };
     let output = xot
         .serialize_xml_string(parameters, document)
-        .map_err(|error| Error::Write(error.to_string()))?;
+        .map_err(Error::Write)?;
     Ok(output.into_bytes())
 }
 
