@@ -103,6 +103,6 @@ pub(super) fn write(
     };
     let mut sink = BufWriter::new(region);
     let size = mkfs::build_image_to(root, 12, options, &mut sink)?;
-    sink.flush()?;
+    sink.flush().map_err(Error::Write)?;
     Ok(size)
 }

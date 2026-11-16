@@ -1,7 +1,7 @@
 //! Where file contents are read from: source images and a tree's own blobs.
 
 use crate::hash::Sha256Digest;
-use crate::{Content, Error, File, Image, PartitionTree};
+use crate::{Content, Error, File, Image, IoAt, PartitionTree};
 use std::{
     fs,
     io::Read,
@@ -32,7 +32,10 @@ impl<'a> Store<'a> {
     pub fn open(&self, content: &Content, size: u64) -> Result<Box<dyn Read + Send + 'a>, Error> {
         match content {
             Content::Image { image, inode } => self.images[*image].file(*inode, size),
-            Content::Blob(blob) => Ok(Box::new(fs::File::open(self.blob_path(blob)?)?)),
+            Content::Blob(blob) => {
+                let path = self.blob_path(blob)?;
+                Ok(Box::new(fs::File::open(&path).at(&path)?))
+            }
         }
     }
 
@@ -40,13 +43,14 @@ impl<'a> Store<'a> {
     pub fn read(&self, file: &File<'_>) -> Result<Vec<u8>, Error> {
         let mut bytes = Vec::with_capacity(file.size as usize);
         self.open(file.content, file.size)?
-            .read_to_end(&mut bytes)?;
+            .read_to_end(&mut bytes)
+            .entry(file.path)?;
         Ok(bytes)
     }
 
     /// The SHA-256 of `file`'s content, read to the end.
     pub fn sha256(&self, file: &File<'_>) -> Result<Sha256Digest, Error> {
-        Ok(Sha256Digest::reader(self.open(file.content, file.size)?)?)
+        Sha256Digest::reader(self.open(file.content, file.size)?).entry(file.path)
     }
 
     fn blob_path(&self, blob: &str) -> Result<PathBuf, Error> {

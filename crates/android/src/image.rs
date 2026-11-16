@@ -1,9 +1,9 @@
 //! Read-only access to EROFS and ext4 images.
 
-use crate::Filesystem;
 use crate::device::{Device, into_io};
 use crate::metadata::AndroidMetadata;
 use crate::{Error, ImageFormat};
+use crate::{Filesystem, IoAt};
 use fs_core::BlockRead;
 use fs_ext4::fs_core_bridge::CoreDevice;
 use std::{
@@ -38,9 +38,9 @@ impl Image {
     /// Open an EROFS or ext4 image, raw or Android sparse, recognizing it by its
     /// superblock magic.
     pub fn detect(path: &Path) -> Result<Self, Error> {
-        let device = Device::open(path)?;
+        let device = Device::open(path).at(path)?;
         let mut prefix = [0u8; 1084];
-        device.read_at(0, &mut prefix).map_err(into_io)?;
+        device.read_at(0, &mut prefix).map_err(into_io).at(path)?;
         Ok(Self(match ImageFormat::of(&prefix) {
             ImageFormat::Erofs => {
                 Backend::Erofs(Box::new(fs_erofs::Filesystem::open(Arc::new(device))?))
@@ -79,7 +79,9 @@ impl Image {
                     InodeKind::Directory => pending.push((format!("{path}/"), child)),
                     InodeKind::File if wanted(&path) => {
                         let mut data = Vec::with_capacity(inode.size as usize);
-                        self.file(child, inode.size)?.read_to_end(&mut data)?;
+                        self.file(child, inode.size)?
+                            .read_to_end(&mut data)
+                            .entry(&path)?;
                         found.push((path, data));
                     }
                     _ => {}
