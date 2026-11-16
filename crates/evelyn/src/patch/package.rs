@@ -19,9 +19,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("{0}: {1}")]
+    #[error("cannot access {0}")]
     Io(PathBuf, #[source] std::io::Error),
-    #[error("package: {}", .0.report())]
+    #[error("cannot edit the package")]
     Package(#[from] apkscope_core::Error),
 }
 

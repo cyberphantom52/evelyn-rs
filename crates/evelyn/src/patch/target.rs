@@ -42,7 +42,7 @@ pub enum Error {
     Tool(#[from] crate::toolchain::Error),
     #[error(transparent)]
     Value(#[from] crate::patch::value::ValueError),
-    #[error("step {step}: {source}")]
+    #[error("step {step}")]
     Step {
         step: String,
         #[source]
@@ -52,7 +52,7 @@ pub enum Error {
     Assertion(String),
     #[error("{0} is not set")]
     Unset(String),
-    #[error("{call}: {source}")]
+    #[error("{call}")]
     Call {
         call: String,
         #[source]
@@ -76,7 +76,7 @@ pub enum Error {
     Missing(RelativePath),
     #[error("unsupported target transformation: {0}")]
     Unsupported(&'static str),
-    #[error("{path}: {source}")]
+    #[error("{path}")]
     At {
         path: String,
         #[source]

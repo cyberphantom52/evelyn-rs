@@ -22,13 +22,13 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("cannot read {path}: {source}")]
+    #[error("cannot read {path}")]
     Read {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
-    #[error("invalid recipe {path}: {source}")]
+    #[error("invalid recipe {path}")]
     Ron {
         path: PathBuf,
         #[source]

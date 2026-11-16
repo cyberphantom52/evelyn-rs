@@ -19,7 +19,7 @@ pub enum Error {
     NoDataDir,
     #[error("Evelyn has no pinned {0}")]
     Unpinned(String),
-    #[error("cannot download {url}: {source}")]
+    #[error("cannot download {url}")]
     Download {
         url: &'static str,
         #[source]
@@ -31,7 +31,7 @@ pub enum Error {
     Changed(PathBuf),
     #[error("cannot generate the signing key: {0}")]
     Key(String),
-    #[error("{path}: {source}")]
+    #[error("cannot access {path}")]
     Io {
         path: PathBuf,
         #[source]

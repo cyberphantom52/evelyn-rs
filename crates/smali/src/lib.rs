@@ -14,7 +14,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("invalid smali: {0}")]
+    #[error("invalid smali")]
     Parse(#[from] ParseError),
     #[error("file declares {found}, not {expected}")]
     Class { expected: String, found: String },
