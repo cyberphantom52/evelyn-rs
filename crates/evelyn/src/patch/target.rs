@@ -162,18 +162,6 @@ impl Target {
         Ok(())
     }
 
-    /// Replace a file (and all of its hardlinks) with the contents of `replacement`.
-    pub(crate) fn replace_file(
-        &mut self,
-        path: &RelativePath,
-        replacement: &Path,
-    ) -> Result<(), Error> {
-        let kind = self.write_blob(fs::File::open(replacement)?)?;
-        let canonical = self.file(path)?.path.clone();
-        self.set_content(&canonical, kind);
-        Ok(())
-    }
-
     /// Copy a subtree to another path in this target, with the metadata the copy
     /// states.
     pub(crate) fn copy_within(

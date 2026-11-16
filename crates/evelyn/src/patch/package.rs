@@ -1,10 +1,9 @@
 //! Packages (APKs and JARs) a `Package` edits. Their code is edited as smali, a
 //! class at a time, and assembled back into the DEX files in place. Only when an
-//! edit reaches the package's files are they written out to a directory those
-//! edits run in, laid out as they are in the package: resources and the manifest
-//! as text when an edit reaches them, everything else as it is, the DEX files
-//! left out. Closing puts back only what the edits changed. A failed edit leaves
-//! that directory partially changed; the next open replaces it.
+//! edit reaches the package's files are they read into memory, by their paths in
+//! the package: resources and the manifest as text when an edit reaches them,
+//! everything else as it is, the DEX files left out. Closing puts back only what
+//! the edits changed.
 
 use crate::patch::{Target, compose::Context};
 use crate::recipe::{Expr, Location, Operation};
@@ -33,17 +32,73 @@ const MANIFEST: &str = "AndroidManifest.xml";
 pub(crate) struct Opened {
     /// The package as the build has it.
     source: PathBuf,
-    /// Where its files are written, if an edit reaches them.
-    pub decoded: PathBuf,
-    /// The entries written there as they are, if any were.
-    files: Option<BTreeSet<String>>,
-    /// Whether its resources and manifest were written there too, as text.
+    /// Its files as the edits so far left them, if an edit reaches them.
+    files: Option<Files>,
+    /// The entries read into `files` as they are.
+    read: BTreeSet<String>,
+    /// Whether its resources and manifest are in `files` too, as text.
     resources: bool,
     /// The partition the package is in.
     pub partition: String,
-    rebuilt: PathBuf,
     /// The classes edited so far, by descriptor, as smali.
     classes: BTreeMap<String, String>,
+}
+
+/// A package's files, by their paths from its root with `/` between names. A
+/// directory is there while a file is below it.
+#[derive(Default)]
+pub(crate) struct Files(BTreeMap<String, Vec<u8>>);
+
+impl Files {
+    /// The names directly in `dir` (`""` for the root), files and directories.
+    pub(crate) fn children(&self, dir: &str) -> Vec<String> {
+        let prefix = match dir {
+            "" => String::new(),
+            dir => format!("{dir}/"),
+        };
+        let mut names: Vec<String> = self
+            .0
+            .range(prefix.clone()..)
+            .take_while(|(name, _)| name.starts_with(&prefix))
+            .map(|(name, _)| {
+                let rest = &name[prefix.len()..];
+                rest.split('/').next().unwrap_or(rest).to_owned()
+            })
+            .collect();
+        names.dedup();
+        names
+    }
+
+    /// Whether `path` is a file, or a directory with a file below it.
+    pub(crate) fn exists(&self, path: &str) -> bool {
+        self.0.contains_key(path) || self.is_dir(path)
+    }
+
+    /// Whether `path` is a directory with a file below it.
+    pub(crate) fn is_dir(&self, path: &str) -> bool {
+        let prefix = format!("{path}/");
+        self.0
+            .range(prefix.clone()..)
+            .next()
+            .is_some_and(|(name, _)| name.starts_with(&prefix))
+    }
+
+    /// The content of the file at `path`.
+    pub(crate) fn read(&self, path: &str) -> Option<&[u8]> {
+        self.0.get(path).map(Vec::as_slice)
+    }
+
+    /// Put `data` at `path`, replacing a file there.
+    pub(crate) fn write(&mut self, path: &str, data: Vec<u8>) {
+        self.0.insert(path.to_owned(), data);
+    }
+
+    /// Remove the file at `path`, or everything below the directory there.
+    pub(crate) fn remove(&mut self, path: &str) {
+        let prefix = format!("{path}/");
+        self.0
+            .retain(|name, _| name != path && !name.starts_with(&prefix));
+    }
 }
 
 /// Open the package at `at`. Its files are written out only when `edits` reach
@@ -55,32 +110,31 @@ pub(crate) fn open(
     context: &Context<'_>,
 ) -> Result<Opened, crate::patch::Error> {
     let source = target.content_path(&at.path, context.images)?;
-    let workspace = context.packages.join(&at.partition).join(at.path.as_ref());
-    fs::create_dir_all(&workspace)?;
-    let decoded = workspace.join("decoded");
-    let _ = fs::remove_dir_all(&decoded);
     let resources = resources(edits);
-    let files = match edits.iter().all(code) {
-        true => None,
-        false => Some(write_out(&source, &decoded, resources)?),
+    let (files, read) = match edits.iter().all(code) {
+        true => (None, BTreeSet::new()),
+        false => {
+            let (files, read) = read_files(&source, resources)?;
+            (Some(files), read)
+        }
     };
     Ok(Opened {
         source,
-        decoded,
         files,
+        read,
         resources,
         partition: at.partition.clone(),
-        rebuilt: workspace.join("rebuilt"),
         classes: BTreeMap::new(),
     })
 }
 
-/// Write the files of the package at `source` to `to`: every entry but the DEX
-/// files, the resources and the manifest as they are, and those as text if
-/// `resources`. The entries written as they are, by name.
-fn write_out(source: &Path, to: &Path, resources: bool) -> Result<BTreeSet<String>, Error> {
+/// Read the files of the package at `source`: every entry but the DEX files,
+/// the resources and the manifest as they are, and those as text if
+/// `resources`. With them, the entries read as they are, by name.
+fn read_files(source: &Path, resources: bool) -> Result<(Files, BTreeSet<String>), Error> {
     let mut apk = open_apk(source)?;
-    let mut written = BTreeSet::new();
+    let mut files = Files::default();
+    let mut read = BTreeSet::new();
     for i in 0..apk.zip.len() {
         let entry = apk.zip.by_index(i).map_err(apkscope_core::Error::from)?;
         let Some(name) = entry.enclosed_name().filter(|_| entry.is_file()) else {
@@ -94,15 +148,15 @@ fn write_out(source: &Path, to: &Path, resources: bool) -> Result<BTreeSet<Strin
         let data = apk
             .read(&name)
             .ok_or_else(|| apkscope_core::Error::EntryNotFound(name.clone()))?;
-        write(&to.join(&name), &data)?;
-        written.insert(name);
+        files.write(&name, data);
+        read.insert(name);
     }
     if resources {
         for (name, data) in resources::decode(&mut apk)? {
-            write(&to.join(name), &data)?;
+            files.write(&name, data);
         }
     }
-    Ok(written)
+    Ok((files, read))
 }
 
 /// Whether an entry is written out as it is: one that is neither code nor the
@@ -116,33 +170,21 @@ fn open_apk(path: &Path) -> Result<Apk, Error> {
     Ok(Apk::new(fs::File::open(path).map_err(io(path))?)?)
 }
 
-fn write(path: &Path, data: &[u8]) -> Result<(), Error> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(io(parent))?;
-    }
-    fs::write(path, data).map_err(io(path))
-}
-
-/// Every file under `dir`, by its path from `dir` with `/` between names.
-fn files_under(dir: &Path) -> Result<BTreeMap<String, Vec<u8>>, Error> {
-    let mut files = BTreeMap::new();
-    let mut dirs = vec![dir.to_path_buf()];
-    while let Some(d) = dirs.pop() {
-        for entry in fs::read_dir(&d).map_err(io(&d))? {
-            let path = entry.map_err(io(&d))?.path();
-            if path.is_dir() {
-                dirs.push(path);
-            } else {
-                let name = path.strip_prefix(dir).expect("under dir");
-                let name = name.to_string_lossy().replace('\\', "/");
-                files.insert(name, fs::read(&path).map_err(io(&path))?);
-            }
-        }
-    }
-    Ok(files)
-}
-
 impl Opened {
+    /// The package's files, which an edit outside its code reaches.
+    pub(crate) fn files(&self) -> Result<&Files, crate::patch::Error> {
+        self.files.as_ref().ok_or(crate::patch::Error::Unsupported(
+            "a package's files are read only when an edit reaches them",
+        ))
+    }
+
+    /// The package's files, to change.
+    pub(crate) fn files_mut(&mut self) -> Result<&mut Files, crate::patch::Error> {
+        self.files.as_mut().ok_or(crate::patch::Error::Unsupported(
+            "a package's files are read only when an edit reaches them",
+        ))
+    }
+
     /// The smali of `class`, a descriptor, as the edits so far left it.
     pub(crate) fn class(&mut self, class: &str) -> Result<&mut String, Error> {
         if !self.classes.contains_key(class) {
@@ -178,8 +220,7 @@ impl Opened {
     /// removed, and the edited classes assembled into its DEX files.
     fn edits(self, apk: &mut Apk) -> Result<rebuild::Edits, Error> {
         let mut edits = rebuild::Edits::new();
-        if let Some(written) = &self.files {
-            let mut files = files_under(&self.decoded)?;
+        if let Some(Files(mut files)) = self.files {
             let decoded: BTreeMap<String, Vec<u8>> = match self.resources {
                 true => {
                     let decoded = files.extract_if(.., |name, _| !raw(name)).collect();
@@ -188,7 +229,7 @@ impl Opened {
                 }
                 false => BTreeMap::new(),
             };
-            for name in written {
+            for name in &self.read {
                 if !files.contains_key(name) {
                     edits.insert(name.clone(), None);
                 }
@@ -224,7 +265,6 @@ pub(crate) fn close(
     context: &Context<'_>,
 ) -> Result<(), crate::patch::Error> {
     let source = opened.source.clone();
-    let rebuilt = opened.rebuilt.clone();
     let mut apk = open_apk(&source)?;
     let edits = opened.edits(&mut apk)?;
     let file = fs::File::open(&source).map_err(io(&source))?;
@@ -235,8 +275,7 @@ pub(crate) fn close(
         let key = apksign::load(&keys.key, &keys.certificate).map_err(Error::from)?;
         bytes = apksign::sign(bytes, central_directory, &key).map_err(Error::from)?;
     }
-    fs::write(&rebuilt, bytes).map_err(io(&rebuilt))?;
-    target.replace_file(path, &rebuilt)
+    target.write(path, &bytes)
 }
 
 /// Whether an edit changes code only, and so needs none of the package's files.

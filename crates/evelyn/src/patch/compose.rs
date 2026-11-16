@@ -29,8 +29,6 @@ pub struct Context<'a> {
     /// The recipe's directory, which asset paths resolve below; `None` for a
     /// recipe built into Evelyn, whose assets are files Evelyn downloads.
     pub assets: Option<&'a Path>,
-    /// Scratch directory for decoded packages.
-    pub packages: &'a Path,
     /// Where each partition is mounted, for resolving device paths.
     pub mounts: &'a Mounts,
 }
@@ -192,19 +190,19 @@ impl Composition {
         context: &Context<'_>,
     ) -> Result<(), Error> {
         let source = context.asset(asset)?;
-        if let Some(package) = &self.package {
+        if let Some(package) = &mut self.package {
             let inside = RelativePath::try_from(to.to_string()[1..].to_owned())?;
-            let path = inside.resolve(&package.decoded);
-            if path.exists() && !placing.overwrite {
+            let files = package.files_mut()?;
+            let path: &str = inside.as_ref();
+            if files.exists(path) && !placing.overwrite {
                 return Err(layout::Error::DestinationExists(inside).into());
             }
-            if let Some(parent) = path.parent() {
-                if !parent.exists() && !placing.create_parent {
-                    return Err(layout::Error::MissingParent(inside).into());
-                }
-                std::fs::create_dir_all(parent).map_err(crate::patch::package::io(parent))?;
+            let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+            if !parent.is_empty() && !files.is_dir(parent) && !placing.create_parent {
+                return Err(layout::Error::MissingParent(inside).into());
             }
-            std::fs::copy(&source, &path).map_err(crate::patch::package::io(&source))?;
+            let data = std::fs::read(&source).map_err(crate::patch::package::io(&source))?;
+            files.write(path, data);
             return Ok(());
         }
         // A partition's mount point is its root; anything else is a path in one.

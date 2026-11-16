@@ -99,18 +99,8 @@ impl Composition {
         let path = pattern.strip_prefix('/').ok_or(Error::Unsupported(
             "paths inside a package start at its root, /",
         ))?;
-        let found = layout::walk(
-            path,
-            |dir| {
-                std::fs::read_dir(package.decoded.join(dir))
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                    .collect()
-            },
-            |path| package.decoded.join(path).exists(),
-        );
+        let files = package.files()?;
+        let found = layout::walk(path, |dir| files.children(dir), |path| files.exists(path));
         found
             .into_iter()
             .map(|path| {
@@ -193,7 +183,10 @@ impl Composition {
                     .package
                     .as_ref()
                     .ok_or(Error::Unsupported("no package is open"))?;
-                Ok(std::fs::read(entry.path.resolve(&package.decoded))?)
+                let data = package.files()?.read(entry.path.as_ref());
+                Ok(data
+                    .ok_or_else(|| layout::Error::MissingPath(entry.path.clone()))?
+                    .to_vec())
             }
             Place::Firmware(firmware) => {
                 let tree = context.source(&source_of(firmware, &entry.partition))?;
@@ -273,10 +266,9 @@ impl Composition {
                 Place::Package => {
                     let bytes = self.content(entry, context)?;
                     let edited = edit(&bytes)?;
-                    let package = self.package.as_ref().expect("a package's file is in it");
-                    let path = entry.path.resolve(&package.decoded);
                     if edited != bytes {
-                        std::fs::write(&path, edited).map_err(crate::patch::package::io(&path))?;
+                        let package = self.package.as_mut().expect("a package's file is in it");
+                        package.files_mut()?.write(entry.path.as_ref(), edited);
                     }
                 }
                 _ => return Err(Error::Unsupported("only the build can be edited")),
@@ -304,15 +296,15 @@ impl Composition {
     /// Remove a selected entry, and what is below it, from the build or the open
     /// package.
     pub(crate) fn remove_entry(&mut self, entry: &Located) -> Result<(), Error> {
-        match (entry.place, &self.package) {
+        match (entry.place, &mut self.package) {
             (Place::Build, _) => self.target(&entry.partition)?.remove(&entry.path),
             (Place::Package, Some(package)) => {
-                let path = entry.path.resolve(&package.decoded);
-                let removed = match path.is_dir() {
-                    true => std::fs::remove_dir_all(&path),
-                    false => std::fs::remove_file(&path),
-                };
-                Ok(removed.map_err(crate::patch::package::io(&path))?)
+                let files = package.files_mut()?;
+                if !files.exists(entry.path.as_ref()) {
+                    return Err(layout::Error::MissingPath(entry.path.clone()).into());
+                }
+                files.remove(entry.path.as_ref());
+                Ok(())
             }
             _ => Err(Error::Unsupported("only the build can be removed from")),
         }
