@@ -2,6 +2,7 @@
 //! the build, a firmware, the recipe's assets or the open package, their content,
 //! and the property files init loads.
 
+use crate::patch::target::IoAt;
 use crate::patch::{
     Composition, Error,
     compose::{Bound, Context},
@@ -172,7 +173,10 @@ impl Composition {
     /// the open package.
     pub(crate) fn content(&self, entry: &Located, context: &Context<'_>) -> Result<Vec<u8>, Error> {
         match entry.place {
-            Place::Asset => Ok(std::fs::read(context.asset(&entry.path)?)?),
+            Place::Asset => {
+                let path = context.asset(&entry.path)?;
+                std::fs::read(&path).at(&path)
+            }
             Place::Build => self
                 .targets
                 .get(&entry.partition)

@@ -1,6 +1,7 @@
 //! Apply recipes across every target partition: each step's `let:` and `when:`,
 //! then its operations, each a function in [`crate::patch::operations`].
 
+use crate::patch::target::IoAt;
 use crate::patch::value::Located;
 use crate::patch::{
     Error, Images, Target, defaults::Defaults, layout, package::Opened, target::Placing,
@@ -224,7 +225,8 @@ impl Composition {
             None => RelativePath::try_from(path.to_owned()),
         };
         let files = if source.is_dir() {
-            files(&source)?
+            files(&source)
+                .at(&source)?
                 .into_iter()
                 .map(|(relative, file)| Ok((below(&relative)?, file)))
                 .collect::<Result<Vec<_>, Error>>()?

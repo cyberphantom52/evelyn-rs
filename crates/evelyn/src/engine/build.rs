@@ -14,7 +14,7 @@ use crate::Firmware;
 use crate::SourceRef;
 use crate::engine::firmware::{Given, OpenFirmware};
 use crate::engine::properties::{check_fingerprint, port_for, rom_properties};
-use crate::engine::{Error, Output, Profile, profile};
+use crate::engine::{Error, IoAt, Output, Profile, profile};
 use crate::recipe::Recipe;
 use crate::toolchain::Tools;
 use android::Filesystem;
@@ -348,9 +348,10 @@ fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Patch>, Error> {
 
 /// The debug recipe, with its assets written to `assets`.
 fn debug_recipe(assets: &Path) -> Result<Patch, Error> {
-    fs::create_dir_all(assets)?;
+    fs::create_dir_all(assets).at(assets)?;
     for (name, text) in DEBUG_ASSETS {
-        fs::write(assets.join(name), text)?;
+        let path = assets.join(name);
+        fs::write(&path, text).at(&path)?;
     }
     Ok(Patch {
         recipe: Recipe::parse(DEBUG_RECIPE, Path::new("debug.ron"))?,
@@ -390,9 +391,9 @@ fn read(
 
 fn reset(path: &Path) -> Result<(), Error> {
     if path.exists() {
-        fs::remove_dir_all(path)?;
+        fs::remove_dir_all(path).at(path)?;
     }
-    fs::create_dir_all(path)?;
+    fs::create_dir_all(path).at(path)?;
     Ok(())
 }
 

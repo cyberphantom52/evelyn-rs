@@ -2,7 +2,7 @@
 
 use crate::engine::build::Written;
 use crate::engine::firmware::OpenFirmware;
-use crate::engine::{Error, Output, Profile};
+use crate::engine::{Error, IoAt, Output, Profile};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -17,19 +17,19 @@ pub(crate) fn publish(
     stock: &OpenFirmware,
     images: Written,
 ) -> Result<Vec<PathBuf>, Error> {
-    fs::create_dir_all(output_dir)?;
+    fs::create_dir_all(output_dir).at(output_dir)?;
     Ok(match images {
         Written::Partitions(images) => images
             .into_iter()
             .map(|(name, image)| {
                 let output = output_dir.join(format!("{name}.img"));
-                fs::rename(image, &output)?;
+                fs::rename(&image, &output).at(&image)?;
                 Ok(output)
             })
             .collect::<Result<_, Error>>()?,
         Written::Super(super_image) if output == Output::Super => {
             let output = output_dir.join("super.img");
-            fs::rename(super_image, &output)?;
+            fs::rename(&super_image, &output).at(&super_image)?;
             vec![output]
         }
         Written::Super(super_image) => {
@@ -42,7 +42,7 @@ pub(crate) fn publish(
                 },
                 &output,
             )?;
-            fs::remove_file(super_image)?;
+            fs::remove_file(&super_image).at(&super_image)?;
             vec![output]
         }
     })

@@ -2,6 +2,7 @@
 //! package: what [`crate::patch::files`] selects, reads and writes.
 
 use crate::Firmware;
+use crate::patch::target::IoAt;
 use crate::patch::{
     Composition, Error,
     compose::{Bound, Context},
@@ -255,7 +256,8 @@ impl Composition {
     /// A recipe asset's text.
     fn asset(&self, path: &str, bound: &Bound, context: &Context<'_>) -> Result<String, Error> {
         let path = RelativePath::try_from(crate::recipe::substitute(path, bound)?)?;
-        text(&std::fs::read(context.asset(&path)?)?)
+        let path = context.asset(&path)?;
+        text(&std::fs::read(&path).at(&path)?)
     }
 
     /// Copy what `from` names, which must be there, into the build or the open

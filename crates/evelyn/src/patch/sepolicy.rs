@@ -1,6 +1,7 @@
 //! SELinux CIL policies patched with TE rules, through libsepol.
 
 use crate::patch::Context;
+use crate::patch::target::IoAt;
 use android::path::RelativePath;
 use std::fs;
 use thiserror::Error;
@@ -14,7 +15,8 @@ fn macros(context: &Context<'_>) -> Result<Vec<String>, crate::patch::Error> {
     MACROS
         .iter()
         .map(|name| {
-            String::from_utf8(fs::read(context.tools.file(name)?)?)
+            let path = context.tools.file(name)?;
+            String::from_utf8(fs::read(&path).at(&path)?)
                 .map_err(|_| crate::patch::Error::Unsupported("policies are UTF-8 text"))
         })
         .collect()
@@ -34,7 +36,10 @@ pub(crate) fn apply(
     };
     let patches = policies
         .iter()
-        .map(|path| Ok((path.to_string(), text(fs::read(context.asset(path)?)?)?)))
+        .map(|path| {
+            let file = context.asset(path)?;
+            Ok((path.to_string(), text(fs::read(&file).at(&file)?)?))
+        })
         .collect::<Result<Vec<_>, crate::patch::Error>>()?;
     Ok(patch(&text(bytes.to_vec())?, resolve_with, &patches, &macros(context)?)?.into_bytes())
 }
