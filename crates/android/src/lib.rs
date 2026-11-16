@@ -44,7 +44,7 @@ pub enum Error {
     Missing(crate::path::RelativePath),
     #[error("{0} is not a regular file")]
     NotAFile(crate::path::RelativePath),
-    #[error("cannot read {path}: {source}")]
+    #[error("cannot read {path}")]
     Read {
         path: PathBuf,
         #[source]
@@ -52,14 +52,14 @@ pub enum Error {
     },
     #[error("invalid {kind}: {value:?}")]
     Invalid { kind: &'static str, value: String },
-    #[error("ext4 backend: {0}")]
+    #[error("ext4 filesystem")]
     Ext4(#[from] fs_ext4::Error),
-    #[error("filesystem IO: {0}")]
+    #[error("filesystem IO")]
     Io(#[from] io::Error),
     #[error("unsupported or inconsistent image data: {0}")]
     Unsupported(String),
     #[error("cannot build super image: {0}")]
     Super(String),
-    #[error("EROFS backend: {0}")]
+    #[error("EROFS filesystem")]
     Erofs(#[from] fs_erofs::Error),
 }

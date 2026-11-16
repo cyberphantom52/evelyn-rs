@@ -42,7 +42,7 @@ pub(crate) fn apply(
 /// libsepol's errors are boxed: they are large, and would make every result as large.
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("SELinux policy {name}: {source}")]
+    #[error("SELinux policy {name}")]
     Policy {
         name: String,
         #[source]
@@ -50,7 +50,7 @@ pub enum Error {
     },
     #[error("the patched SELinux policy does not resolve with the device's other policy files")]
     Unresolved(#[source] Box<sepolicy::Error>),
-    #[error("cannot render the patched SELinux policy: {0}")]
+    #[error("cannot render the patched SELinux policy")]
     Render(#[source] Box<sepolicy::Error>),
 }
 

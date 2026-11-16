@@ -62,7 +62,7 @@ pub enum Error {
     SystemLayout,
     #[error("super and ZIP output need a [device.super] section in evelyn.toml")]
     MissingLayout,
-    #[error("OTA package: {0}")]
+    #[error("cannot read the OTA package")]
     Payload(#[from] payload_dumper::Error),
     #[error("{0} is an incremental OTA; give a full one")]
     IncrementalOta(String),

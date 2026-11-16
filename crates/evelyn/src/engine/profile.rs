@@ -39,19 +39,19 @@ const IGNORED: [&str; 3] = ["/.evelyn/", "/firmware/", "/out/"];
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("cannot read {path}: {source}")]
+    #[error("cannot read {path}")]
     Read {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
-    #[error("cannot write {path}: {source}")]
+    #[error("cannot write {path}")]
     Write {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
-    #[error("invalid profile {path}: {source}")]
+    #[error("invalid profile {path}")]
     Toml {
         path: PathBuf,
         #[source]
