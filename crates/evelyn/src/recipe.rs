@@ -149,8 +149,10 @@ pub enum Operation {
     /// Decode an APK or JAR, apply operations inside it and rebuild it, signed
     /// with Evelyn's key, as an APK Android verifies needs once its contents
     /// change, or not. Inside it, paths are from its root, and it has the smali
-    /// edits.
+    /// edits and `Resources`.
     Package(String, Signing, Vec<Operation>),
+    /// Inside a `Package`: set the package's values resources.
+    Resources(Vec<ResourceEdit>),
     /// Inside a `Package`: replace a smali method with the asset `body`.
     ReplaceMethod {
         class: String,
@@ -279,6 +281,34 @@ pub enum Signing {
     Unsigned,
 }
 
+/// An edit of a package's values resources.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum ResourceEdit {
+    /// Set a resource of `type` (`string`, `bool`, `integer`, `color`, `dimen`,
+    /// `fraction`, `string-array`, `integer-array`) and `name` in a configuration
+    /// (`""` for the default `values/`, or a qualifier like `"en-rIN"`), which
+    /// must have it, or with `create`, gets it if it does not. A value is what
+    /// goes between the tags, an array's a list of its items.
+    Set {
+        #[serde(rename = "type")]
+        kind: String,
+        name: String,
+        config: String,
+        value: ResourceValue,
+        #[serde(default)]
+        create: bool,
+    },
+}
+
+/// A resource's value: one, or an array's items.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum ResourceValue {
+    One(String),
+    Items(Vec<String>),
+}
+
 /// Where `Import` takes a policy from unless it is told: the ROM's
 /// precompiled odm policy, which has its vendor policy compiled in.
 fn precompiled_policy() -> Location {
@@ -286,7 +316,7 @@ fn precompiled_policy() -> Location {
 }
 
 /// The built-in operations' names.
-pub(crate) const BUILT_IN_OPERATIONS: [&str; 20] = [
+pub(crate) const BUILT_IN_OPERATIONS: [&str; 21] = [
     "Copy",
     "Import",
     "Install",
@@ -298,6 +328,7 @@ pub(crate) const BUILT_IN_OPERATIONS: [&str; 20] = [
     "Xml",
     "Policy",
     "Package",
+    "Resources",
     "ReplaceMethod",
     "InsertMethod",
     "StubMethod",
@@ -358,6 +389,7 @@ impl Operation {
             Self::Xml(..) => "Xml",
             Self::Policy(..) => "Policy",
             Self::Package(..) => "Package",
+            Self::Resources(..) => "Resources",
             Self::ReplaceMethod { .. } => "ReplaceMethod",
             Self::InsertMethod { .. } => "InsertMethod",
             Self::StubMethod { .. } => "StubMethod",
@@ -372,7 +404,7 @@ impl Operation {
     }
 
     /// What can run on a package's files: file and content edits, copies of
-    /// assets and the smali edits.
+    /// assets, the smali edits and `Resources`.
     pub fn in_package(&self) -> bool {
         matches!(
             self,
@@ -382,6 +414,7 @@ impl Operation {
                 | Self::Xml(..)
                 | Self::Copy { .. }
                 | Self::Install(..)
+                | Self::Resources(..)
                 | Self::Assert(..)
                 | Self::AssertHash(..)
                 | Self::ReplaceMethod { .. }
@@ -509,7 +542,10 @@ mod tests {
                     Text("/vendor/etc/x", [Append(r"a\.b"), Diff("x.diff")]),
                     Policy("/vendor/etc/selinux/vendor_sepolicy.cil", [Add("a.te"), Import(types: ["t"])]),
                     ForEach(Partitions(Rom), "p", [Remove("{p}/app/X")]),
-                    Package("/product/app/A.apk", Signed, [Remove("/res/drawable/a.png")]),
+                    Package("/product/app/A.apk", Signed, [
+                        Resources([Set(type: "string", name: "n", config: "", value: "v")]),
+                        Resources([Set(type: "integer-array", name: "m", config: "en-rIN", value: ["1", "2"], create: true)]),
+                    ]),
                 ]),
             ]"#,
             Path::new("test.ron"),

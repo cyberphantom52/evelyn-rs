@@ -9,8 +9,8 @@ use crate::patch::{
     value::{Located, Place, Value, ValueError},
 };
 use crate::recipe::{
-    Expr, Hex, Location, Metadata, Operation, PolicyEdit, PropEdit, Returns, Signing, TextEdit,
-    XmlEdit,
+    Expr, Hex, Location, Metadata, Operation, PolicyEdit, PropEdit, ResourceEdit, ResourceValue,
+    Returns, Signing, TextEdit, XmlEdit,
 };
 use android::hash::Sha256Digest;
 use android::path::{DevicePath, RelativePath};
@@ -125,6 +125,7 @@ impl Composition {
                 let sign = *signing == Signing::Signed;
                 self.package(target, sign, edits, bound, context)
             }
+            Operation::Resources(edits) => self.resources(edits, bound, context),
             Operation::StubMethod {
                 class,
                 method,
@@ -681,6 +682,51 @@ impl Composition {
         }
         if !added.is_empty() {
             self.add_policy(target, &added, bound, context)?;
+        }
+        Ok(())
+    }
+
+    /// Set values resources of the open package, each in its configuration's
+    /// file for its type, which must be there.
+    fn resources(
+        &mut self,
+        edits: &[ResourceEdit],
+        bound: &Bound,
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
+        if self.package.is_none() {
+            return Err(Error::OutsidePackage("Resources".to_owned()));
+        }
+        for edit in edits {
+            let ResourceEdit::Set {
+                kind,
+                name,
+                config,
+                value,
+                create,
+            } = edit;
+            let substitute = |text: &str| crate::recipe::substitute(text, bound);
+            let (kind, name, config) = (substitute(kind)?, substitute(name)?, substitute(config)?);
+            let value = match value {
+                ResourceValue::One(text) => ResourceValue::One(substitute(text)?),
+                ResourceValue::Items(items) => ResourceValue::Items(
+                    items
+                        .iter()
+                        .map(|item| substitute(item))
+                        .collect::<Result<_, _>>()?,
+                ),
+            };
+            let file = crate::patch::xml::resource_file(&kind)?;
+            let directory = match config.as_str() {
+                "" => "values".to_owned(),
+                config => format!("values-{config}"),
+            };
+            let target = format!("/res/{directory}/{file}");
+            self.edit_named(&target, &Bound::new(), context, |bytes| {
+                Ok(crate::patch::xml::set_resource(
+                    bytes, &kind, &name, &value, *create,
+                )?)
+            })?;
         }
         Ok(())
     }

@@ -322,6 +322,7 @@ fn resource(edit: &Operation) -> bool {
                     !matches!(location, Location::Partition(_)) && resource(location.path())
                 })
         }
+        Operation::Resources(_) => true,
         Operation::Copy { from, to: dest, .. } => {
             resource(from.path()) || dest.as_ref().is_some_and(to)
         }

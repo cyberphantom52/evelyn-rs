@@ -23,8 +23,112 @@ pub enum Error {
     RemoveRoot,
     #[error("XML fragment must be one element")]
     Fragment,
+    #[error("no resource type {0}")]
+    ResourceType(String),
+    #[error("the values file has no {kind} {name}")]
+    MissingResource { kind: String, name: String },
+    #[error("a {0} has an array's items, and a value one")]
+    ResourceShape(String),
+    #[error("a values file's document element is <resources>")]
+    NotResources,
     #[error("XML could not be written")]
     Write(#[source] xot::Error),
+}
+
+/// The values file a resource of `kind` is in, as apkscope decodes them.
+pub fn resource_file(kind: &str) -> Result<&'static str, Error> {
+    Ok(match kind {
+        "string" => "strings.xml",
+        "bool" => "bools.xml",
+        "integer" => "integers.xml",
+        "color" => "colors.xml",
+        "dimen" => "dimens.xml",
+        "fraction" => "fractions.xml",
+        "string-array" | "integer-array" | "array" => "arrays.xml",
+        other => return Err(Error::ResourceType(other.to_owned())),
+    })
+}
+
+/// Set the resource `<kind name=name>` of a values file to `value`: an array's
+/// items, or one value as its text. One the file does not have is an error, or
+/// with `create`, is added.
+pub fn set_resource(
+    input: &[u8],
+    kind: &str,
+    name: &str,
+    value: &crate::recipe::ResourceValue,
+    create: bool,
+) -> Result<Vec<u8>, Error> {
+    use crate::recipe::ResourceValue;
+    let invalid = |_| Error::InvalidXml;
+    let array = kind.ends_with("array");
+    if array != matches!(value, ResourceValue::Items(_)) {
+        return Err(Error::ResourceShape(kind.to_owned()));
+    }
+    let source = std::str::from_utf8(input).map_err(|_| Error::Utf8)?;
+    let mut xot = Xot::new();
+    let document = xot.parse(source).map_err(Error::Parse)?;
+    let root = xot.document_element(document).map_err(invalid)?;
+    let resources = xot.add_name("resources");
+    if xot
+        .element(root)
+        .is_none_or(|element| element.name() != resources)
+    {
+        return Err(Error::NotResources);
+    }
+    let element_name = xot.add_name(kind);
+    let name_attribute = xot.add_name("name");
+    let found = xot.children(root).find(|node| {
+        xot.element(*node)
+            .is_some_and(|element| element.name() == element_name)
+            && xot
+                .attributes(*node)
+                .get(name_attribute)
+                .map(String::as_str)
+                == Some(name)
+    });
+    let node = match found {
+        Some(node) => node,
+        None if create => {
+            let node = xot.new_element(element_name);
+            xot.attributes_mut(node)
+                .insert(name_attribute, name.to_owned());
+            xot.append(root, node).map_err(invalid)?;
+            node
+        }
+        None => {
+            return Err(Error::MissingResource {
+                kind: kind.to_owned(),
+                name: name.to_owned(),
+            });
+        }
+    };
+    let children: Vec<_> = xot.children(node).collect();
+    for child in children {
+        xot.remove(child).map_err(invalid)?;
+    }
+    match value {
+        ResourceValue::One(text) => xot.append_text(node, text).map_err(invalid)?,
+        ResourceValue::Items(items) => {
+            let item = xot.add_name("item");
+            for text in items {
+                let child = xot.new_element(item);
+                xot.append_text(child, text).map_err(invalid)?;
+                xot.append(node, child).map_err(invalid)?;
+            }
+        }
+    }
+    let parameters = Parameters {
+        declaration: Some(Declaration {
+            encoding: Some("utf-8".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let output = xot
+        .serialize_xml_string(parameters, document)
+        .map_err(Error::Write)?;
+    Ok(output.into_bytes())
 }
 
 /// Later edits see earlier edits. A `PutChild` fragment must be exactly one element.
@@ -242,4 +346,57 @@ fn select(xot: &Xot, document: Node, path: &[XmlStep]) -> Vec<Node> {
         nodes = next;
     }
     nodes
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+    use crate::recipe::ResourceValue;
+
+    const VALUES: &str = r#"<?xml version="1.0" encoding="utf-8"?><resources><string name="a" translatable="false">old</string></resources>"#;
+
+    fn set(kind: &str, name: &str, value: ResourceValue, create: bool) -> Result<String, Error> {
+        set_resource(VALUES.as_bytes(), kind, name, &value, create)
+            .map(|bytes| String::from_utf8(bytes).unwrap())
+    }
+
+    #[test]
+    fn sets_a_value_and_keeps_its_attributes() {
+        let out = set("string", "a", ResourceValue::One("new & <b>".into()), false).unwrap();
+        assert!(
+            out.contains(r#"<string name="a" translatable="false">new &amp; &lt;b&gt;</string>"#),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_missing_one_needs_create() {
+        assert!(matches!(
+            set("string", "b", ResourceValue::One("x".into()), false),
+            Err(Error::MissingResource { .. })
+        ));
+        let out = set(
+            "integer-array",
+            "b",
+            ResourceValue::Items(vec!["1".into(), "2".into()]),
+            true,
+        )
+        .unwrap();
+        assert!(
+            out.contains(r#"<integer-array name="b"><item>1</item><item>2</item></integer-array>"#),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn an_array_takes_items() {
+        assert!(matches!(
+            set("string-array", "a", ResourceValue::One("x".into()), true),
+            Err(Error::ResourceShape(_))
+        ));
+        assert!(matches!(
+            resource_file("plurals"),
+            Err(Error::ResourceType(_))
+        ));
+    }
 }

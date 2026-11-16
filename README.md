@@ -107,7 +107,12 @@ The operations change the build, or inside a `Package`, the package:
   (`/assets/…`, `/lib/…`), except that its resources and manifest are text
   (`/res/values/strings.xml`, `/AndroidManifest.xml`). Only what they change is
   put back: a new file under `/res/` adds its resource, and a removed one is
-  removed. Its code is edited as smali, in place:
+  removed. `Resources([Set(type:, name:, config:, value:, create:)])` sets a values
+  resource (`string`, `bool`, `integer`, `color`, `dimen`, `fraction`,
+  `string-array`, `integer-array`) in a configuration (`""` for `values/`, or a
+  qualifier like `"en-rIN"`), whose file must be there: one that is not is an
+  error, or with `create: true`, added. A value is what goes between the tags, an
+  array's a list of its items. Its code is edited as smali, in place:
   `StubMethod`, `ReplaceMethod` and `InsertMethod` change one method of a class,
   and `ReplaceOperand(from:, to:)` replaces what instructions name (a method, a
   field, a type, a string, a number) in every class, or in `class:`, or in its
