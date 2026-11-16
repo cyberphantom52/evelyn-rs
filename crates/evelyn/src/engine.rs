@@ -39,6 +39,12 @@ pub enum Error {
     SourceFilesystem(SourceRef),
     #[error(transparent)]
     Patch(#[from] crate::patch::Error),
+    #[error("cannot apply {recipe}")]
+    Apply {
+        recipe: PathBuf,
+        #[source]
+        source: crate::patch::Error,
+    },
     #[error(transparent)]
     Zip(#[from] zip::result::ZipError),
     #[error(transparent)]
