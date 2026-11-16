@@ -98,7 +98,7 @@ struct Patch {
     assets: Option<PathBuf>,
 }
 
-/// Recipes every build applies before the port's patches, by file name and text.
+/// Recipes every build applies after the port's patches, by file name and text.
 const BUILT_IN_RECIPES: [(&str, &str); 1] = [(
     "vndk.ron",
     include_str!("../../../../assets/recipes/vndk.ron"),
@@ -112,8 +112,8 @@ const DEBUG_ASSETS: [(&str, &str); 1] = [(
     include_str!("../../../../assets/recipes/debug/logcat.rc"),
 )];
 
-/// Build the repository: the recipes built into Evelyn, the port's patches, then
-/// the extra patch directories, applied to the partitions the port takes. Of
+/// Build the repository: the port's patches, the extra patch directories, then
+/// the recipes built into Evelyn, applied to the partitions the port takes. Of
 /// firmware given as an OTA package, only the partitions the build reads are
 /// extracted, into the work directory, and removed when the build returns: the
 /// ROM's system side first, whose properties pick the port, then the device's
@@ -316,17 +316,10 @@ fn partition(
     })
 }
 
-/// The recipes built into Evelyn, the port's patches, then the `extra` patch
-/// directories'.
+/// The port's patches, the `extra` patch directories', then the recipes built
+/// into Evelyn.
 fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Patch>, Error> {
     let mut recipes = Vec::new();
-    for (name, text) in BUILT_IN_RECIPES {
-        recipes.push(Patch {
-            recipe: Recipe::parse(text, Path::new(name))?,
-            path: PathBuf::from(name),
-            assets: None,
-        });
-    }
     let patches = profile
         .patches()
         .into_iter()
@@ -341,6 +334,13 @@ fn recipes(profile: &Profile, extra: &[PathBuf]) -> Result<Vec<Patch>, Error> {
             recipe: Recipe::load(&file)?,
             path,
             assets: Some(assets),
+        });
+    }
+    for (name, text) in BUILT_IN_RECIPES {
+        recipes.push(Patch {
+            recipe: Recipe::parse(text, Path::new(name))?,
+            path: PathBuf::from(name),
+            assets: None,
         });
     }
     Ok(recipes)
