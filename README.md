@@ -16,8 +16,8 @@ A device repository ports one ROM to one device:
 
 ```
 evelyn.toml            the ROM, and the device: product IDs, the stock build it is pinned to, its super layout
-ports/<name>/port.toml one ROM version: the ROM builds it is for, what it takes from the ROM, and the patches it applies, in order
-patches/<topic>/<name>/patch.ron  one patch, with its assets beside it
+ports/<name>/port.toml one ROM version: the ROM builds it is for, what it takes from the ROM, and the patches it applies
+patches/<name>/patch.ron  one patch, named for what it changes, with its assets beside it
 firmware/stock/        the device's stock firmware: a full OTA package or <partition>.img images
 firmware/rom/          the ROM being ported, likewise
 out/<port>/            what a build writes
