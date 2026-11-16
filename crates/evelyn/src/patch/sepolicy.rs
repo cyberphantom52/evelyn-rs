@@ -48,6 +48,24 @@ pub(crate) fn apply(
     Ok(patch(&text(bytes.to_vec())?, resolve_with, &patches)?.into_bytes())
 }
 
+/// `bytes`, a CIL policy file, patched with `rules`, TE taken from another
+/// policy, named `name` in errors. Taken rules have no macros, so they are not
+/// expanded: a type named like a macro stays a type. The result must resolve
+/// with `resolve_with`, the device's other policy files.
+pub(crate) fn import(
+    bytes: &[u8],
+    name: &str,
+    rules: &str,
+    resolve_with: &[String],
+) -> Result<Vec<u8>, crate::patch::Error> {
+    let parsed = sepolicy::parser::parse(rules)
+        .map_err(sepolicy::Error::from)
+        .map_err(at(name))?;
+    let policy = String::from_utf8(bytes.to_vec())
+        .map_err(|_| crate::patch::Error::Unsupported("policies are UTF-8 text"))?;
+    Ok(patch(&policy, resolve_with, &[(name.to_owned(), parsed)])?.into_bytes())
+}
+
 /// The TE policy `text`, named `name` in errors, with the M4 `macros` expanded.
 fn expanded(name: &str, text: &str, macros: &[String]) -> Result<Policy, Error> {
     let macros: Vec<&str> = macros.iter().map(String::as_str).collect();
@@ -143,6 +161,19 @@ mod tests {
         assert!(
             !patched.contains("(type test_t)"),
             "the platform's policy is not written: {patched}"
+        );
+    }
+
+    #[test]
+    fn imported_rules_are_added_as_they_are() {
+        // binder_call is one of Android's macros: an imported rule is not expanded.
+        let rules = "type binder_call;\nallow vendor_t binder_call:test_class { test_perm };";
+        let imported = import(VENDOR.as_bytes(), "taken.te", rules, &[PLATFORM.into()]).unwrap();
+        let imported = String::from_utf8(imported).unwrap();
+        assert!(imported.contains("(type binder_call)"), "{imported}");
+        assert!(
+            imported.contains("(allow vendor_t binder_call (test_class (test_perm)))"),
+            "{imported}"
         );
     }
 
