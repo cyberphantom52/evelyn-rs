@@ -8,7 +8,6 @@
 //! Work directory layout:
 //!   firmware/{rom,stock}/               partitions extracted from an OTA package
 //!   targets/<partition>/                the blobs edits wrote
-//!   packages/                           decoded APK/JAR workspaces
 //!   images/<partition>.img              built filesystem images
 
 use crate::Firmware;
@@ -413,8 +412,6 @@ fn compose(
         let target = crate::patch::Target::create(&root.join(&partition.name), base, filesystem)?;
         targets.insert(partition.name.clone(), target);
     }
-    let packages = build.work_dir.join("packages");
-    reset(&packages)?;
     let origins = partitions
         .iter()
         .map(|partition| (partition.name.clone(), partition.from))
@@ -427,7 +424,6 @@ fn compose(
             images,
             tools: build.tools,
             assets: recipe.assets.as_deref(),
-            packages: &packages,
             mounts,
         };
         composition.apply(&recipe.recipe, &context)?;
