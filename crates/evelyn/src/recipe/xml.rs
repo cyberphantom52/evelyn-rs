@@ -1,6 +1,16 @@
 //! Literal XML selectors; paths include the document element.
 
 use serde::Deserialize;
+use thiserror::Error;
+
+/// A selector or path a recipe writes that is not one.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum SelectorError {
+    #[error("invalid XML selector {0:?}")]
+    Selector(String),
+    #[error("invalid XML path {0:?}")]
+    Path(String),
+}
 
 /// An element or attribute name, written as `local` or, with a namespace,
 /// `{uri}local`.
@@ -20,9 +30,9 @@ pub struct XmlMatch {
 }
 
 impl TryFrom<String> for XmlMatch {
-    type Error = String;
+    type Error = SelectorError;
 
-    fn try_from(text: String) -> Result<Self, String> {
+    fn try_from(text: String) -> Result<Self, SelectorError> {
         let local = |name: &str| XmlName::from(name.to_owned());
         let Some((name, rest)) = text.split_once('[') else {
             return Ok(Self {
@@ -30,7 +40,7 @@ impl TryFrom<String> for XmlMatch {
                 predicate: None,
             });
         };
-        let invalid = || format!("invalid XML selector {text:?}");
+        let invalid = || SelectorError::Selector(text.clone());
         let inner = rest.strip_suffix(']').ok_or_else(invalid)?;
         let Some((key, value)) = inner.split_once('=') else {
             let attribute = inner.strip_prefix('@').ok_or_else(invalid)?;
@@ -117,9 +127,9 @@ pub struct XmlStep {
 }
 
 impl TryFrom<String> for XmlPath {
-    type Error = String;
+    type Error = SelectorError;
 
-    fn try_from(text: String) -> Result<Self, String> {
+    fn try_from(text: String) -> Result<Self, SelectorError> {
         let mut parts = Vec::new();
         let (mut start, mut quote, mut depth) = (0, None, 0);
         for (index, c) in text.char_indices() {
@@ -138,7 +148,7 @@ impl TryFrom<String> for XmlPath {
         parts.push(&text[start..]);
         // An empty part is a `//`: the step after it matches at any depth.
         if parts.last().is_some_and(|part| part.is_empty()) {
-            return Err(format!("invalid XML path {text:?}"));
+            return Err(SelectorError::Path(text));
         }
         let mut selectors = Vec::new();
         let mut descendant = false;
@@ -247,7 +257,7 @@ pub enum XmlOp {
 
 impl XmlEdit {
     /// The edit with its selectors parsed.
-    pub fn parse(&self) -> Result<XmlOp, String> {
+    pub fn parse(&self) -> Result<XmlOp, SelectorError> {
         let path = |path: &String| XmlPath::try_from(path.clone());
         Ok(match self {
             Self::SetText { path: at, value } => XmlOp::SetText {

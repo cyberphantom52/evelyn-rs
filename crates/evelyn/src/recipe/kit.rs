@@ -72,17 +72,19 @@ pub fn operations() -> Result<&'static BTreeMap<String, Definition>, Error> {
         })?;
         for file in kit.property_files {
             if !file.starts_with('/') || !file.ends_with(".prop") {
-                return Err(Error::Invalid(format!(
-                    "{path} names {file}, which is not a device path to a property file"
-                )));
+                return Err(Error::KitPropertyFile {
+                    kit: path.to_string(),
+                    file,
+                });
             }
             property_files.push(file);
         }
         for (name, definition) in kit.operations {
             if BUILT_IN_OPERATIONS.contains(&name.as_str()) || operations.contains_key(&name) {
-                return Err(Error::Invalid(format!(
-                    "{path} defines {name}, which is already an operation"
-                )));
+                return Err(Error::KitOperation {
+                    kit: path.to_string(),
+                    name,
+                });
             }
             operations.insert(name, definition);
         }

@@ -142,9 +142,10 @@ impl Composition {
                 return Ok(());
             };
             if !is_token(&text) {
-                return Err(crate::recipe::Error::Invalid(format!(
-                    "{name} is bound to {text:?}, which is not [A-Za-z0-9._-]"
-                ))
+                return Err(crate::recipe::Error::Token {
+                    name: name.clone(),
+                    value: text,
+                }
                 .into());
             }
             bound.insert(name.clone(), text);

@@ -8,7 +8,9 @@ mod location;
 mod xml;
 pub use expr::{Expr, substitute, written_out};
 pub use location::Location;
-pub use xml::{XmlEdit, XmlMatch, XmlName, XmlOp, XmlPredicate, XmlStep, escape_attribute};
+pub use xml::{
+    SelectorError, XmlEdit, XmlMatch, XmlName, XmlOp, XmlPredicate, XmlStep, escape_attribute,
+};
 
 use crate::Firmware;
 use android::hash::Sha256Digest;
@@ -34,8 +36,20 @@ pub enum Error {
         #[source]
         source: Box<ron::error::SpannedError>,
     },
-    #[error("invalid configuration: {0}")]
-    Invalid(String),
+    #[error(transparent)]
+    Selector(#[from] SelectorError),
+    #[error("{name} is bound to {value:?}, which is not [A-Za-z0-9._-]")]
+    Token { name: String, value: String },
+    #[error("{{{0}}} is not bound")]
+    Unbound(String),
+    #[error("step {step} references unknown dependency {dependency}")]
+    UnknownDependency { step: String, dependency: String },
+    #[error("cyclic recipe dependencies")]
+    Cycle,
+    #[error("{kit} names {file}, which is not a device path to a property file")]
+    KitPropertyFile { kit: String, file: String },
+    #[error("{kit} defines {name}, which is already an operation")]
+    KitOperation { kit: String, name: String },
 }
 
 fn read(path: &Path) -> Result<String, Error> {
@@ -437,10 +451,10 @@ impl Recipe {
         for step in &self.steps {
             for dependency in &step.after {
                 if !ids.contains(dependency) {
-                    return Err(Error::Invalid(format!(
-                        "step {} references unknown dependency {}",
-                        step.id, dependency
-                    )));
+                    return Err(Error::UnknownDependency {
+                        step: step.id.clone(),
+                        dependency: dependency.clone(),
+                    });
                 }
             }
         }
@@ -451,7 +465,7 @@ impl Recipe {
                 !complete.contains(&step.id) && step.after.iter().all(|id| complete.contains(id))
             });
             let Some(step) = next else {
-                return Err(Error::Invalid("cyclic recipe dependencies".into()));
+                return Err(Error::Cycle);
             };
             complete.insert(&step.id);
             ordered.push(step);
