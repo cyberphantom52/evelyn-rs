@@ -3,6 +3,7 @@
 use crate::patch::Context;
 use crate::patch::target::IoAt;
 use android::path::RelativePath;
+use sepolicy::parser::ast::Policy;
 use std::fs;
 use thiserror::Error;
 
@@ -30,10 +31,29 @@ pub(crate) fn apply(
         .iter()
         .map(|path| {
             let file = context.asset(path)?;
-            Ok((path.to_string(), text(fs::read(&file).at(&file)?)?))
+            let name = path.to_string();
+            let rules = expanded(&name, &text(fs::read(&file).at(&file)?)?)?;
+            Ok((name, rules))
         })
         .collect::<Result<Vec<_>, crate::patch::Error>>()?;
     Ok(patch(&text(bytes.to_vec())?, resolve_with, &patches)?.into_bytes())
+}
+
+/// The TE policy `text`, named `name` in errors, with its M4 macros expanded.
+fn expanded(name: &str, text: &str) -> Result<Policy, Error> {
+    let expanded = sepolicy::parser::expand_with(text, &MACROS).map_err(at(name))?;
+    sepolicy::parser::parse(&expanded)
+        .map_err(sepolicy::Error::from)
+        .map_err(at(name))
+}
+
+/// An error in the policy named `name`.
+fn at(name: &str) -> impl FnOnce(sepolicy::Error) -> Error {
+    let name = name.to_owned();
+    move |source| Error::Policy {
+        name,
+        source: Box::new(source),
+    }
 }
 
 /// libsepol's errors are boxed: they are large, and would make every result as large.
@@ -51,34 +71,18 @@ pub enum Error {
     Render(#[source] Box<sepolicy::Error>),
 }
 
-/// `policy` with every TE policy in `patches` (name, text) added, after expanding
-/// the M4 macros. The result must resolve when `resolve_with` is loaded
-/// before it, as the device loads its other policy files.
+/// `policy` with every TE policy in `patches` (name, parsed rules) added. The
+/// result must resolve when `resolve_with` is loaded before it, as the device
+/// loads its other policy files.
 fn patch(
     policy: &str,
     resolve_with: &[impl AsRef<str>],
-    patches: &[(String, String)],
+    patches: &[(String, Policy)],
 ) -> Result<String, crate::patch::Error> {
-    let at = |name: &str| {
-        let name = name.to_owned();
-        move |source| Error::Policy {
-            name,
-            source: Box::new(source),
-        }
-    };
-    let rules = patches
-        .iter()
-        .map(|(name, text)| {
-            let expanded = sepolicy::parser::expand_with(text, &MACROS).map_err(at(name))?;
-            sepolicy::parser::parse(&expanded)
-                .map_err(sepolicy::Error::from)
-                .map_err(at(name))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     let merged = |base: sepolicy::CilPolicy| {
-        rules
+        patches
             .iter()
-            .try_fold(base.add_file(policy)?, |merged, rules| {
+            .try_fold(base.add_file(policy)?, |merged, (_, rules)| {
                 merged.add_policy(rules)
             })
     };
@@ -118,7 +122,8 @@ mod tests {
     #[test]
     fn a_patch_that_resolves_is_added_to_the_policy_alone() {
         let rules = "type hal_test_exec;\nallow vendor_t hal_test_exec:test_class test_perm;";
-        let patched = patch(VENDOR, &[PLATFORM], &[("test.te".into(), rules.into())]).unwrap();
+        let rules = expanded("test.te", rules).unwrap();
+        let patched = patch(VENDOR, &[PLATFORM], &[("test.te".into(), rules)]).unwrap();
         assert!(patched.contains("(type vendor_t)"), "{patched}");
         assert!(patched.contains("(type hal_test_exec)"), "{patched}");
         assert!(
@@ -134,7 +139,8 @@ mod tests {
     #[test]
     fn a_patch_naming_a_type_nothing_defines_is_refused() {
         let rules = "allow vendor_t missing_t:test_class test_perm;";
-        let refused = patch(VENDOR, &[PLATFORM], &[("test.te".into(), rules.into())]);
+        let rules = expanded("test.te", rules).unwrap();
+        let refused = patch(VENDOR, &[PLATFORM], &[("test.te".into(), rules)]);
         assert!(
             matches!(
                 refused,
