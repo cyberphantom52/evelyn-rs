@@ -1,14 +1,15 @@
 //! Kits: operations defined out of the built-in ones, shipped with Evelyn in
-//! `assets/kits/`. Every operation of every kit is available to every recipe,
-//! called as a built-in one is, by a name no other operation has. A kit names
-//! one `Outer` or `Outer(Inner)`; the second is called as `Outer(Inner(…))`.
+//! `assets/kits/`, and a device repository's own, in its `kits/`. Every
+//! operation of every kit is available to every recipe, called as a built-in one
+//! is, by a name no other operation has. A kit names one `Outer` or
+//! `Outer(Inner)`; the second is called as `Outer(Inner(…))`.
 
 use crate::recipe::{BUILT_IN_OPERATIONS, Error, Operation, ron_options};
 use serde::{
     Deserialize, Deserializer,
     de::{self, DeserializeSeed, EnumAccess, MapAccess, VariantAccess, Visitor},
 };
-use std::{collections::BTreeMap, fmt, sync::OnceLock};
+use std::{collections::BTreeMap, fmt, path::Path, sync::OnceLock};
 
 /// The kits shipped with Evelyn, by name and text.
 const KITS: [(&str, &str); 1] = [(
@@ -54,12 +55,48 @@ pub fn property_files() -> Result<&'static [String], Error> {
     Ok(PROPERTY_FILES.get().map_or(&[], Vec::as_slice))
 }
 
-/// The operations of every kit, by name.
+/// The operations of every kit, by name: Evelyn's, and any repository's that
+/// [`load`] loaded first.
 pub fn operations() -> Result<&'static BTreeMap<String, Definition>, Error> {
     if let Some(operations) = OPERATIONS.get() {
         return Ok(operations);
     }
     parse(Vec::new())
+}
+
+/// Load the kits of the device repository at `root`, its `kits/*.ron`, with
+/// Evelyn's, before any recipe is parsed. A repository without any has
+/// Evelyn's alone.
+pub fn load(root: &Path) -> Result<(), Error> {
+    let dir = root.join("kits");
+    let mut kits = Vec::new();
+    if dir.is_dir() {
+        let entries = std::fs::read_dir(&dir).map_err(|source| Error::Read {
+            path: dir.clone(),
+            source,
+        })?;
+        for entry in entries {
+            let path = entry
+                .map_err(|source| Error::Read {
+                    path: dir.clone(),
+                    source,
+                })?
+                .path();
+            if path.extension().is_some_and(|extension| extension == "ron") {
+                let text = std::fs::read_to_string(&path).map_err(|source| Error::Read {
+                    path: path.clone(),
+                    source,
+                })?;
+                let name = Path::new("kits").join(path.file_name().unwrap_or_default());
+                kits.push((name.display().to_string(), text));
+            }
+        }
+    }
+    kits.sort();
+    if OPERATIONS.get().is_some() {
+        return Err(Error::KitsLoaded);
+    }
+    parse(kits).map(|_| ())
 }
 
 /// Parse Evelyn's kits and `more`, by name and text.

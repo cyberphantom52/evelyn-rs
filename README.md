@@ -18,6 +18,7 @@ A device repository ports one ROM to one device:
 evelyn.toml            the ROM, and the device: product IDs, the stock build it is pinned to, its super layout
 ports/<name>/port.toml one ROM version: the ROM builds it is for, what it takes from the ROM, and the patches it applies
 patches/<name>/patch.ron  one patch, named for what it changes, with its assets beside it
+kits/*.ron             the repository's own kits: operations its patches share
 firmware/stock/        the device's stock firmware: a full OTA package or <partition>.img images
 firmware/rom/          the ROM being ported, likewise
 out/<port>/            what a build writes
@@ -134,11 +135,26 @@ name:, keep:)`, `Join`).
 
 ### Kits
 
-Operations specific to a ROM family come in kits Evelyn ships, `assets/kits/`,
-which define them out of the operations above. Every recipe can call any kit's
-operation as it calls a built-in one: the one parameter it must give bare, or
-any by name, those with a default included. An asset a kit's operation names is
-the calling patch's.
+A kit defines operations out of the operations above. Evelyn ships kits for ROM
+families, in `assets/kits/`, and a device repository can have its own, in
+`kits/*.ron`, for what several of its patches do alike. Every recipe can call
+any kit's operation as it calls a built-in one: the one parameter it must give
+bare, or any by name, those with a default included. An asset a kit's operation
+names is the calling patch's.
+
+```ron
+Kit(
+    operations: {
+        "Labels": (
+            parameters: ["service", "exec"],
+            operations: [
+                Text("/vendor/etc/selinux/vendor_service_contexts", [Append("{service}")]),
+                Text("/vendor/etc/selinux/vendor_file_contexts", [Append("{exec}")]),
+            ],
+        ),
+    },
+)
+```
 
 A kit also names, in `property_files`, the property files its ROM family's init
 loads after Android's, in the order it loads them. A property read of `All`, and

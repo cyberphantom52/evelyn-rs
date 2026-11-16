@@ -45,6 +45,8 @@ pub enum Error {
     KitPropertyFile { kit: String, file: String },
     #[error("{kit} defines {name}, which is already an operation")]
     KitOperation { kit: String, name: String },
+    #[error("the kits are loaded once, before any recipe is parsed")]
+    KitsLoaded,
 }
 
 fn read(path: &Path) -> Result<String, Error> {
