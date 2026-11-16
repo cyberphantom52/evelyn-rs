@@ -693,7 +693,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1441,7 +1441,7 @@ dependencies = [
 [[package]]
 name = "m4rs"
 version = "0.4.0"
-source = "git+https://github.com/cyberphantom52/m4rs.git?rev=428021def66a327efe91959f2fb420ed5870e53a#428021def66a327efe91959f2fb420ed5870e53a"
+source = "git+https://github.com/cyberphantom52/m4rs.git?rev=61d7811f2f6ca31a1acbd7997dddbd788eb3b8a7#61d7811f2f6ca31a1acbd7997dddbd788eb3b8a7"
 dependencies = [
  "thiserror",
 ]
@@ -2102,7 +2102,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2159,7 +2159,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2255,8 +2255,8 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sepolicy-inject-rs"
-version = "0.2.0"
-source = "git+https://github.com/cyberphantom52/sepolicy-inject-rs?rev=dc66735cf18ec14ee59f4605831408f77a796425#dc66735cf18ec14ee59f4605831408f77a796425"
+version = "0.3.0"
+source = "git+https://github.com/cyberphantom52/sepolicy-inject-rs?tag=v0.3.0#923a13e3970747340956db911a98b8af619f7b5f"
 dependencies = [
  "cc",
  "cxx",
@@ -2560,10 +2560,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3092,7 +3092,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
