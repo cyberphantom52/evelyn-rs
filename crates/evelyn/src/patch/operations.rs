@@ -166,6 +166,11 @@ impl Composition {
             Operation::AddPolicy { target, policies } => {
                 self.add_policy(target, policies, bound, context)
             }
+            Operation::ImportPolicy {
+                target,
+                types,
+                from,
+            } => self.import_policy(target, types, from, bound, context),
             Operation::ForEach {
                 over,
                 name,
@@ -622,6 +627,115 @@ impl Composition {
         bound: &Bound,
         context: &Context<'_>,
     ) -> Result<(), Error> {
+        let resolve_with = self.other_policies(target, bound, context)?;
+        let policies = policies
+            .iter()
+            .map(|policy| {
+                Ok(RelativePath::try_from(crate::recipe::substitute(
+                    policy, bound,
+                )?)?)
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        self.edit_named(target, bound, context, |bytes| {
+            crate::patch::sepolicy::apply(bytes, &policies, &resolve_with, context)
+        })
+    }
+
+    /// Patch the CIL policy file `target` with what the compiled policy at `from`
+    /// has for the types and attributes `types` names. What the device's policy
+    /// files already declare is not declared again, and a rule that needs a name
+    /// none of them, nor the import, defines is held back, for a later import that
+    /// defines it to add.
+    fn import_policy(
+        &mut self,
+        target: &str,
+        types: &[String],
+        from: &Location,
+        bound: &Bound,
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
+        let source = self.select(from, bound, context)?;
+        let [source] = &source[..] else {
+            return Err(Error::Assertion(format!(
+                "{from} names {} files, not one policy",
+                source.len()
+            )));
+        };
+        let donor =
+            sepolicy::SePolicy::from_data(&self.content(source, context)?).map_err(|source| {
+                crate::patch::sepolicy::Error::Policy {
+                    name: from.to_string(),
+                    source: Box::new(source),
+                }
+            })?;
+        let patterns = types
+            .iter()
+            .map(|pattern| crate::recipe::substitute(pattern, bound))
+            .collect::<Result<Vec<_>, _>>()?;
+        let selected = |name: &str| {
+            patterns
+                .iter()
+                .any(|pattern| android::path::glob(pattern, name))
+        };
+        let any = donor.attribute_names().any(|name| selected(&name))
+            || donor.type_decls().any(|decl| selected(&decl.name));
+        if !any {
+            return Err(Error::Assertion(format!(
+                "{} names no type or attribute in {from}",
+                patterns.join(", ")
+            )));
+        }
+        let resolve_with = self.other_policies(target, bound, context)?;
+        let mut declared = sepolicy::CilPolicy::new();
+        for text in &resolve_with {
+            declared = declared.add_file(text).map_err(policy_error(target))?;
+        }
+        for file in self.named(target, bound, context)? {
+            declared = declared
+                .add_file(&self.text(&file, context)?)
+                .map_err(policy_error(target))?;
+        }
+        let defined = declared
+            .declared_types()
+            .map_err(policy_error(target))?
+            .into_iter()
+            .collect();
+        let extraction = donor.extract(selected, Some(&defined));
+        for (needs, rules) in &extraction.unresolved {
+            for rule in rules {
+                self.held.push(crate::patch::compose::Held {
+                    rule: rule.clone(),
+                    needs: needs.clone(),
+                });
+            }
+        }
+        if extraction.declarations.is_empty() && extraction.rules.is_empty() {
+            self.skip(format!(
+                "{} adds nothing to the policy",
+                patterns.join(", ")
+            ));
+            return Ok(());
+        }
+        let rules = [extraction.declarations, extraction.rules.clone()]
+            .concat()
+            .join("\n");
+        tracing::debug!(%target, types = %patterns.join(", "), "imported policy:\n{rules}");
+        let name = format!("{} from {from}", patterns.join(", "));
+        self.edit_named(target, bound, context, |bytes| {
+            crate::patch::sepolicy::import(bytes, &name, &rules, &resolve_with)
+        })?;
+        self.imported.extend(extraction.rules);
+        Ok(())
+    }
+
+    /// The content of the device's policy files other than `target`, which a
+    /// patched `target` must resolve with, in the order init compiles them.
+    fn other_policies(
+        &self,
+        target: &str,
+        bound: &Bound,
+        context: &Context<'_>,
+    ) -> Result<Vec<String>, Error> {
         let named = self.select_build(android::sepolicy::SEPOLICY_VERSION, None, None, context)?;
         let [named] = &named[..] else {
             return Err(Error::Assertion(
@@ -643,24 +757,24 @@ impl Composition {
                 }
             }
         }
-        let resolve_with = files
+        files
             .iter()
             .map(|file| {
                 String::from_utf8(self.content(file, context)?)
                     .map_err(|_| Error::Unsupported("a policy file is UTF-8 text"))
             })
-            .collect::<Result<Vec<_>, Error>>()?;
-        let policies = policies
-            .iter()
-            .map(|policy| {
-                Ok(RelativePath::try_from(crate::recipe::substitute(
-                    policy, bound,
-                )?)?)
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
-        self.edit_named(target, bound, context, |bytes| {
-            crate::patch::sepolicy::apply(bytes, &policies, &resolve_with, context)
-        })
+            .collect()
+    }
+}
+
+/// A policy file named `name` that libsepol could not read.
+fn policy_error(name: &str) -> impl Fn(sepolicy::Error) -> Error + '_ {
+    move |source| {
+        crate::patch::sepolicy::Error::Policy {
+            name: name.to_owned(),
+            source: Box::new(source),
+        }
+        .into()
     }
 }
 

@@ -97,6 +97,14 @@ The operations:
   `Append(target:, content:)` edit a file.
 - `AddPolicy(target:, policies:)` adds TE policies to one of the vendor's CIL
   files, checked to resolve with the rest of the device's policy.
+- `ImportPolicy(target:, types:, from:)` adds to one of the vendor's CIL files
+  what the compiled policy `from` (the ROM's
+  `/odm/etc/selinux/precompiled_sepolicy` by default) has for `types`, names or
+  globs: their declarations, less what the device's policy already declares,
+  and the rules that name them. A rule needing a name no policy defines is left
+  out until a later import defines it; what is still left out at the end is
+  reported with its step. `RUST_LOG=evelyn::patch::operations=debug` prints
+  each import.
 - `Package(target:, edits:)` applies edits to an APK or JAR, and with
   `sign: true` signs the rebuilt package with Evelyn's key, as an APK Android
   verifies needs. Its code is edited

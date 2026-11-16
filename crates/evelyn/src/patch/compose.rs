@@ -14,7 +14,7 @@ use android::partition::{Mounts, PartitionPath, STANDARD_SYSTEM, VENDOR_SIDE};
 use android::path::{DevicePath, RelativePath};
 use serde::Serialize;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -78,6 +78,22 @@ pub struct Composition {
     pub(crate) skips: Vec<String>,
     /// The package a `Package` has open.
     pub(crate) package: Option<Opened>,
+    /// What the step being applied left out of the policies it imported.
+    pub(crate) held: Vec<Held>,
+    /// What steps left out of the policies they imported, with the step.
+    held_back: Vec<(Skipped, Held)>,
+    /// Every rule an import added, so one left out earlier is not reported.
+    pub(crate) imported: BTreeSet<String>,
+}
+
+/// The rules a step left out of its imports, and the names they need.
+type LeftOut<'a> = (BTreeSet<&'a str>, BTreeSet<&'a str>);
+
+/// A rule `ImportPolicy` left out, and a name it needs that nothing defines.
+#[derive(Clone, Debug)]
+pub(crate) struct Held {
+    pub(crate) rule: String,
+    pub(crate) needs: String,
 }
 
 /// The values the strings of an operation can name as `{name}`: a step's `let:`,
@@ -92,6 +108,9 @@ impl Composition {
             skipped: Vec::new(),
             skips: Vec::new(),
             package: None,
+            held: Vec::new(),
+            held_back: Vec::new(),
+            imported: BTreeSet::new(),
         }
     }
 
@@ -116,6 +135,14 @@ impl Composition {
                     step: step.id.clone(),
                     reason,
                 });
+            }
+            for held in self.held.drain(..) {
+                let at = Skipped {
+                    recipe: path.to_path_buf(),
+                    step: step.id.clone(),
+                    reason: String::new(),
+                };
+                self.held_back.push((at, held));
             }
         }
         Ok(())
@@ -315,9 +342,11 @@ impl Composition {
 
     /// Give the entries waiting for them Android's defaults, from the finished
     /// build's own policy as the device labels with it, then what was set over
-    /// them; the finished trees, with the steps that were skipped.
+    /// them; the finished trees, with the steps that were skipped. The rules
+    /// an import left out, and no later import added, are reported with their
+    /// step, with the names they need.
     pub fn finish(
-        self,
+        mut self,
         mounts: &Mounts,
         images: &Images,
     ) -> Result<(BTreeMap<String, PartitionTree>, Vec<Skipped>), Error> {
@@ -333,6 +362,34 @@ impl Composition {
                 Ok((name, tree))
             })
             .collect::<Result<_, Error>>()?;
+        // For each step, the rules it left out and the names they need.
+        let mut left: BTreeMap<(PathBuf, String), LeftOut<'_>> = BTreeMap::new();
+        for (at, held) in &self.held_back {
+            if self.imported.contains(&held.rule) {
+                continue;
+            }
+            tracing::debug!(step = %at.step, needs = %held.needs, rule = %held.rule, "policy rule left out");
+            let (rules, names) = left
+                .entry((at.recipe.clone(), at.step.clone()))
+                .or_default();
+            rules.insert(&held.rule);
+            names.insert(&held.needs);
+        }
+        let mut reports = Vec::new();
+        for ((recipe, step), (rules, names)) in left {
+            let plural = if rules.len() == 1 { "rule" } else { "rules" };
+            let names: Vec<&str> = names.into_iter().collect();
+            reports.push(Skipped {
+                recipe,
+                step,
+                reason: format!(
+                    "{} policy {plural} left out, needing what no policy defines: {}",
+                    rules.len(),
+                    names.join(", ")
+                ),
+            });
+        }
+        self.skipped.extend(reports);
         Ok((trees, self.skipped))
     }
 }

@@ -247,6 +247,18 @@ pub enum Operation {
         target: String,
         policies: Vec<String>,
     },
+    /// Patch one of the device's CIL policy files with what the compiled policy
+    /// `from` (the ROM's precompiled odm policy, by default) has for the types and
+    /// attributes `types` names, globs allowed: their declarations, and the rules
+    /// that name them. What the device's policy already declares is not declared
+    /// again, and a rule that needs a name nothing defines is left out, unless a
+    /// later import defines it.
+    ImportPolicy {
+        target: String,
+        types: Vec<String>,
+        #[serde(default = "precompiled_policy")]
+        from: Location,
+    },
     /// An operation of a kit, by the name the kit gives it, with the strings its
     /// parameters are given.
     #[serde(skip)]
@@ -256,8 +268,14 @@ pub enum Operation {
     },
 }
 
+/// Where `ImportPolicy` takes a policy from unless it is told: the ROM's
+/// precompiled odm policy, which has its vendor policy compiled in.
+fn precompiled_policy() -> Location {
+    Location::Rom("/odm/etc/selinux/precompiled_sepolicy".to_owned())
+}
+
 /// The built-in operations' names.
-pub(crate) const BUILT_IN_OPERATIONS: [&str; 21] = [
+pub(crate) const BUILT_IN_OPERATIONS: [&str; 22] = [
     "Copy",
     "Import",
     "Install",
@@ -279,6 +297,7 @@ pub(crate) const BUILT_IN_OPERATIONS: [&str; 21] = [
     "When",
     "Append",
     "AddPolicy",
+    "ImportPolicy",
 ];
 
 /// What a copy gives what it writes.
@@ -340,6 +359,7 @@ impl Operation {
             Self::When { .. } => "When",
             Self::Append { .. } => "Append",
             Self::AddPolicy { .. } => "AddPolicy",
+            Self::ImportPolicy { .. } => "ImportPolicy",
             Self::Call { name, .. } => name.as_str(),
         }
     }
@@ -379,7 +399,7 @@ impl Operation {
                 found.push(from);
                 found.extend(to.iter().flat_map(Expr::locations));
             }
-            Self::Import(from) => found.push(from),
+            Self::Import(from) | Self::ImportPolicy { from, .. } => found.push(from),
             Self::SetProperty { target, .. } | Self::RemoveProperty { target, .. } => {
                 found.extend(target)
             }
