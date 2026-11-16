@@ -16,6 +16,20 @@ use std::{
 };
 use thiserror::Error;
 
+/// An I/O result with the path it was about attached to its error.
+pub(crate) trait IoAt<T> {
+    fn at(self, path: impl AsRef<Path>) -> Result<T, Error>;
+}
+
+impl<T> IoAt<T> for io::Result<T> {
+    fn at(self, path: impl AsRef<Path>) -> Result<T, Error> {
+        self.map_err(|source| Error::Io {
+            path: path.as_ref().to_path_buf(),
+            source,
+        })
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
@@ -32,8 +46,12 @@ pub enum Error {
     Xml(#[from] crate::patch::xml::Error),
     #[error(transparent)]
     Layout(#[from] layout::Error),
-    #[error("target IO: {0}")]
-    Io(#[from] io::Error),
+    #[error("cannot access {path}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
     #[error(transparent)]
     Package(#[from] crate::patch::package::Error),
     #[error(transparent)]
@@ -116,7 +134,8 @@ impl Target {
     ) -> Result<Self, Error> {
         let mut tree = tree.map(|_, _, metadata| Ok::<_, Error>(EntryMetadata::Set(metadata)))?;
         tree.filesystem = filesystem;
-        fs::create_dir_all(output.join("content"))?;
+        let content = output.join("content");
+        fs::create_dir_all(&content).at(&content)?;
         Ok(Self {
             root: output.into(),
             tree,
@@ -143,8 +162,9 @@ impl Target {
         };
         let (canonical, size) = (file.path.clone(), file.size);
         let blob = self.new_blob();
-        let mut output = fs::File::create_new(self.blob_path(&blob))?;
-        io::copy(&mut self.store(images).open(&content, size)?, &mut output)?;
+        let path = self.blob_path(&blob);
+        let mut output = fs::File::create_new(&path).at(&path)?;
+        io::copy(&mut self.store(images).open(&content, size)?, &mut output).at(&path)?;
         if let Some(entry) = self.tree.entries.get_mut(&canonical) {
             entry.kind = EntryKind::File {
                 content: Content::Blob(blob.clone()),
@@ -218,10 +238,8 @@ impl Target {
     /// Write a new blob from `reader`.
     fn write_blob(&mut self, mut reader: impl Read) -> Result<EntryKind, Error> {
         let blob = self.new_blob();
-        let size = io::copy(
-            &mut reader,
-            &mut fs::File::create_new(self.blob_path(&blob))?,
-        )?;
+        let path = self.blob_path(&blob);
+        let size = io::copy(&mut reader, &mut fs::File::create_new(&path).at(&path)?).at(&path)?;
         Ok(EntryKind::File {
             content: Content::Blob(blob),
             size,
@@ -245,7 +263,7 @@ impl Target {
                 *blob = self.new_blob();
                 let destination = self.blob_path(blob);
                 if fs::hard_link(&source, &destination).is_err() {
-                    fs::copy(&source, &destination)?;
+                    fs::copy(&source, &destination).at(&source)?;
                 }
             }
         }
@@ -337,7 +355,7 @@ impl Target {
             ));
         }
         let made = self.destination(to, placing, |_| None)?;
-        let kind = self.write_blob(std::fs::File::open(file)?)?;
+        let kind = self.write_blob(std::fs::File::open(file).at(file)?)?;
         let metadata = EntryMetadata::Default(Vec::new());
         self.tree
             .entries

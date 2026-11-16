@@ -6,7 +6,7 @@
 //! manifest records. `evelyn extract` replaces a local package by all its
 //! images, for good.
 
-use crate::engine::Error;
+use crate::engine::{Error, IoAt};
 use android::ImageFormat;
 use android::hash::Sha256Digest;
 use payload_dumper::{
@@ -110,12 +110,13 @@ impl OpenFirmware {
             },
         };
         if scratch.exists() {
-            fs::remove_dir_all(scratch)?;
+            fs::remove_dir_all(scratch).at(scratch)?;
         }
-        fs::create_dir_all(scratch)?;
+        fs::create_dir_all(scratch).at(scratch)?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .build()?;
+            .build()
+            .map_err(Error::Runtime)?;
         let (manifest, offset, reader, remote) = runtime.block_on(open_payload(&given))?;
         // A delta payload reads the partitions it updates; some full ones still
         // set a delta minor version, so that alone does not make one incremental.
@@ -228,7 +229,7 @@ impl OpenFirmware {
         if let Some(ota) = &self.ota {
             let other: Vec<&str> = ota.other.iter().map(String::as_str).collect();
             let into = ota.scratch.join("firmware");
-            fs::create_dir_all(&into)?;
+            fs::create_dir_all(&into).at(&into)?;
             return Ok(ota
                 .dump(&other, &into)?
                 .into_iter()
@@ -319,7 +320,7 @@ impl Ota {
             }
             let mut extracted = Vec::new();
             for (name, image, hash, task) in tasks {
-                task.await.map_err(std::io::Error::other)??;
+                task.await.map_err(std::io::Error::other).at(&image)??;
                 extracted.push((name, image, hash));
             }
             Ok::<_, Error>(extracted)
@@ -327,7 +328,10 @@ impl Ota {
         let mut images = Vec::new();
         for (name, image, hash) in extracted {
             if let Some(hash) = hash
-                && Sha256Digest::reader(fs::File::open(&image)?)?.as_bytes()[..] != hash[..]
+                && Sha256Digest::reader(fs::File::open(&image).at(&image)?)
+                    .at(&image)?
+                    .as_bytes()[..]
+                    != hash[..]
             {
                 return Err(Error::OtaHash {
                     package: self.given.to_string(),
@@ -354,7 +358,9 @@ async fn open_payload(given: &Given) -> Result<Payload, Error> {
     let mut magic = [0; 4];
     match given {
         Given::Path(path) => {
-            fs::File::open(path)?.read_exact(&mut magic)?;
+            fs::File::open(path)
+                .and_then(|mut file| file.read_exact(&mut magic))
+                .at(path)?;
             let path = path.clone();
             Ok(match payload_dumper::detect_file(&magic)? {
                 FileType::Zip => {
@@ -437,7 +443,7 @@ pub fn extract_in_place(dir: &Path, firmware: bool) -> Result<Option<Extracted>,
     }
     for old in [dir.to_path_buf(), dir.join("firmware")] {
         for image in image_files(&old)?.into_values() {
-            fs::remove_file(image)?;
+            fs::remove_file(&image).at(&image)?;
         }
     }
     let mut images = Vec::new();
@@ -445,13 +451,13 @@ pub fn extract_in_place(dir: &Path, firmware: bool) -> Result<Option<Extracted>,
         let relative = image.strip_prefix(&staging).unwrap_or(&image);
         let to = dir.join(relative);
         if let Some(parent) = to.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).at(parent)?;
         }
-        fs::rename(&image, &to)?;
+        fs::rename(&image, &to).at(&image)?;
         images.push(to);
     }
     drop(opened);
-    fs::remove_file(&package)?;
+    fs::remove_file(&package).at(&package)?;
     Ok(Some(Extracted { package, images }))
 }
 
@@ -471,8 +477,8 @@ fn ota(given: &Path) -> Result<Option<PathBuf>, Error> {
 /// The OTA packages in `dir`; more than one is refused.
 fn otas(dir: &Path) -> Result<Vec<PathBuf>, Error> {
     let mut packages = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
+    for entry in fs::read_dir(dir).at(dir)? {
+        let path = entry.at(dir)?.path();
         if path.extension().is_some_and(|extension| extension == "zip")
             || path.file_name().is_some_and(|name| name == "payload.bin")
         {
@@ -491,8 +497,8 @@ fn image_files(dir: &Path) -> Result<BTreeMap<String, PathBuf>, Error> {
     if !dir.is_dir() {
         return Ok(images);
     }
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
+    for entry in fs::read_dir(dir).at(dir)? {
+        let path = entry.at(dir)?.path();
         let Some(stem) = path
             .extension()
             .is_some_and(|extension| extension == "img")

@@ -16,8 +16,22 @@ pub use profile::init;
 
 use crate::SourceRef;
 use android::Filesystem;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
+
+/// An I/O result with the path it was about attached to its error.
+pub(crate) trait IoAt<T> {
+    fn at(self, path: impl AsRef<Path>) -> Result<T, Error>;
+}
+
+impl<T> IoAt<T> for std::io::Result<T> {
+    fn at(self, path: impl AsRef<Path>) -> Result<T, Error> {
+        self.map_err(|source| Error::Io {
+            path: path.as_ref().to_path_buf(),
+            source,
+        })
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -29,8 +43,12 @@ pub enum Error {
     Zip(#[from] zip::result::ZipError),
     #[error(transparent)]
     Android(#[from] android::Error),
-    #[error("workspace IO: {0}")]
-    Io(#[from] std::io::Error),
+    #[error("cannot access {path}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error(transparent)]
     Recipe(#[from] crate::recipe::Error),
     #[error(transparent)]
@@ -62,6 +80,8 @@ pub enum Error {
     SystemLayout,
     #[error("super and ZIP output need a [device.super] section in evelyn.toml")]
     MissingLayout,
+    #[error("cannot start the threads that extract the OTA package")]
+    Runtime(#[source] std::io::Error),
     #[error("cannot read the OTA package")]
     Payload(#[from] payload_dumper::Error),
     #[error("{0} is an incremental OTA; give a full one")]

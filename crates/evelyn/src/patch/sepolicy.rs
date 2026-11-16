@@ -1,6 +1,7 @@
 //! SELinux CIL policies patched with TE rules, through libsepol.
 
 use crate::patch::Context;
+use crate::patch::target::IoAt;
 use android::path::RelativePath;
 use std::fs;
 use thiserror::Error;
@@ -27,7 +28,10 @@ pub(crate) fn apply(
     };
     let patches = policies
         .iter()
-        .map(|path| Ok((path.to_string(), text(fs::read(context.asset(path)?)?)?)))
+        .map(|path| {
+            let file = context.asset(path)?;
+            Ok((path.to_string(), text(fs::read(&file).at(&file)?)?))
+        })
         .collect::<Result<Vec<_>, crate::patch::Error>>()?;
     Ok(patch(&text(bytes.to_vec())?, resolve_with, &patches)?.into_bytes())
 }
