@@ -30,16 +30,16 @@ impl Composition {
                 )
             }
             // The last assignment in the files, or the value the device ends up with.
-            Expr::Property { key, target } => {
+            Expr::Property(scope, key) => {
                 let key = crate::recipe::substitute(key, bound)?;
-                let Some(target) = target else {
+                let Some(target) = scope.location() else {
                     let loaded = self.loaded(context)?;
                     let value = loaded.device_property(&key);
                     self.report_unloaded(&key, value.as_deref(), &loaded.files, context)?;
                     return Ok(value.map_or(Value::Unset, Value::Str));
                 };
                 let mut value = Value::Unset;
-                for file in self.select(target, bound, context)? {
+                for file in self.select(&target, bound, context)? {
                     let text = String::from_utf8_lossy(&self.content(&file, context)?).into_owned();
                     if let Some(assigned) = android::property::get(&text, &key) {
                         value = Value::Str(assigned.to_owned());
@@ -47,6 +47,14 @@ impl Composition {
                 }
                 value
             }
+            // The directories of the build's partitions that came from `firmware`.
+            Expr::Partitions(firmware) => Value::List(
+                self.targets
+                    .keys()
+                    .filter(|name| self.origins.get(*name) == Some(firmware))
+                    .filter_map(|name| context.mounts.directory(name))
+                    .collect(),
+            ),
             Expr::Exists(inner) => match &**inner {
                 Expr::At(Location::Partition(name)) => Value::Bool(self.targets.contains_key(name)),
                 inner => eval(inner)?.defined()?,

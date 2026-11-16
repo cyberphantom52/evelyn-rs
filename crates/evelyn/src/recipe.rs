@@ -1,5 +1,5 @@
-//! The recipe language: steps of operations, applied in dependency order, whose
-//! strings can name the values a step binds. A recipe is evaluated as it is
+//! The recipe language: steps of operations, applied in the order they are
+//! written, whose strings can name the values the operations before them bind. A recipe is evaluated as it is
 //! written; what is wrong with one is found when it is applied.
 
 mod expr;
@@ -12,11 +12,10 @@ pub use xml::{
     SelectorError, XmlEdit, XmlMatch, XmlName, XmlOp, XmlPredicate, XmlStep, escape_attribute,
 };
 
-use crate::Firmware;
 use android::hash::Sha256Digest;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
 };
@@ -42,10 +41,6 @@ pub enum Error {
     Token { name: String, value: String },
     #[error("{{{0}}} is not bound")]
     Unbound(String),
-    #[error("step {step} references unknown dependency {dependency}")]
-    UnknownDependency { step: String, dependency: String },
-    #[error("cyclic recipe dependencies")]
-    Cycle,
     #[error("{kit} names {file}, which is not a device path to a property file")]
     KitPropertyFile { kit: String, file: String },
     #[error("{kit} defines {name}, which is already an operation")]
@@ -59,32 +54,36 @@ fn read(path: &Path) -> Result<String, Error> {
     })
 }
 
+/// A recipe: its steps, applied in the order they are written.
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(transparent)]
 pub struct Recipe {
     pub steps: Vec<Step>,
 }
 
+/// A step: its name, which reports and errors give, and its operations, applied
+/// in order: `Step("vndk-apex", [ … ])`.
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Step {
-    pub id: String,
-    #[serde(default)]
-    pub after: Vec<String>,
-    /// Names bound to string expressions, evaluated against the tree composed so far,
-    /// for the step's condition and operations to use as `{name}` in any string. One
-    /// that has no value skips the step.
-    #[serde(rename = "let", default)]
-    pub bindings: BTreeMap<String, Expr>,
-    /// A boolean expression; the step applies only when it holds.
-    #[serde(default)]
-    pub when: Option<Expr>,
-    pub operations: Vec<Operation>,
+pub struct Step(pub String, pub Vec<Operation>);
+
+impl Step {
+    pub fn id(&self) -> &str {
+        &self.0
+    }
+
+    pub fn operations(&self) -> &[Operation] {
+        &self.1
+    }
 }
 
-/// Operations change the build: the partitions being produced.
-/// Paths are device paths (`/vendor/etc/fstab.qcom`), resolved to a partition by its
-/// mount point; `system` is mounted at `/` on system-as-root devices.
+/// Operations change what they apply to: the build, the partitions being
+/// produced, or inside a `Package`, the package. Paths are device paths
+/// (`/vendor/etc/fstab.qcom`), resolved to a partition by its mount point;
+/// `system` is mounted at `/` on system-as-root devices. Inside a `Package` they
+/// are paths from its root (`/res/values/strings.xml`).
+///
+/// Some operations open a file as a document of a kind (`Xml`, `Text`, `Bytes`,
+/// `Props`, `Policy`) and apply that kind's edits to it, in order.
 ///
 /// A kit's operation is called as a built-in one is: one with one parameter
 /// takes it bare, `DisableFeature("x")`, one with several by name.
@@ -113,24 +112,15 @@ pub enum Operation {
     /// the build, with its metadata: `Copy` with `metadata: Source`, `overwrite`
     /// and `create_parent`.
     Import(Location),
-    /// Write a recipe asset, a file or a directory's files, at `to`, with Android's
-    /// defaults: `Copy` with `metadata: Default`, `overwrite` and `create_parent`.
-    Install { asset: String, to: Expr },
-    /// Remove what `pattern` matches from the build. A relative pattern is tried in
-    /// the directory of every build partition the scope selects: those that came
-    /// from the ROM or the stock firmware (`origin`), named by `partition` (a name
-    /// or glob), both, or with neither, all of them. A `/...` pattern is a device
-    /// path, outside any scope. A pattern that matches nothing is reported, not an
-    /// error; a scope that selects no partition is an error.
-    Remove {
-        pattern: String,
-        #[serde(default)]
-        origin: Option<Firmware>,
-        #[serde(default)]
-        partition: Option<String>,
-    },
+    /// Write a recipe asset, a file or a directory's files, at a path, with
+    /// Android's defaults: `Install("odm/bin/foo", "/odm/bin/foo")` is `Copy` with
+    /// `metadata: Default`, `overwrite` and `create_parent`.
+    Install(String, Expr),
+    /// Remove what a path matches, globs allowed. One that matches nothing is
+    /// reported, not an error.
+    Remove(String),
     /// Set metadata Android's defaults do not give, on every entry `pattern` (a
-    /// device path, globs allowed) matches in the build.
+    /// path, globs allowed) matches.
     SetMetadata {
         pattern: String,
         #[serde(default)]
@@ -142,47 +132,25 @@ pub enum Operation {
         #[serde(default)]
         selinux: Option<String>,
     },
-    /// Set a property everywhere it is defined, else add it. Without a target, in
-    /// every property file init loads that defines it, else in the one it loads
-    /// last, so the value takes effect; with a partition, in every file of it init
-    /// loads that defines it, else its own `build.prop`; with a file, in that file.
-    SetProperty {
-        key: String,
-        value: String,
-        #[serde(default)]
-        target: Option<Location>,
-    },
-    /// Remove every definition in the same scope as `SetProperty`. Where none is,
-    /// that is reported, not an error.
-    RemoveProperty {
-        key: String,
-        #[serde(default)]
-        target: Option<Location>,
-    },
-    /// Apply a unified diff (an asset) to a file and its hardlinks.
-    ApplyDiff { target: String, patch: String },
-    /// Overwrite bytes at offsets of a file. What is there decides what the bytes
-    /// mean, so an `AssertHash` of the file should come first.
-    WriteBytes {
-        target: String,
-        /// Offsets and the bytes written there, as hex: `{487572: "a9008052"}`.
-        edits: BTreeMap<u64, Hex>,
-    },
-    /// Edit the XML file `target` with `edits`, in order: set an element's text
-    /// or an attribute, remove elements, or put a child element under a parent.
-    EditXml { target: String, edits: Vec<XmlEdit> },
-    /// Decode an APK or JAR, apply `edits` inside it and rebuild it. The edits are
-    /// ordinary operations with paths from the package's root
-    /// (`/res/values/strings.xml`), plus the smali edits only a package has.
-    Package {
-        /// A device path, in which `{name}` is a bound value.
-        target: String,
-        /// Whether to sign the rebuilt package with Evelyn's key, as an APK
-        /// Android verifies needs once its contents change.
-        #[serde(default)]
-        sign: bool,
-        edits: Vec<Operation>,
-    },
+    /// Edit properties: `All` of the build's property files, as init loads them,
+    /// a `Partition("…")`'s, or one `Build("/…")` file.
+    Props(PropScope, Vec<PropEdit>),
+    /// Edit a file as text.
+    Text(String, Vec<TextEdit>),
+    /// Overwrite bytes at offsets of a file, written as hex: `{487572: "a9008052"}`.
+    /// What is there decides what the bytes mean, so an `AssertHash` of the file
+    /// should come first.
+    Bytes(String, BTreeMap<u64, Hex>),
+    /// Edit an XML file, in order: set an element's text or an attribute, remove
+    /// elements, or put a child element under a parent.
+    Xml(String, Vec<XmlEdit>),
+    /// Patch one of the device's CIL policy files.
+    Policy(String, Vec<PolicyEdit>),
+    /// Decode an APK or JAR, apply operations inside it and rebuild it, signed
+    /// with Evelyn's key, as an APK Android verifies needs once its contents
+    /// change, or not. Inside it, paths are from its root, and it has the smali
+    /// edits.
+    Package(String, Signing, Vec<Operation>),
     /// Inside a `Package`: replace a smali method with the asset `body`.
     ReplaceMethod {
         class: String,
@@ -213,52 +181,23 @@ pub enum Operation {
         #[serde(default)]
         method: Option<String>,
     },
-    /// The condition must hold, or the build fails with `message`.
-    Assert { condition: Expr, message: String },
+    /// Bind a name to a string read from what the operations apply to, for the
+    /// strings of the operations after it to name as `{name}`. One that has no
+    /// value skips them, and is reported. The value is a token,
+    /// `[A-Za-z0-9._-]`: it comes from firmware and goes into paths.
+    Let(String, Expr),
+    /// Apply operations if the condition holds. One whose condition does not hold
+    /// is not reported.
+    When(Expr, Vec<Operation>),
+    /// Apply operations for each string of a list, or each entry of a selection,
+    /// with `{name}` bound to it: the string, or the entry's device path. One over
+    /// nothing is reported; what its operations report is reported once, if they
+    /// report it for every one.
+    ForEach(Expr, String, Vec<Operation>),
+    /// The condition must hold, or the build fails with the message.
+    Assert(Expr, String),
     /// The file's content must have this SHA-256.
-    AssertHash {
-        target: String,
-        sha256: Sha256Digest,
-    },
-    /// Apply `operations` for each string of a list, or each entry of a
-    /// selection, with `{name}` bound to it: the string, or the entry's device
-    /// path. One over nothing is reported.
-    ForEach {
-        over: Expr,
-        name: String,
-        operations: Vec<Operation>,
-    },
-    /// Apply `operations` if the condition holds. One whose condition does not
-    /// hold is not reported.
-    When {
-        condition: Expr,
-        operations: Vec<Operation>,
-    },
-    /// Add `content` at the end of a file, on a line of its own.
-    Append {
-        target: String,
-        /// A string expression.
-        content: Expr,
-    },
-    /// Patch one of the device's CIL policy files with TE `policies` (assets), written
-    /// with Android's policy macros. The result must resolve with the device's other
-    /// policy files, as init loads them.
-    AddPolicy {
-        target: String,
-        policies: Vec<String>,
-    },
-    /// Patch one of the device's CIL policy files with what the compiled policy
-    /// `from` (the ROM's precompiled odm policy, by default) has for the types and
-    /// attributes `types` names, globs allowed: their declarations, and the rules
-    /// that name them. What the device's policy already declares is not declared
-    /// again, and a rule that needs a name nothing defines is left out, unless a
-    /// later import defines it.
-    ImportPolicy {
-        target: String,
-        types: Vec<String>,
-        #[serde(default = "precompiled_policy")]
-        from: Location,
-    },
+    AssertHash(String, Sha256Digest),
     /// An operation of a kit, by the name the kit gives it, with the strings its
     /// parameters are given.
     #[serde(skip)]
@@ -268,36 +207,106 @@ pub enum Operation {
     },
 }
 
-/// Where `ImportPolicy` takes a policy from unless it is told: the ROM's
+/// Which property files `Props` edits, and a `Property` read reads.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PropScope {
+    /// Every property file of the build, as init loads them: an edit changes each
+    /// file that defines the key, else adds it to the one init loads last, so the
+    /// value takes effect; a read gets the value the device ends up with.
+    All,
+    /// The files of a partition init loads: an edit changes each that defines the
+    /// key, else adds it to the partition's own `build.prop`.
+    Partition(String),
+    /// One file, by its device path.
+    Build(String),
+}
+
+impl PropScope {
+    /// The files it names, as the property operations take them: none for
+    /// `All`.
+    pub fn location(&self) -> Option<Location> {
+        match self {
+            Self::All => None,
+            Self::Partition(name) => Some(Location::Partition(name.clone())),
+            Self::Build(path) => Some(Location::Build(path.clone())),
+        }
+    }
+}
+
+/// An edit of properties.
+#[derive(Clone, Debug, Deserialize)]
+pub enum PropEdit {
+    /// Set a key to a value everywhere it is defined, else add it.
+    Set(String, String),
+    /// Remove every definition of a key. Where none is, that is reported, not an
+    /// error.
+    Remove(String),
+}
+
+/// An edit of a file as text.
+#[derive(Clone, Debug, Deserialize)]
+pub enum TextEdit {
+    /// Add a string expression at the end, on a line of its own.
+    Append(Expr),
+    /// Apply a unified diff, an asset, to the file and its hardlinks.
+    Diff(String),
+}
+
+/// An edit of a CIL policy file. The result must resolve with the device's
+/// other policy files, as init loads them.
+#[derive(Clone, Debug, Deserialize)]
+pub enum PolicyEdit {
+    /// Add a TE policy, an asset, written with Android's policy macros. Policies
+    /// added one after another are added together, so one can use what another
+    /// declares.
+    Add(String),
+    /// Add what the compiled policy `from` (the ROM's precompiled odm policy, by
+    /// default) has for the types and attributes `types` names, globs allowed:
+    /// their declarations, and the rules that name them. What the device's policy
+    /// already declares is not declared again, and a rule that needs a name
+    /// nothing defines is left out, unless a later import defines it.
+    Import {
+        types: Vec<String>,
+        #[serde(default = "precompiled_policy")]
+        from: Location,
+    },
+}
+
+/// Whether a rebuilt package is signed with Evelyn's key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+pub enum Signing {
+    Signed,
+    Unsigned,
+}
+
+/// Where `Import` takes a policy from unless it is told: the ROM's
 /// precompiled odm policy, which has its vendor policy compiled in.
 fn precompiled_policy() -> Location {
     Location::Rom("/odm/etc/selinux/precompiled_sepolicy".to_owned())
 }
 
 /// The built-in operations' names.
-pub(crate) const BUILT_IN_OPERATIONS: [&str; 22] = [
+pub(crate) const BUILT_IN_OPERATIONS: [&str; 20] = [
     "Copy",
     "Import",
     "Install",
     "Remove",
     "SetMetadata",
-    "SetProperty",
-    "RemoveProperty",
-    "ApplyDiff",
-    "WriteBytes",
-    "EditXml",
+    "Props",
+    "Text",
+    "Bytes",
+    "Xml",
+    "Policy",
     "Package",
     "ReplaceMethod",
     "InsertMethod",
     "StubMethod",
     "ReplaceOperand",
+    "Let",
+    "When",
+    "ForEach",
     "Assert",
     "AssertHash",
-    "ForEach",
-    "When",
-    "Append",
-    "AddPolicy",
-    "ImportPolicy",
 ];
 
 /// What a copy gives what it writes.
@@ -340,53 +349,48 @@ impl Operation {
         match self {
             Self::Copy { .. } => "Copy",
             Self::Import(..) => "Import",
-            Self::Install { .. } => "Install",
-            Self::Remove { .. } => "Remove",
+            Self::Install(..) => "Install",
+            Self::Remove(..) => "Remove",
             Self::SetMetadata { .. } => "SetMetadata",
-            Self::SetProperty { .. } => "SetProperty",
-            Self::RemoveProperty { .. } => "RemoveProperty",
-            Self::ApplyDiff { .. } => "ApplyDiff",
-            Self::WriteBytes { .. } => "WriteBytes",
-            Self::EditXml { .. } => "EditXml",
-            Self::Package { .. } => "Package",
+            Self::Props(..) => "Props",
+            Self::Text(..) => "Text",
+            Self::Bytes(..) => "Bytes",
+            Self::Xml(..) => "Xml",
+            Self::Policy(..) => "Policy",
+            Self::Package(..) => "Package",
             Self::ReplaceMethod { .. } => "ReplaceMethod",
             Self::InsertMethod { .. } => "InsertMethod",
             Self::StubMethod { .. } => "StubMethod",
             Self::ReplaceOperand { .. } => "ReplaceOperand",
-            Self::Assert { .. } => "Assert",
-            Self::AssertHash { .. } => "AssertHash",
-            Self::ForEach { .. } => "ForEach",
-            Self::When { .. } => "When",
-            Self::Append { .. } => "Append",
-            Self::AddPolicy { .. } => "AddPolicy",
-            Self::ImportPolicy { .. } => "ImportPolicy",
+            Self::Let(..) => "Let",
+            Self::When(..) => "When",
+            Self::ForEach(..) => "ForEach",
+            Self::Assert(..) => "Assert",
+            Self::AssertHash(..) => "AssertHash",
             Self::Call { name, .. } => name.as_str(),
         }
     }
 
-    /// What can run on a package's files: content edits, copies of assets and
-    /// removals by path, and the smali edits.
+    /// What can run on a package's files: file and content edits, copies of
+    /// assets and the smali edits.
     pub fn in_package(&self) -> bool {
         matches!(
             self,
-            Self::Remove {
-                origin: None,
-                partition: None,
-                ..
-            } | Self::ApplyDiff { .. }
-                | Self::WriteBytes { .. }
-                | Self::EditXml { .. }
+            Self::Remove(..)
+                | Self::Text(..)
+                | Self::Bytes(..)
+                | Self::Xml(..)
                 | Self::Copy { .. }
-                | Self::Install { .. }
-                | Self::Append { .. }
-                | Self::Assert { .. }
-                | Self::AssertHash { .. }
+                | Self::Install(..)
+                | Self::Assert(..)
+                | Self::AssertHash(..)
                 | Self::ReplaceMethod { .. }
                 | Self::InsertMethod { .. }
                 | Self::StubMethod { .. }
                 | Self::ReplaceOperand { .. }
-                | Self::ForEach { .. }
-                | Self::When { .. }
+                | Self::Let(..)
+                | Self::ForEach(..)
+                | Self::When(..)
         )
     }
 
@@ -399,24 +403,32 @@ impl Operation {
                 found.push(from);
                 found.extend(to.iter().flat_map(Expr::locations));
             }
-            Self::Import(from) | Self::ImportPolicy { from, .. } => found.push(from),
-            Self::SetProperty { target, .. } | Self::RemoveProperty { target, .. } => {
-                found.extend(target)
+            Self::Import(from) => found.push(from),
+            Self::Install(_, to) => found.extend(to.locations()),
+            Self::Text(_, edits) => {
+                for edit in edits {
+                    if let TextEdit::Append(content) = edit {
+                        found.extend(content.locations());
+                    }
+                }
             }
-            Self::Install { to, .. } => found.extend(to.locations()),
-            Self::Append { content, .. } => found.extend(content.locations()),
-            Self::Assert { condition, .. } => found.extend(condition.locations()),
-            Self::Package { edits, .. } => found.extend(edits.iter().flat_map(Self::locations)),
-            Self::ForEach {
-                over, operations, ..
-            } => {
+            Self::Policy(_, edits) => {
+                for edit in edits {
+                    if let PolicyEdit::Import { from, .. } = edit {
+                        found.push(from);
+                    }
+                }
+            }
+            Self::Let(_, value) => found.extend(value.locations()),
+            Self::Assert(condition, _) => found.extend(condition.locations()),
+            Self::Package(_, _, operations) => {
+                found.extend(operations.iter().flat_map(Self::locations))
+            }
+            Self::ForEach(over, _, operations) => {
                 found.extend(over.locations());
                 found.extend(operations.iter().flat_map(Self::locations));
             }
-            Self::When {
-                condition,
-                operations,
-            } => {
+            Self::When(condition, operations) => {
                 found.extend(condition.locations());
                 found.extend(operations.iter().flat_map(Self::locations));
             }
@@ -464,32 +476,49 @@ impl Recipe {
             source: Box::new(source),
         })
     }
+}
 
-    /// Stable topological order; declaration order breaks ties.
-    pub fn ordered_steps(&self) -> Result<Vec<&Step>, Error> {
-        let ids: BTreeSet<_> = self.steps.iter().map(|step| &step.id).collect();
-        for step in &self.steps {
-            for dependency in &step.after {
-                if !ids.contains(dependency) {
-                    return Err(Error::UnknownDependency {
-                        step: step.id.clone(),
-                        dependency: dependency.clone(),
-                    });
-                }
-            }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The recipes and kits Evelyn ships parse.
+    #[test]
+    fn built_ins_parse() {
+        kit::operations().unwrap();
+        for (name, text) in [
+            ("vndk.ron", include_str!("../../../assets/recipes/vndk.ron")),
+            (
+                "debug.ron",
+                include_str!("../../../assets/recipes/debug.ron"),
+            ),
+        ] {
+            let recipe = Recipe::parse(text, Path::new(name)).unwrap();
+            assert!(!recipe.steps.is_empty(), "{name}");
         }
-        let mut complete = BTreeSet::new();
-        let mut ordered = Vec::new();
-        while ordered.len() < self.steps.len() {
-            let next = self.steps.iter().find(|step| {
-                !complete.contains(&step.id) && step.after.iter().all(|id| complete.contains(id))
-            });
-            let Some(step) = next else {
-                return Err(Error::Cycle);
-            };
-            complete.insert(&step.id);
-            ordered.push(step);
-        }
-        Ok(ordered)
+    }
+
+    /// The forms a recipe is written in parse as what they say.
+    #[test]
+    fn forms_parse() {
+        let recipe = Recipe::parse(
+            r#"[
+                Step("one", [
+                    Let("type", Property(Build("/my_product/build.prop"), "ro.type")),
+                    Props(All, [Set("ro.a", "1"), Remove("ro.b")]),
+                    Text("/vendor/etc/x", [Append(r"a\.b"), Diff("x.diff")]),
+                    Policy("/vendor/etc/selinux/vendor_sepolicy.cil", [Add("a.te"), Import(types: ["t"])]),
+                    ForEach(Partitions(Rom), "p", [Remove("{p}/app/X")]),
+                    Package("/product/app/A.apk", Signed, [Remove("/res/drawable/a.png")]),
+                ]),
+            ]"#,
+            Path::new("test.ron"),
+        )
+        .unwrap();
+        let [step] = &recipe.steps[..] else {
+            panic!("one step")
+        };
+        assert_eq!(step.id(), "one");
+        assert_eq!(step.operations().len(), 6);
     }
 }

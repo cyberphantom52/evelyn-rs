@@ -1,12 +1,12 @@
-//! Apply recipes across every target partition: each step's `let:` and `when:`,
-//! then its operations, each a function in [`crate::patch::operations`].
+//! Apply recipes across every target partition: each step's operations in
+//! order, each a function in [`crate::patch::operations`].
 
 use crate::patch::target::IoAt;
 use crate::patch::value::Located;
 use crate::patch::{
     Error, Images, Target, defaults::Defaults, layout, package::Opened, target::Placing,
 };
-use crate::recipe::{Expr, Metadata, Operation, Recipe};
+use crate::recipe::{Metadata, Recipe};
 use crate::toolchain::Tools;
 use crate::{Firmware, SourceRef};
 use android::PartitionTree;
@@ -89,14 +89,14 @@ pub struct Composition {
 /// The rules a step left out of its imports, and the names they need.
 type LeftOut<'a> = (BTreeSet<&'a str>, BTreeSet<&'a str>);
 
-/// A rule `ImportPolicy` left out, and a name it needs that nothing defines.
+/// A rule a policy `Import` left out, and a name it needs that nothing defines.
 #[derive(Clone, Debug)]
 pub(crate) struct Held {
     pub(crate) rule: String,
     pub(crate) needs: String,
 }
 
-/// The values the strings of an operation can name as `{name}`: a step's `let:`,
+/// The values the strings of an operation can name as `{name}`: what a `Let` binds,
 /// a kit operation's parameters, and what a `Filter` or `ForEach` binds.
 pub(crate) type Bound = BTreeMap<String, String>;
 
@@ -114,78 +114,37 @@ impl Composition {
         }
     }
 
-    /// Apply the recipe at `path`, its steps in dependency order. An error says
-    /// which step it came from.
+    /// Apply the recipe at `path`, its steps in order. An error says which step
+    /// it came from.
     pub fn apply(
         &mut self,
         recipe: &Recipe,
         path: &Path,
         context: &Context<'_>,
     ) -> Result<(), Error> {
-        for step in recipe.ordered_steps()? {
-            let bindings = (&step.bindings, step.when.as_ref());
-            self.body(bindings, &step.operations, Bound::new(), context)
+        for step in &recipe.steps {
+            self.operations(step.operations(), Bound::new(), context)
                 .map_err(|source| Error::Step {
-                    step: step.id.clone(),
+                    step: step.id().to_owned(),
                     source: Box::new(source),
                 })?;
             for reason in self.skips.drain(..) {
                 self.skipped.push(Skipped {
                     recipe: path.to_path_buf(),
-                    step: step.id.clone(),
+                    step: step.id().to_owned(),
                     reason,
                 });
             }
             for held in self.held.drain(..) {
                 let at = Skipped {
                     recipe: path.to_path_buf(),
-                    step: step.id.clone(),
+                    step: step.id().to_owned(),
                     reason: String::new(),
                 };
                 self.held_back.push((at, held));
             }
         }
         Ok(())
-    }
-
-    /// Bind each `let:` name to its value, then, if `when:` holds, apply the
-    /// operations. A value that is not set, or a condition that does not hold,
-    /// skips them, and is reported. A bound string is a token, `[A-Za-z0-9._-]`:
-    /// it comes from firmware and goes into paths.
-    pub(crate) fn body(
-        &mut self,
-        (bindings, when): (&BTreeMap<String, Expr>, Option<&Expr>),
-        operations: &[Operation],
-        mut bound: Bound,
-        context: &Context<'_>,
-    ) -> Result<(), Error> {
-        for (name, value) in bindings {
-            let Some(text) = self
-                .eval(value, &bound, context)?
-                .as_str()?
-                .map(str::to_owned)
-            else {
-                self.skip(format!("{name} is not set: {value}"));
-                return Ok(());
-            };
-            if !is_token(&text) {
-                return Err(crate::recipe::Error::Token {
-                    name: name.clone(),
-                    value: text,
-                }
-                .into());
-            }
-            bound.insert(name.clone(), text);
-        }
-        if let Some(condition) = when
-            && !self.eval(condition, &bound, context)?.as_bool()?
-        {
-            self.skip(format!("condition does not hold: {condition}"));
-            return Ok(());
-        }
-        operations
-            .iter()
-            .try_for_each(|operation| self.run(operation, &bound, context))
     }
 
     /// Report that part of the step being applied did not apply, and why.
@@ -430,7 +389,7 @@ fn files(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
 
 /// Whether `text` is a non-empty run of `[A-Za-z0-9._-]`: safe in a path component
 /// or a recipe, for a value read from firmware.
-fn is_token(text: &str) -> bool {
+pub(crate) fn is_token(text: &str) -> bool {
     !text.is_empty()
         && text
             .bytes()

@@ -3,7 +3,7 @@
 //! called as a built-in one is, by a name no other operation has. A kit names
 //! one `Outer` or `Outer(Inner)`; the second is called as `Outer(Inner(…))`.
 
-use crate::recipe::{BUILT_IN_OPERATIONS, Error, Expr, Operation, ron_options};
+use crate::recipe::{BUILT_IN_OPERATIONS, Error, Operation, ron_options};
 use serde::{
     Deserialize, Deserializer,
     de::{self, DeserializeSeed, EnumAccess, MapAccess, VariantAccess, Visitor},
@@ -26,10 +26,10 @@ struct Kit {
     operations: BTreeMap<String, Definition>,
 }
 
-/// What a kit's operation does, as a step does it: with `{name}` bound to what
-/// each parameter is given, or to its default, and to what `let:` binds, if
-/// `when:` holds, apply the operations. A value that is not set, or a condition that does not hold,
-/// skips them, and is reported; the rest of the step still applies.
+/// What a kit's operation does: with `{name}` bound to what each parameter is
+/// given, or to its default, apply the operations, as a step does. What they
+/// report skipping, the rest of the step still applies. An asset they name is
+/// the calling recipe's.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Definition {
@@ -38,10 +38,6 @@ pub struct Definition {
     /// The parameters a call can give, by name, and what each is if it does not.
     #[serde(default)]
     pub defaults: BTreeMap<String, String>,
-    #[serde(rename = "let", default)]
-    pub bindings: BTreeMap<String, Expr>,
-    #[serde(default)]
-    pub when: Option<Expr>,
     /// Built-in operations: a kit's operation does not call another's.
     pub operations: Vec<Operation>,
 }
@@ -63,11 +59,20 @@ pub fn operations() -> Result<&'static BTreeMap<String, Definition>, Error> {
     if let Some(operations) = OPERATIONS.get() {
         return Ok(operations);
     }
+    parse(Vec::new())
+}
+
+/// Parse Evelyn's kits and `more`, by name and text.
+fn parse(more: Vec<(String, String)>) -> Result<&'static BTreeMap<String, Definition>, Error> {
     let mut operations = BTreeMap::new();
     let mut property_files = Vec::new();
-    for (path, text) in KITS {
-        let kit: Kit = ron_options().from_str(text).map_err(|source| Error::Ron {
-            path: path.into(),
+    let kits = KITS
+        .iter()
+        .map(|(path, text)| (path.to_string(), text.to_string()))
+        .chain(more);
+    for (path, text) in kits {
+        let kit: Kit = ron_options().from_str(&text).map_err(|source| Error::Ron {
+            path: path.clone().into(),
             source: Box::new(source),
         })?;
         for file in kit.property_files {

@@ -24,8 +24,8 @@ Kit(
             parameters: ["name"],
             defaults: {"file": "/my_product/etc/permissions/com.oplus.android-features.xml"},
             operations: [
-                EditXml(target: "{file}", edits: [
-                    PutChild(parent: "permissions", key: "feature[@name='{name}']", element: "<feature name=\"{name}\"/>", create: true),
+                Xml("{file}", [
+                    PutChild(parent: "permissions", key: "feature[@name='{name}']", element: r#"<feature name="{name}"/>"#, create: true),
                 ]),
             ],
         ),
@@ -35,8 +35,8 @@ Kit(
             parameters: ["name"],
             defaults: {"file": "/my_product/etc/permissions/oplus.feature.android.xml"},
             operations: [
-                EditXml(target: "{file}", edits: [
-                    PutChild(parent: "oplus-config", key: "oplus-feature[@name='{name}']", element: "<oplus-feature name=\"{name}\"/>", create: true),
+                Xml("{file}", [
+                    PutChild(parent: "oplus-config", key: "oplus-feature[@name='{name}']", element: r#"<oplus-feature name="{name}"/>"#, create: true),
                 ]),
             ],
         ),
@@ -46,11 +46,11 @@ Kit(
             parameters: ["name", "file"],
             defaults: {"args": ""},
             operations: [
-                EditXml(target: "{file}", edits: [
-                    PutChild(parent: "extend_features", key: "app_feature[@name='{name}']", element: "<app_feature name=\"{name}\"/>", create: true),
+                Xml("{file}", [
+                    PutChild(parent: "extend_features", key: "app_feature[@name='{name}']", element: r#"<app_feature name="{name}"/>"#, create: true),
                 ]),
-                When(condition: Matches("{args}", "."), operations: [
-                    EditXml(target: "{file}", edits: [
+                When(Matches("{args}", "."), [
+                    Xml("{file}", [
                         SetAttribute(path: "extend_features/app_feature[@name='{name}']", name: "args", value: "{args}", create: true),
                     ]),
                 ]),
@@ -62,14 +62,14 @@ Kit(
             parameters: ["name"],
             operations: [
                 ForEach(
-                    over: Filter(
+                    Filter(
                         over: Union([Build("/*/etc/permissions/*.xml"), Build("/*/etc/extension/*.xml")]),
                         name: "file",
                         keep: Contains(Read(Build("{file}")), "{name}"),
                     ),
-                    name: "file",
-                    operations: [
-                        EditXml(target: "{file}", edits: [
+                    "file",
+                    [
+                        Xml("{file}", [
                             Remove(path: "//feature[@name='{name}']"),
                             Remove(path: "//oplus-feature[@name='{name}']"),
                             Remove(path: "//app_feature[@name='{name}']"),
