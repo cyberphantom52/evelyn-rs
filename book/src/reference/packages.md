@@ -1,10 +1,11 @@
 # Package edits
 
-`Package(path, Signed | Unsigned, [operations])` opens an APK or JAR, applies
-operations inside it, and rebuilds it.
+`Package(path, [operations])` opens an APK or JAR and applies operations inside
+it. The package stays open until the build is written, so every `Package` of the
+same file edits the same package, and it is rebuilt once, at the end.
 
 ```ron
-Package("/system_ext/priv-app/Settings/Settings.apk", Signed, [
+Package("/system_ext/priv-app/Settings/Settings.apk", [
     StubMethod(
         class: "Lcom/android/settings/Utils;",
         method: "isOtaAvailable()Z",
@@ -14,14 +15,24 @@ Package("/system_ext/priv-app/Settings/Settings.apk", Signed, [
         Set(type: "string", name: "device_name", config: "", value: "Pong"),
     ]),
 ])
+Sign("/system_ext/priv-app/Settings/Settings.apk")
 ```
 
 | Argument   | Meaning |
 |------------|---------|
 | path       | The package's device path. It can use `{name}`. |
-| `Signed`   | Sign the rebuilt package with Evelyn's key. An APK that Android verifies needs a valid signature once its contents change. |
-| `Unsigned` | Leave the rebuilt package unsigned, for a package Android does not verify. |
 | operations | Operations applied inside the package. |
+
+## Signing
+
+A rebuilt package is not signed unless a recipe says so with `Sign(path)`.
+Android verifies the signature of an APK, so an APK whose contents change needs
+a `Sign`. A JAR in a partition is not verified and is left unsigned.
+
+`Sign` signs the package with Evelyn's key when the build is written, opening it
+if no `Package` has. One `Sign` is enough however many steps edit the package,
+but a recipe usually puts one next to each `Package` of an APK, so the package is
+still signed if another step is skipped.
 
 ## Paths inside a package
 

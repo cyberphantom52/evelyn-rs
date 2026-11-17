@@ -5,7 +5,7 @@
 ```ron
 [
     Step("settings-resources", [
-        Package("/system_ext/priv-app/Settings/Settings.apk", Signed, [
+        Package("/system_ext/priv-app/Settings/Settings.apk", [
             Resources([
                 Set(type: "bool", name: "config_show_example", config: "", value: "false"),
                 Set(type: "string", name: "device_name", config: "", value: "Pong"),
@@ -13,6 +13,7 @@
                 Set(type: "integer-array", name: "example_refresh_rates", config: "", value: ["60", "90", "120"]),
             ]),
         ]),
+        Sign("/system_ext/priv-app/Settings/Settings.apk"),
     ]),
 ]
 ```
@@ -32,9 +33,10 @@ The types are `string`, `bool`, `integer`, `color`, `dimen`, `fraction`,
 Other resource files are text, from the package's root:
 
 ```ron
-Package("/system_ext/priv-app/Settings/Settings.apk", Signed, [
+Package("/system_ext/priv-app/Settings/Settings.apk", [
     Xml("/res/xml/example_preferences.xml", [
         Remove(path: "//Preference[@{http://schemas.android.com/apk/res/android}key='example']"),
     ]),
 ])
+Sign("/system_ext/priv-app/Settings/Settings.apk")
 ```

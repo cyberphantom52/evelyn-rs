@@ -148,11 +148,13 @@ pub enum Operation {
     Xml(String, Vec<XmlEdit>),
     /// Patch one of the device's CIL policy files.
     Policy(String, Vec<PolicyEdit>),
-    /// Decode an APK or JAR, apply operations inside it and rebuild it, signed
-    /// with Evelyn's key, as an APK Android verifies needs once its contents
-    /// change, or not. Inside it, paths are from its root, and it has the smali
-    /// edits and `Resources`.
-    Package(String, Signing, Vec<Operation>),
+    /// Decode an APK or JAR and apply operations inside it. It is rebuilt once,
+    /// when the build is written, and signed only if a `Sign` says so. Inside it,
+    /// paths are from its root, and it has the smali edits and `Resources`.
+    Package(String, Vec<Operation>),
+    /// Sign an APK with Evelyn's key when the build is written, as Android needs
+    /// an APK it verifies to be once its contents change.
+    Sign(String),
     /// Inside a `Package`: set the package's values resources.
     Resources(Vec<ResourceEdit>),
     /// Inside a `Package`: replace a smali method with the asset `body`.
@@ -276,13 +278,6 @@ pub enum PolicyEdit {
     },
 }
 
-/// Whether a rebuilt package is signed with Evelyn's key.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-pub enum Signing {
-    Signed,
-    Unsigned,
-}
-
 /// An edit of a package's values resources.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -318,7 +313,7 @@ fn precompiled_policy() -> Location {
 }
 
 /// The built-in operations' names.
-pub(crate) const BUILT_IN_OPERATIONS: [&str; 21] = [
+pub(crate) const BUILT_IN_OPERATIONS: [&str; 22] = [
     "Copy",
     "Import",
     "Install",
@@ -330,6 +325,7 @@ pub(crate) const BUILT_IN_OPERATIONS: [&str; 21] = [
     "Xml",
     "Policy",
     "Package",
+    "Sign",
     "Resources",
     "ReplaceMethod",
     "InsertMethod",
@@ -391,6 +387,7 @@ impl Operation {
             Self::Xml(..) => "Xml",
             Self::Policy(..) => "Policy",
             Self::Package(..) => "Package",
+            Self::Sign(..) => "Sign",
             Self::Resources(..) => "Resources",
             Self::ReplaceMethod { .. } => "ReplaceMethod",
             Self::InsertMethod { .. } => "InsertMethod",
@@ -456,7 +453,7 @@ impl Operation {
             }
             Self::Let(_, value) => found.extend(value.locations()),
             Self::Assert(condition, _) => found.extend(condition.locations()),
-            Self::Package(_, _, operations) => {
+            Self::Package(_, operations) => {
                 found.extend(operations.iter().flat_map(Self::locations))
             }
             Self::ForEach(over, _, operations) => {
@@ -544,7 +541,7 @@ mod tests {
                     Text("/vendor/etc/x", [Append(r"a\.b"), Diff("x.diff")]),
                     Policy("/vendor/etc/selinux/vendor_sepolicy.cil", [Add("a.te"), Import(types: ["t"])]),
                     ForEach(Partitions(Rom), "p", [Remove("{p}/app/X")]),
-                    Package("/product/app/A.apk", Signed, [
+                    Package("/product/app/A.apk", [
                         Resources([Set(type: "string", name: "n", config: "", value: "v")]),
                         Resources([Set(type: "integer-array", name: "m", config: "en-rIN", value: ["1", "2"], create: true)]),
                     ]),

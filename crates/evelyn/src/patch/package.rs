@@ -30,8 +30,8 @@ const MANIFEST: &str = "AndroidManifest.xml";
 pub(crate) struct Package {
     /// The package as the build had it when it was opened.
     source: PathBuf,
-    /// The key it is signed with when it is written, if it is.
-    pub keys: Option<crate::toolchain::Keys>,
+    /// The key it is signed with when it is written, if a `Sign` says so.
+    keys: Option<crate::toolchain::Keys>,
     /// Its files as the edits so far left them, if an edit reaches them.
     files: Option<Files>,
     /// The entries read into `files` as they are.
@@ -100,16 +100,21 @@ impl Files {
 }
 
 impl Package {
-    /// The package at `source`, signed with `keys` when it is written.
-    pub(crate) fn new(source: PathBuf, keys: Option<crate::toolchain::Keys>) -> Self {
+    /// The package at `source`.
+    pub(crate) fn new(source: PathBuf) -> Self {
         Self {
             source,
-            keys,
+            keys: None,
             files: None,
             read: BTreeSet::new(),
             resources: false,
             classes: BTreeMap::new(),
         }
+    }
+
+    /// Sign the package with `keys` when it is written.
+    pub(crate) fn sign(&mut self, keys: crate::toolchain::Keys) {
+        self.keys = Some(keys);
     }
 
     /// Read what `edits` reach that is not read yet: the package's files, and its

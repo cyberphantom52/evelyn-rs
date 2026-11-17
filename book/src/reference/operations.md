@@ -201,11 +201,22 @@ $ RUST_LOG=evelyn::patch::operations=debug evelyn build --dry-run
 ### `Package`
 
 ```ron
-Package("/system_ext/priv-app/Settings/Settings.apk", Signed, [ /* … */ ])
+Package("/system_ext/priv-app/Settings/Settings.apk", [ /* … */ ])
 ```
 
-`Package(path, Signed | Unsigned, [operations])` opens an APK or JAR, applies
-operations inside it, and rebuilds it. See [Package edits](./packages.md).
+`Package(path, [operations])` opens an APK or JAR and applies operations inside
+it. The package is rebuilt once, when the build is written. See
+[Package edits](./packages.md).
+
+### `Sign`
+
+```ron
+Sign("/system_ext/priv-app/Settings/Settings.apk")
+```
+
+`Sign(path)` signs a package with Evelyn's key when the build is written. An
+APK that Android verifies needs it once a `Package` changes it. See
+[Signing](./packages.md#signing).
 
 ## Bindings and control flow
 

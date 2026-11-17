@@ -12,7 +12,8 @@
 | `Bytes`          | `Bytes(path, {offset: "hex"})` | ✓ | [File contents](../reference/operations.md#bytes) |
 | `Xml`            | `Xml(path, [SetText, SetAttribute, Remove, PutChild])` | ✓ | [XML edits](../reference/xml.md) |
 | `Policy`         | `Policy(path, [Add(asset), Import(types:, from:)])` | | [SELinux](../reference/operations.md#policy) |
-| `Package`        | `Package(path, Signed \| Unsigned, [ … ])` | | [Package edits](../reference/packages.md) |
+| `Package`        | `Package(path, [ … ])` | | [Package edits](../reference/packages.md) |
+| `Sign`           | `Sign(path)` | | [Signing](../reference/packages.md#signing) |
 | `Resources`      | `Resources([Set(type:, name:, config:, value:, create:)])` | only | [Package edits](../reference/packages.md#resources) |
 | `StubMethod`     | `StubMethod(class:, method:, returns:)` | only | [Package edits](../reference/packages.md#stubmethodclass-method-returns) |
 | `ReplaceMethod`  | `ReplaceMethod(class:, method:, body:)` | only | [Package edits](../reference/packages.md#replacemethodclass-method-body) |

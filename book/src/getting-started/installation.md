@@ -39,7 +39,7 @@ The data directory holds:
   `system/sepolicy` at a pinned commit. They are downloaded the first time a
   patch adds a TE policy, and checked the same way.
 - **The APK signing key.** It is generated the first time it is needed. Evelyn
-  uses it to sign the packages that recipes rebuild with `Package(…, Signed, …)`.
+  uses it to sign the packages that recipes sign with `Sign(…)`.
 
 ## `evelyn check`
 

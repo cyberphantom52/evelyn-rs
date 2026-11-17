@@ -13,9 +13,10 @@ use crate::patch::{
 };
 use crate::recipe::{
     Expr, Hex, Location, Metadata, Operation, PolicyEdit, PropEdit, ResourceEdit, ResourceValue,
-    Returns, Signing, TextEdit, XmlEdit,
+    Returns, TextEdit, XmlEdit,
 };
 use android::hash::Sha256Digest;
+use android::partition::PartitionPath;
 use android::path::{DevicePath, RelativePath};
 use std::collections::BTreeMap;
 
@@ -124,9 +125,12 @@ impl Composition {
             Operation::Bytes(target, edits) => self.write_bytes(target, edits, bound, context),
             Operation::Xml(target, edits) => self.edit_xml(target, edits, bound, context),
             Operation::Policy(target, edits) => self.policy(target, edits, bound, context),
-            Operation::Package(target, signing, edits) => {
-                let sign = *signing == Signing::Signed;
-                self.package(target, sign, edits, bound, context)
+            Operation::Package(target, edits) => self.package(target, edits, bound, context),
+            Operation::Sign(target) => {
+                let keys = context.tools.keys()?;
+                let at = self.open_package_at(target, bound, context)?;
+                self.package_at(&at)?.sign(keys);
+                Ok(())
             }
             Operation::Resources(edits) => self.resources(edits, bound, context),
             Operation::StubMethod {
@@ -566,39 +570,42 @@ impl Composition {
         })
     }
 
-    /// Apply `edits` inside a package, which is open in its target from the
-    /// first `Package` of it until the build is written, and is signed then if
-    /// every `Package` of it says so.
+    /// Where the package at `target` is, open in its target from the first
+    /// `Package` or `Sign` of it until the build is written.
+    fn open_package_at(
+        &mut self,
+        target: &str,
+        bound: &Bound,
+        context: &Context<'_>,
+    ) -> Result<PartitionPath, Error> {
+        let path = DevicePath::try_from(crate::recipe::substitute(target, bound)?)?;
+        let at = self.resolve_one(&path, context)?;
+        let target = self.target(&at.partition)?;
+        if !matches!(target.opened(&at.path)?, Some(Open::Package(_))) {
+            let source = target.content_path(&at.path, context.images)?;
+            target.open(&at.path, Open::Package(Package::new(source)))?;
+        }
+        Ok(at)
+    }
+
+    /// The open package at `at`.
+    fn package_at(&mut self, at: &PartitionPath) -> Result<&mut Package, Error> {
+        match self.target(&at.partition)?.opened(&at.path)? {
+            Some(Open::Package(package)) => Ok(package),
+            _ => unreachable!("the package is open"),
+        }
+    }
+
+    /// Apply `edits` inside the package at `target`.
     fn package(
         &mut self,
         target: &str,
-        sign: bool,
         edits: &[Operation],
         bound: &Bound,
         context: &Context<'_>,
     ) -> Result<(), Error> {
-        let path = DevicePath::try_from(crate::recipe::substitute(target, bound)?)?;
-        let at = self.resolve_one(&path, context)?;
-        let target = self.target(&at.partition)?;
-        let package = match target.opened(&at.path)? {
-            Some(Open::Package(package)) => package,
-            _ => {
-                let source = target.content_path(&at.path, context.images)?;
-                let keys = sign.then(|| context.tools.keys()).transpose()?;
-                let package = Open::Package(Package::new(source, keys));
-                target.open(&at.path, package)?;
-                match target.opened(&at.path)? {
-                    Some(Open::Package(package)) => package,
-                    _ => unreachable!("opened above"),
-                }
-            }
-        };
-        if package.keys.is_some() != sign {
-            return Err(Error::Unsupported(
-                "every Package of a package signs it, or none does",
-            ));
-        }
-        package.prepare(edits)?;
+        let at = self.open_package_at(target, bound, context)?;
+        self.package_at(&at)?.prepare(edits)?;
         self.package = Some(at);
         let ran = self.operations(edits, bound.clone(), context);
         self.package = None;

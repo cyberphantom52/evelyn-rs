@@ -5,20 +5,22 @@
 ```ron
 [
     Step("no-ota-check", [
-        Package("/system_ext/priv-app/Settings/Settings.apk", Signed, [
+        Package("/system_ext/priv-app/Settings/Settings.apk", [
             StubMethod(
                 class: "Lcom/example/settings/UpdateChecker;",
                 method: "isUpdateAvailable()Z",
                 returns: Zero,
             ),
         ]),
+        Sign("/system_ext/priv-app/Settings/Settings.apk"),
     ]),
 ]
 ```
 
-- **`Package(path, Signed, [ … ])`** opens the APK, applies the operations
-  inside it, and rebuilds it. `Signed` signs it with Evelyn's key, which an APK
-  Android verifies needs once its contents change.
+- **`Package(path, [ … ])`** opens the APK and applies the operations inside
+  it. It is rebuilt when the build is written.
+- **`Sign(path)`** signs it then with Evelyn's key, which an APK Android
+  verifies needs once its contents change.
 - **`StubMethod`** replaces the method's body so it only returns. `Zero`
   returns `0`, `false` or `null`; `One` returns `1` or `true`; `Void` returns
   nothing.
