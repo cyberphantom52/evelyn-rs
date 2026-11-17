@@ -2,8 +2,7 @@
 
 ## Requirements
 
-- **Rust.** The workspace uses edition 2024. See `rust-version` in the root
-  `Cargo.toml` for the minimum toolchain.
+- **Rust.** The latest stable release.
 - **A C and C++ compiler.** Some dependencies build native code: the SELinux
   policy library (C++), and the xz, zstd and `ring` libraries (C).
 

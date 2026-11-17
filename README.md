@@ -17,7 +17,7 @@ read it locally, run `mdbook serve book`.
 
 ## Requirements
 
-- Rust, at least the `rust-version` in the root `Cargo.toml`
+- The latest stable Rust
 - A C and C++ compiler, for the dependencies that build native code: the SELinux
   policy library (C++), and the xz, zstd and `ring` libraries (C)
 

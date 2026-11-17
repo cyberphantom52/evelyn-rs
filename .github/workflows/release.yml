@@ -9,7 +9,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.100.0
 
 jobs:
   create-release:
@@ -41,7 +40,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: rustup toolchain install "$RUST_VERSION" --profile minimal --target ${{ matrix.target }} && rustup default "$RUST_VERSION"
+      - run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }} && rustup default stable
       - uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           bin: evelyn
