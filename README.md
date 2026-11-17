@@ -49,17 +49,6 @@ evelyn build
     - `toolchain`: the files Evelyn downloads, pinned by SHA-256, and its signing key
 - `assets/`: files compiled into Evelyn: the recipes every build applies, the kits and the ZIP installer
 
-## TODO
-
-- [ ] Write a patch by editing a file: copy a file out of the last build, edit it, and turn the edit into a new patch (a text diff, same-length byte edits, or a whole-file replacement)
-- [ ] Read `.dat` (sdat) firmware images
-- [ ] Flash-test the ZIP output
-- [ ] Sparse image output
-- [ ] Port system-as-root ROMs to devices with the older `/system` layout (and the reverse)
-- [ ] Patch boot images (`boot`, `vendor_boot`) in Evelyn instead of beforehand, and check the first-stage fstab in `vendor_boot` as well as `vendor/etc`
-- [ ] Take a HAL from a donor firmware: list the files it needs that the device lacks (its libraries' closure, checked against the device's vendor), and derive its SELinux policy from the donor's compiled policy, keeping the rules whose types the device's policy defines and reporting the rest
-- [ ] Inventory a port's HALs: those the ROM's system side uses, against those the device's vendor declares (VINTF manifests and vendor APEXes)
-
 ## Authors
 
 - [@Cyber-Phantom](https://github.com/Cyber-Phantom)
