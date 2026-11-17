@@ -1,7 +1,8 @@
-//! Read-only access to EROFS and ext4 images.
+//! Read-only access to EROFS and ext4 images, and to boot images' ramdisks.
 
 use crate::device::{Device, into_io};
 use crate::metadata::AndroidMetadata;
+use crate::ramdisk::{self, Ramdisk};
 use crate::{Error, ImageFormat};
 use crate::{Filesystem, IoAt};
 use fs_core::BlockRead;
@@ -16,6 +17,7 @@ use std::{
 enum Backend {
     Erofs(Box<fs_erofs::Filesystem>),
     Ext4(Box<fs_ext4::Filesystem>),
+    Ramdisk(Box<Ramdisk>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -36,7 +38,7 @@ pub struct Image(Backend);
 
 impl Image {
     /// Open an EROFS or ext4 image, raw or Android sparse, recognizing it by its
-    /// superblock magic.
+    /// superblock magic, or the ramdisk of a boot or vendor_boot image.
     pub fn detect(path: &Path) -> Result<Self, Error> {
         let device = Device::open(path).at(path)?;
         let mut prefix = [0u8; 1084];
@@ -44,6 +46,10 @@ impl Image {
         Ok(Self(match ImageFormat::of(&prefix) {
             ImageFormat::Erofs => {
                 Backend::Erofs(Box::new(fs_erofs::Filesystem::open(Arc::new(device))?))
+            }
+            ImageFormat::Boot => {
+                let data = std::fs::read(path).at(path)?;
+                Backend::Ramdisk(Box::new(Ramdisk::parse(&data)?))
             }
             ImageFormat::Ext4 => {
                 let fs = fs_ext4::Filesystem::mount(Arc::new(CoreDevice::new(device)))?;
@@ -57,7 +63,7 @@ impl Image {
             }
             _ => {
                 return Err(Error::Unsupported(format!(
-                    "{} is not EROFS or ext4",
+                    "{} is not EROFS, ext4 or a boot image",
                     path.display()
                 )));
             }
@@ -96,6 +102,7 @@ impl Image {
         match &self.0 {
             Backend::Erofs(_) => Filesystem::Erofs,
             Backend::Ext4(_) => Filesystem::Ext4,
+            Backend::Ramdisk(_) => Filesystem::Ramdisk,
         }
     }
 
@@ -103,6 +110,7 @@ impl Image {
         Ok(match &self.0 {
             Backend::Erofs(fs) => fs.root_inode()?.nid,
             Backend::Ext4(_) => 2,
+            Backend::Ramdisk(_) => ramdisk::ROOT,
         })
     }
 
@@ -145,6 +153,17 @@ impl Image {
                     xattrs,
                 )
             }
+            Backend::Ramdisk(ramdisk) => {
+                let (kind, size, links, metadata) = ramdisk.inode(id);
+                (
+                    kind | metadata.mode,
+                    metadata.uid,
+                    metadata.gid,
+                    size,
+                    links,
+                    metadata.xattrs,
+                )
+            }
         };
         let kind = match mode & crate::mode::TYPE {
             crate::mode::FILE => InodeKind::File,
@@ -182,6 +201,7 @@ impl Image {
                 .into_iter()
                 .map(|entry| (entry.name, u64::from(entry.inode)))
                 .collect(),
+            Backend::Ramdisk(ramdisk) => ramdisk.children(id),
         };
         result.retain(|(name, _)| name != b"." && name != b"..");
         result.sort();
@@ -192,6 +212,7 @@ impl Image {
         Ok(match &self.0 {
             Backend::Erofs(fs) => fs.read_symlink_target(&fs.read_inode(id)?)?,
             Backend::Ext4(fs) => fs.read_link_ino(id as u32)?,
+            Backend::Ramdisk(ramdisk) => ramdisk.data(id).to_vec(),
         })
     }
 
@@ -208,7 +229,19 @@ impl Image {
             Backend::Ext4(fs) => Box::new(Reader::new(size, move |offset, output| {
                 Ok(fs.read_ino(id as u32, offset, output)?)
             })),
+            Backend::Ramdisk(ramdisk) => {
+                let data = ramdisk.data(id);
+                Box::new(&data[..(size as usize).min(data.len())])
+            }
         })
+    }
+
+    /// The ramdisk, for an image that is one.
+    pub(crate) fn ramdisk(&self) -> Option<&Ramdisk> {
+        match &self.0 {
+            Backend::Ramdisk(ramdisk) => Some(ramdisk),
+            _ => None,
+        }
     }
 }
 
