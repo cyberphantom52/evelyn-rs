@@ -2,7 +2,7 @@
 //! every edit writes a new blob, and blobs are never changed in place.
 
 use crate::patch::layout;
-use crate::patch::sepolicy::Document;
+use crate::patch::{package::Package, sepolicy::Document};
 use crate::recipe::Metadata;
 use android::Filesystem;
 use android::metadata::AndroidMetadata;
@@ -136,11 +136,28 @@ pub struct Target {
     root: PathBuf,
     pub(crate) tree: Tree,
     next_blob: u64,
-    /// Policy files open as documents, by canonical path. A document is its
-    /// file's content: reading the file renders it, and any change to the file
-    /// other than a policy patch writes it into the file first, or drops it for
-    /// what replaces the file.
-    documents: BTreeMap<RelativePath, Document>,
+    /// Files open for the edits of their kind, by canonical path. An open file is
+    /// its file's content: reading the file renders it, anything else that needs
+    /// the file's bytes writes it into the file first, and what replaces the
+    /// file drops it.
+    open: BTreeMap<RelativePath, Open>,
+}
+
+/// A file open for the edits of its kind, which hold it in memory until the build
+/// is written.
+pub(crate) enum Open {
+    Policy(Document),
+    Package(Package),
+}
+
+impl Open {
+    /// The file's content, as the edits so far left it.
+    fn render(&self) -> Result<Vec<u8>, Error> {
+        Ok(match self {
+            Open::Policy(document) => document.render()?.into_bytes(),
+            Open::Package(package) => package.render()?,
+        })
+    }
 }
 
 impl Target {
@@ -159,49 +176,53 @@ impl Target {
             root: output.into(),
             tree,
             next_blob: 0,
-            documents: BTreeMap::new(),
+            open: BTreeMap::new(),
         })
     }
 
-    /// The policy file at `path` open as a document, if it is.
-    pub(crate) fn document(&mut self, path: &RelativePath) -> Result<Option<&mut Document>, Error> {
+    /// The file at `path`, if it is open.
+    pub(crate) fn opened(&mut self, path: &RelativePath) -> Result<Option<&mut Open>, Error> {
         let canonical = self.file(path)?.path.clone();
-        Ok(self.documents.get_mut(&canonical))
+        Ok(self.open.get_mut(&canonical))
     }
 
-    /// Open the policy file at `path` as `document`, which holds its content.
-    pub(crate) fn open(&mut self, path: &RelativePath, document: Document) -> Result<(), Error> {
+    /// The file at `path`, if it is open, to read.
+    pub(crate) fn opened_ref(&self, path: &RelativePath) -> Result<Option<&Open>, Error> {
+        Ok(self.open.get(self.file(path)?.path))
+    }
+
+    /// Open the file at `path` as `open`, which holds its content from now on.
+    pub(crate) fn open(&mut self, path: &RelativePath, open: Open) -> Result<(), Error> {
         let canonical = self.file(path)?.path.clone();
-        self.documents.insert(canonical, document);
+        self.open.insert(canonical, open);
         Ok(())
     }
 
-    /// Every policy file open as a document, by its path.
-    pub(crate) fn documents(&self) -> impl Iterator<Item = (&RelativePath, &Document)> {
-        self.documents.iter()
+    /// Every open file, by its path.
+    pub(crate) fn open_files(&self) -> impl Iterator<Item = (&RelativePath, &Open)> {
+        self.open.iter()
     }
 
-    /// Write every document open at or under `path`, or every one, into its
-    /// file, and close it.
+    /// Write every file open at or under `path`, or every one, into its file, and
+    /// close it.
     pub(crate) fn close(&mut self, path: Option<&RelativePath>) -> Result<(), Error> {
         let open: Vec<RelativePath> = self
-            .documents
+            .open
             .keys()
             .filter(|open| path.is_none_or(|path| within(open, path)))
             .cloned()
             .collect();
         for canonical in open {
-            let document = self.documents.remove(&canonical).expect("listed above");
-            let kind = self.write_blob(document.render()?.as_bytes())?;
+            let open = self.open.remove(&canonical).expect("listed above");
+            let kind = self.write_blob(open.render()?.as_slice())?;
             self.set_content(&canonical, kind);
         }
         Ok(())
     }
 
-    /// Drop every document open at or under `path`: what is written there
-    /// replaces it.
+    /// Drop every file open at or under `path`: what is written there replaces it.
     fn discard(&mut self, path: &RelativePath) {
-        self.documents.retain(|open, _| !within(open, path));
+        self.open.retain(|open, _| !within(open, path));
     }
 
     /// Reads this target's file contents from its blobs and the open source images.
@@ -299,11 +320,11 @@ impl Target {
         Ok(self.tree.file(path)?)
     }
 
-    /// The content of the file at `path`: an open document's, rendered.
+    /// The content of the file at `path`: an open file's, rendered.
     pub(crate) fn read(&self, path: &RelativePath, images: &Images) -> Result<Vec<u8>, Error> {
         let file = self.file(path)?;
-        match self.documents.get(file.path) {
-            Some(document) => Ok(document.render()?.into_bytes()),
+        match self.open.get(file.path) {
+            Some(open) => open.render(),
             None => Ok(self.store(images).read(&file)?),
         }
     }
@@ -315,7 +336,7 @@ impl Target {
         images: &Images,
     ) -> Result<android::hash::Sha256Digest, Error> {
         let file = self.file(path)?;
-        match self.documents.contains_key(file.path) {
+        match self.open.contains_key(file.path) {
             true => Ok(android::hash::Sha256Digest::bytes(
                 &self.read(path, images)?,
             )),

@@ -4,7 +4,11 @@
 use crate::patch::target::IoAt;
 use crate::patch::value::Located;
 use crate::patch::{
-    Error, Images, Target, defaults::Defaults, layout, package::Opened, target::Placing,
+    Error, Images, Target,
+    defaults::Defaults,
+    layout,
+    package::Package,
+    target::{Open, Placing},
 };
 use crate::recipe::{Metadata, Recipe};
 use crate::toolchain::Tools;
@@ -76,8 +80,8 @@ pub struct Composition {
     skipped: Vec<Skipped>,
     /// What the step being applied reported skipping.
     pub(crate) skips: Vec<String>,
-    /// The package a `Package` has open.
-    pub(crate) package: Option<Opened>,
+    /// Where the package a `Package` is applying its edits to is.
+    pub(crate) package: Option<PartitionPath>,
     /// What the step being applied left out of the policies it imported.
     pub(crate) held: Vec<Held>,
     /// What steps left out of the policies they imported, with the step.
@@ -147,6 +151,24 @@ impl Composition {
         Ok(())
     }
 
+    /// The package a `Package` is applying its edits to.
+    pub(crate) fn current(&self) -> Option<&Package> {
+        let at = self.package.as_ref()?;
+        match self.targets.get(&at.partition)?.opened_ref(&at.path).ok()? {
+            Some(Open::Package(package)) => Some(package),
+            _ => None,
+        }
+    }
+
+    /// The package a `Package` is applying its edits to, to change.
+    pub(crate) fn current_mut(&mut self) -> Option<&mut Package> {
+        let at = self.package.clone()?;
+        match self.targets.get_mut(&at.partition)?.opened(&at.path).ok()? {
+            Some(Open::Package(package)) => Some(package),
+            _ => None,
+        }
+    }
+
     /// Report that part of the step being applied did not apply, and why.
     pub(crate) fn skip(&mut self, reason: String) {
         self.skips.push(reason);
@@ -184,7 +206,7 @@ impl Composition {
         context: &Context<'_>,
     ) -> Result<(), Error> {
         let source = context.asset(asset)?;
-        if let Some(package) = &mut self.package {
+        if let Some(package) = self.current_mut() {
             let inside = RelativePath::try_from(to.to_string()[1..].to_owned())?;
             let files = package.files_mut()?;
             let path: &str = inside.as_ref();

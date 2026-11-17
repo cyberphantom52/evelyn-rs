@@ -5,6 +5,9 @@ use crate::patch::target::IoAt;
 use crate::patch::{
     Composition, Error,
     compose::{Bound, Context},
+    package::Package,
+    sepolicy::Document,
+    target::Open,
     target::{Overrides, Placing},
     value::{Located, Place, Value, ValueError},
 };
@@ -563,7 +566,9 @@ impl Composition {
         })
     }
 
-    /// Decode a package, apply `edits` inside it and rebuild it.
+    /// Apply `edits` inside a package, which is open in its target from the
+    /// first `Package` of it until the build is written, and is signed then if
+    /// every `Package` of it says so.
     fn package(
         &mut self,
         target: &str,
@@ -574,12 +579,30 @@ impl Composition {
     ) -> Result<(), Error> {
         let path = DevicePath::try_from(crate::recipe::substitute(target, bound)?)?;
         let at = self.resolve_one(&path, context)?;
-        let opened = crate::patch::package::open(self.target(&at.partition)?, &at, edits, context)?;
-        self.package = Some(opened);
+        let target = self.target(&at.partition)?;
+        let package = match target.opened(&at.path)? {
+            Some(Open::Package(package)) => package,
+            _ => {
+                let source = target.content_path(&at.path, context.images)?;
+                let keys = sign.then(|| context.tools.keys()).transpose()?;
+                let package = Open::Package(Package::new(source, keys));
+                target.open(&at.path, package)?;
+                match target.opened(&at.path)? {
+                    Some(Open::Package(package)) => package,
+                    _ => unreachable!("opened above"),
+                }
+            }
+        };
+        if package.keys.is_some() != sign {
+            return Err(Error::Unsupported(
+                "every Package of a package signs it, or none does",
+            ));
+        }
+        package.prepare(edits)?;
+        self.package = Some(at);
         let ran = self.operations(edits, bound.clone(), context);
-        let opened = self.package.take().expect("opened above");
-        ran?;
-        crate::patch::package::close(self.target(&at.partition)?, &at.path, opened, sign, context)
+        self.package = None;
+        ran
     }
 
     /// Change one method of a class in the open package.
@@ -599,9 +622,9 @@ impl Composition {
         Ok(())
     }
 
-    /// The package a `Package` has open.
-    fn open_package(&mut self) -> Result<&mut crate::patch::package::Opened, Error> {
-        self.package.as_mut().ok_or(Error::Unsupported(
+    /// The package a `Package` is applying its edits to.
+    fn open_package(&mut self) -> Result<&mut Package, Error> {
+        self.current_mut().ok_or(Error::Unsupported(
             "a package's code is edited inside a Package",
         ))
     }
@@ -682,8 +705,8 @@ impl Composition {
         Ok(())
     }
 
-    /// Apply `edits` to the policy file `file`, which is open as a document in
-    /// its target from the first step that patches it.
+    /// Apply `edits` to the policy file `file`, which is open in its target from
+    /// the first step that patches it.
     fn patch_policy(
         &mut self,
         file: &Located,
@@ -691,21 +714,16 @@ impl Composition {
         bound: &Bound,
         context: &Context<'_>,
     ) -> Result<(), Error> {
-        if file.place != Place::Build {
-            return Err(Error::Unsupported(
-                "only a policy file in the build is patched",
-            ));
-        }
-        if self
-            .target(&file.partition)?
-            .document(&file.path)?
-            .is_none()
-        {
+        if !matches!(
+            self.target(&file.partition)?.opened(&file.path)?,
+            Some(Open::Policy(_))
+        ) {
             let name = self.device_path(file, context);
             let text = self.text(file, context)?;
             let others = self.other_policies(&name, context)?;
-            let document = crate::patch::sepolicy::Document::open(name, text, &others)?;
-            self.target(&file.partition)?.open(&file.path, document)?;
+            let document = Document::open(name, text, &others)?;
+            self.target(&file.partition)?
+                .open(&file.path, Open::Policy(document))?;
         }
         for edit in edits {
             match edit {
@@ -723,12 +741,12 @@ impl Composition {
         Ok(())
     }
 
-    /// The policy file `file`, open as a document.
-    fn document(&mut self, file: &Located) -> Result<&mut crate::patch::sepolicy::Document, Error> {
-        Ok(self
-            .target(&file.partition)?
-            .document(&file.path)?
-            .expect("the policy file is open"))
+    /// The policy file `file`, open.
+    fn document(&mut self, file: &Located) -> Result<&mut Document, Error> {
+        match self.target(&file.partition)?.opened(&file.path)? {
+            Some(Open::Policy(document)) => Ok(document),
+            _ => unreachable!("the policy file is open"),
+        }
     }
 
     /// Set values resources of the open package, each in its configuration's
@@ -805,29 +823,13 @@ impl Composition {
                 .iter()
                 .any(|pattern| android::path::glob(pattern, name))
         };
-        // A compiled policy in a firmware is parsed once, and kept by the file
-        // importing from it; one in the build may change, so is read each time.
-        let mut parsed = match self.document(file)?.donor(source) {
-            Some(_) => None,
-            None => Some(
-                sepolicy::SePolicy::from_data(&self.content(source, context)?).map_err(
-                    |error| crate::patch::sepolicy::Error::Policy {
-                        name: from.to_string(),
-                        source: Box::new(error),
-                    },
-                )?,
-            ),
-        };
-        if matches!(source.place, Place::Firmware(_))
-            && let Some(donor) = parsed.take()
-        {
-            self.document(file)?.keep_donor(source.clone(), donor);
-        }
-        let document = self.document(file)?;
-        let donor = parsed
-            .as_ref()
-            .or_else(|| document.donor(source))
-            .expect("parsed or kept above");
+        let donor =
+            sepolicy::SePolicy::from_data(&self.content(source, context)?).map_err(|error| {
+                crate::patch::sepolicy::Error::Policy {
+                    name: from.to_string(),
+                    source: Box::new(error),
+                }
+            })?;
         let any = donor.attribute_names().any(|name| selected(&name))
             || donor.type_decls().any(|decl| selected(&decl.name));
         if !any {
@@ -836,7 +838,7 @@ impl Composition {
                 patterns.join(", ")
             )));
         }
-        let extraction = donor.extract(selected, Some(document.declared()));
+        let extraction = donor.extract(selected, Some(self.document(file)?.declared()));
         for (needs, rules) in &extraction.unresolved {
             for rule in rules {
                 self.held.push(crate::patch::compose::Held {
@@ -863,12 +865,15 @@ impl Composition {
         Ok(())
     }
 
-    /// Compile every policy file open as a document, as every step left it, with
+    /// Compile every open policy file, as every step left it, with
     /// the device's other policy files as they are then, as init compiles it at
     /// boot. An error names the patch libsepol could not compile a statement of.
     pub(crate) fn check_policies(&self, context: &Context<'_>) -> Result<(), Error> {
         for (partition, target) in &self.targets {
-            for (path, document) in target.documents() {
+            for (path, open) in target.open_files() {
+                let Open::Policy(document) = open else {
+                    continue;
+                };
                 let file = Located {
                     place: Place::Build,
                     partition: partition.clone(),

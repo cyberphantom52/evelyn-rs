@@ -94,9 +94,10 @@ impl Composition {
 
     /// What a path from the open package's root matches in it.
     pub(crate) fn select_package(&self, pattern: &str) -> Result<Vec<Located>, Error> {
-        let package = self.package.as_ref().ok_or(Error::Unsupported(
+        let at = self.package.as_ref().ok_or(Error::Unsupported(
             "a package's files are selected inside a Package",
         ))?;
+        let package = self.current().expect("a Package's package is open");
         let path = pattern.strip_prefix('/').ok_or(Error::Unsupported(
             "paths inside a package start at its root, /",
         ))?;
@@ -107,7 +108,7 @@ impl Composition {
             .map(|path| {
                 Ok(Located {
                     place: Place::Package,
-                    partition: package.partition.clone(),
+                    partition: at.partition.clone(),
                     path: RelativePath::try_from(path)?,
                 })
             })
@@ -184,8 +185,7 @@ impl Composition {
                 .read(&entry.path, context.images),
             Place::Package => {
                 let package = self
-                    .package
-                    .as_ref()
+                    .current()
                     .ok_or(Error::Unsupported("no package is open"))?;
                 let data = package.files()?.read(entry.path.as_ref());
                 Ok(data
@@ -269,7 +269,7 @@ impl Composition {
                     let bytes = self.content(entry, context)?;
                     let edited = edit(&bytes)?;
                     if edited != bytes {
-                        let package = self.package.as_mut().expect("a package's file is in it");
+                        let package = self.current_mut().expect("a package's file is in it");
                         package.files_mut()?.write(entry.path.as_ref(), edited);
                     }
                 }
@@ -298,7 +298,7 @@ impl Composition {
     /// Remove a selected entry, and what is below it, from the build or the open
     /// package.
     pub(crate) fn remove_entry(&mut self, entry: &Located) -> Result<(), Error> {
-        match (entry.place, &mut self.package) {
+        match (entry.place, self.current_mut()) {
             (Place::Build, _) => self.target(&entry.partition)?.remove(&entry.path),
             (Place::Package, Some(package)) => {
                 let files = package.files_mut()?;

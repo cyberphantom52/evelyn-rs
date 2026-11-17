@@ -1,14 +1,12 @@
-//! Packages (APKs and JARs) a `Package` edits. Their code is edited as smali, a
-//! class at a time, and assembled back into the DEX files in place. Only when an
-//! edit reaches the package's files are they read into memory, by their paths in
-//! the package: resources and the manifest as text when an edit reaches them,
-//! everything else as it is, the DEX files left out. Closing puts back only what
-//! the edits changed.
+//! Packages (APKs and JARs) a `Package` edits, open in their target until the
+//! build is written. Their code is edited as smali, a class at a time, and
+//! assembled back into the DEX files in place. Only when an edit reaches the
+//! package's files are they read into memory, by their paths in the package:
+//! resources and the manifest as text when an edit reaches them, everything else
+//! as it is, the DEX files left out. Writing it puts back only what the edits
+//! changed, and signs it once.
 
-use crate::patch::{Target, compose::Context};
 use crate::recipe::{Expr, Location, Operation};
-use android::partition::PartitionPath;
-use android::path::RelativePath;
 use apkscope_core::{apk::Apk, apksign, rebuild, resources, smali};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -28,18 +26,18 @@ pub enum Error {
 /// The manifest, which with `res/` and the resource table is decoded as one.
 const MANIFEST: &str = "AndroidManifest.xml";
 
-/// A package open for the edits inside a `Package`.
-pub(crate) struct Opened {
-    /// The package as the build has it.
+/// A package open for the edits of every `Package` of it.
+pub(crate) struct Package {
+    /// The package as the build had it when it was opened.
     source: PathBuf,
+    /// The key it is signed with when it is written, if it is.
+    pub keys: Option<crate::toolchain::Keys>,
     /// Its files as the edits so far left them, if an edit reaches them.
     files: Option<Files>,
     /// The entries read into `files` as they are.
     read: BTreeSet<String>,
     /// Whether its resources and manifest are in `files` too, as text.
     resources: bool,
-    /// The partition the package is in.
-    pub partition: String,
     /// The classes edited so far, by descriptor, as smali.
     classes: BTreeMap<String, String>,
 }
@@ -101,31 +99,42 @@ impl Files {
     }
 }
 
-/// Open the package at `at`. Its files are written out only when `edits` reach
-/// them, and its resources only when they reach those.
-pub(crate) fn open(
-    target: &mut Target,
-    at: &PartitionPath,
-    edits: &[Operation],
-    context: &Context<'_>,
-) -> Result<Opened, crate::patch::Error> {
-    let source = target.content_path(&at.path, context.images)?;
-    let resources = resources(edits);
-    let (files, read) = match edits.iter().all(code) {
-        true => (None, BTreeSet::new()),
-        false => {
-            let (files, read) = read_files(&source, resources)?;
-            (Some(files), read)
+impl Package {
+    /// The package at `source`, signed with `keys` when it is written.
+    pub(crate) fn new(source: PathBuf, keys: Option<crate::toolchain::Keys>) -> Self {
+        Self {
+            source,
+            keys,
+            files: None,
+            read: BTreeSet::new(),
+            resources: false,
+            classes: BTreeMap::new(),
         }
-    };
-    Ok(Opened {
-        source,
-        files,
-        read,
-        resources,
-        partition: at.partition.clone(),
-        classes: BTreeMap::new(),
-    })
+    }
+
+    /// Read what `edits` reach that is not read yet: the package's files, and its
+    /// resources if they reach those.
+    pub(crate) fn prepare(&mut self, edits: &[Operation]) -> Result<(), Error> {
+        if edits.iter().all(code) {
+            return Ok(());
+        }
+        let resources = resources(edits);
+        match &mut self.files {
+            None => {
+                let (files, read) = read_files(&self.source, resources)?;
+                (self.files, self.read, self.resources) = (Some(files), read, resources);
+            }
+            Some(files) if resources && !self.resources => {
+                for (name, data) in apkscope_core::resources::decode(&mut open_apk(&self.source)?)?
+                {
+                    files.write(&name, data);
+                }
+                self.resources = true;
+            }
+            Some(_) => {}
+        }
+        Ok(())
+    }
 }
 
 /// Read the files of the package at `source`: every entry but the DEX files,
@@ -170,7 +179,7 @@ fn open_apk(path: &Path) -> Result<Apk, Error> {
     Ok(Apk::new(fs::File::open(path).map_err(io(path))?)?)
 }
 
-impl Opened {
+impl Package {
     /// The package's files, which an edit outside its code reaches.
     pub(crate) fn files(&self) -> Result<&Files, crate::patch::Error> {
         self.files.as_ref().ok_or(crate::patch::Error::Unsupported(
@@ -218,9 +227,10 @@ impl Opened {
 
     /// How the package's entries change: the files the edits changed, added or
     /// removed, and the edited classes assembled into its DEX files.
-    fn edits(self, apk: &mut Apk) -> Result<rebuild::Edits, Error> {
+    fn edits(&self, apk: &mut Apk) -> Result<rebuild::Edits, Error> {
         let mut edits = rebuild::Edits::new();
-        if let Some(Files(mut files)) = self.files {
+        if let Some(Files(files)) = &self.files {
+            let mut files = files.clone();
             let decoded: BTreeMap<String, Vec<u8>> = match self.resources {
                 true => {
                     let decoded = files.extract_if(.., |name, _| !raw(name)).collect();
@@ -248,34 +258,25 @@ impl Opened {
             }
         }
         if !self.classes.is_empty() {
-            let classes: Vec<String> = self.classes.into_values().collect();
+            let classes: Vec<String> = self.classes.values().cloned().collect();
             smali::inject_into(apk, &classes, &mut edits)?;
         }
         Ok(edits)
     }
-}
 
-/// Put the package back at `path` in `target`, with only what its edits changed
-/// changed and stored entries aligned, and signed with Evelyn's key if `sign`.
-pub(crate) fn close(
-    target: &mut Target,
-    path: &RelativePath,
-    opened: Opened,
-    sign: bool,
-    context: &Context<'_>,
-) -> Result<(), crate::patch::Error> {
-    let source = opened.source.clone();
-    let mut apk = open_apk(&source)?;
-    let edits = opened.edits(&mut apk)?;
-    let file = fs::File::open(&source).map_err(io(&source))?;
-    let (mut bytes, central_directory) =
-        rebuild::rebuild_from(file, &edits).map_err(Error::from)?;
-    if sign {
-        let keys = context.tools.keys()?;
-        let key = apksign::load(&keys.key, &keys.certificate).map_err(Error::from)?;
-        bytes = apksign::sign(bytes, central_directory, &key).map_err(Error::from)?;
+    /// The package as its edits left it, with only what they changed changed,
+    /// stored entries aligned, and signed if it has keys.
+    pub(crate) fn render(&self) -> Result<Vec<u8>, Error> {
+        let mut apk = open_apk(&self.source)?;
+        let edits = self.edits(&mut apk)?;
+        let file = fs::File::open(&self.source).map_err(io(&self.source))?;
+        let (mut bytes, central_directory) = rebuild::rebuild_from(file, &edits)?;
+        if let Some(keys) = &self.keys {
+            let key = apksign::load(&keys.key, &keys.certificate)?;
+            bytes = apksign::sign(bytes, central_directory, &key)?;
+        }
+        Ok(bytes)
     }
-    target.write(path, &bytes)
 }
 
 /// Whether an edit changes code only, and so needs none of the package's files.
