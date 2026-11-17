@@ -434,6 +434,14 @@ fn compose(
                 source,
             })?;
     }
+    // Each patched policy file is compiled once, as every step left it.
+    composition.check_policies(&crate::patch::Context {
+        sources,
+        images,
+        tools: build.tools,
+        assets: None,
+        mounts,
+    })?;
     let (trees, skipped) = composition.finish(mounts, images)?;
     let targets = trees
         .into_iter()

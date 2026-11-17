@@ -2256,8 +2256,8 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sepolicy-inject-rs"
-version = "0.3.1"
-source = "git+https://github.com/cyberphantom52/sepolicy-inject-rs?tag=v0.3.1#9248aeec750273bc49edd0e8add362aed070f70a"
+version = "0.4.0"
+source = "git+https://github.com/cyberphantom52/sepolicy-inject-rs?tag=v0.4.0#6757579e580b680632f7554a85109d0ff5cd91a3"
 dependencies = [
  "cc",
  "cxx",

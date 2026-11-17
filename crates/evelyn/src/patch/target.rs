@@ -2,6 +2,7 @@
 //! every edit writes a new blob, and blobs are never changed in place.
 
 use crate::patch::layout;
+use crate::patch::sepolicy::Document;
 use crate::recipe::Metadata;
 use android::Filesystem;
 use android::metadata::AndroidMetadata;
@@ -66,6 +67,17 @@ pub enum Error {
         #[source]
         source: Box<Error>,
     },
+    #[error(
+        "{target}{}",
+        input.as_ref().map(|input| format!(", in what {input} added")).unwrap_or_default()
+    )]
+    Policies {
+        target: String,
+        /// The input libsepol could not compile a statement of, when it said.
+        input: Option<String>,
+        #[source]
+        source: crate::patch::sepolicy::Error,
+    },
     #[error("{0}")]
     Assertion(String),
     #[error("{0} is not set")]
@@ -124,6 +136,11 @@ pub struct Target {
     root: PathBuf,
     pub(crate) tree: Tree,
     next_blob: u64,
+    /// Policy files open as documents, by canonical path. A document is its
+    /// file's content: reading the file renders it, and any change to the file
+    /// other than a policy patch writes it into the file first, or drops it for
+    /// what replaces the file.
+    documents: BTreeMap<RelativePath, Document>,
 }
 
 impl Target {
@@ -142,7 +159,49 @@ impl Target {
             root: output.into(),
             tree,
             next_blob: 0,
+            documents: BTreeMap::new(),
         })
+    }
+
+    /// The policy file at `path` open as a document, if it is.
+    pub(crate) fn document(&mut self, path: &RelativePath) -> Result<Option<&mut Document>, Error> {
+        let canonical = self.file(path)?.path.clone();
+        Ok(self.documents.get_mut(&canonical))
+    }
+
+    /// Open the policy file at `path` as `document`, which holds its content.
+    pub(crate) fn open(&mut self, path: &RelativePath, document: Document) -> Result<(), Error> {
+        let canonical = self.file(path)?.path.clone();
+        self.documents.insert(canonical, document);
+        Ok(())
+    }
+
+    /// Every policy file open as a document, by its path.
+    pub(crate) fn documents(&self) -> impl Iterator<Item = (&RelativePath, &Document)> {
+        self.documents.iter()
+    }
+
+    /// Write every document open at or under `path`, or every one, into its
+    /// file, and close it.
+    pub(crate) fn close(&mut self, path: Option<&RelativePath>) -> Result<(), Error> {
+        let open: Vec<RelativePath> = self
+            .documents
+            .keys()
+            .filter(|open| path.is_none_or(|path| within(open, path)))
+            .cloned()
+            .collect();
+        for canonical in open {
+            let document = self.documents.remove(&canonical).expect("listed above");
+            let kind = self.write_blob(document.render()?.as_bytes())?;
+            self.set_content(&canonical, kind);
+        }
+        Ok(())
+    }
+
+    /// Drop every document open at or under `path`: what is written there
+    /// replaces it.
+    fn discard(&mut self, path: &RelativePath) {
+        self.documents.retain(|open, _| !within(open, path));
     }
 
     /// Reads this target's file contents from its blobs and the open source images.
@@ -157,6 +216,8 @@ impl Target {
         path: &RelativePath,
         images: &Images,
     ) -> Result<PathBuf, Error> {
+        let canonical = self.file(path)?.path.clone();
+        self.close(Some(&canonical))?;
         let file = self.file(path)?;
         let content = match file.content {
             Content::Blob(blob) => return Ok(self.blob_path(blob)),
@@ -179,6 +240,7 @@ impl Target {
     /// Give a file (and all of its hardlinks) new content.
     pub(crate) fn write(&mut self, path: &RelativePath, bytes: &[u8]) -> Result<(), Error> {
         let canonical = self.file(path)?.path.clone();
+        self.discard(&canonical);
         let kind = self.write_blob(bytes)?;
         self.set_content(&canonical, kind);
         Ok(())
@@ -192,6 +254,8 @@ impl Target {
         to: &RelativePath,
         placing: Placing,
     ) -> Result<(), Error> {
+        self.close(Some(from))?;
+        self.discard(to);
         let selected = layout::subtree(&self.tree, from, to)?;
         // The directories made for it are not in the tree, so not like its own.
         let mut written = self.destination(to, placing, |_| None)?;
@@ -204,12 +268,14 @@ impl Target {
     /// Copy a subtree into another target, with the metadata the copy states;
     /// file contents the source holds are linked or copied into the destination.
     pub(crate) fn copy_into(
-        &self,
+        &mut self,
         destination: &mut Self,
         from: &RelativePath,
         to: &RelativePath,
         placing: Placing,
     ) -> Result<(), Error> {
+        self.close(Some(from))?;
+        destination.discard(to);
         let selected = layout::subtree(&self.tree, from, to)?;
         let mut written = destination.destination(to, placing, |dir| {
             layout::directory(&self.tree, dir).cloned()
@@ -233,8 +299,28 @@ impl Target {
         Ok(self.tree.file(path)?)
     }
 
+    /// The content of the file at `path`: an open document's, rendered.
     pub(crate) fn read(&self, path: &RelativePath, images: &Images) -> Result<Vec<u8>, Error> {
-        Ok(self.store(images).read(&self.file(path)?)?)
+        let file = self.file(path)?;
+        match self.documents.get(file.path) {
+            Some(document) => Ok(document.render()?.into_bytes()),
+            None => Ok(self.store(images).read(&file)?),
+        }
+    }
+
+    /// The SHA-256 of the file at `path`'s content.
+    pub(crate) fn sha256(
+        &self,
+        path: &RelativePath,
+        images: &Images,
+    ) -> Result<android::hash::Sha256Digest, Error> {
+        let file = self.file(path)?;
+        match self.documents.contains_key(file.path) {
+            true => Ok(android::hash::Sha256Digest::bytes(
+                &self.read(path, images)?,
+            )),
+            false => Ok(self.store(images).sha256(&file)?),
+        }
     }
 
     /// Write a new blob from `reader`.
@@ -284,6 +370,7 @@ impl Target {
     /// Remove `path` (or every entry a glob matches) and its contents.
     pub(crate) fn remove(&mut self, path: &RelativePath) -> Result<(), Error> {
         for path in layout::matches(&self.tree, path) {
+            self.discard(&path);
             // A match may already be gone with a directory matched before it.
             if self.tree.entries.contains_key(&path) {
                 layout::remove(&mut self.tree, &path)?;
@@ -316,6 +403,7 @@ impl Target {
             vec![(path.clone(), to_path.clone())]
         };
         for (from_path, to_path) in pairs {
+            self.discard(&to_path);
             let selected = layout::subtree(source, &from_path, &to_path)?;
             let mut written = self.destination(&to_path, placing, |dir| {
                 layout::directory(source, dir)
@@ -356,6 +444,7 @@ impl Target {
                 "remove a directory explicitly before installing a file",
             ));
         }
+        self.discard(to);
         let made = self.destination(to, placing, |_| None)?;
         let kind = self.write_blob(std::fs::File::open(file).at(file)?)?;
         let metadata = EntryMetadata::Default(Vec::new());
@@ -396,11 +485,12 @@ impl Target {
     /// The finished tree: every entry waiting for them gets Android's defaults
     /// for where it is on the device, from `defaults`, then what was set over them.
     pub(crate) fn resolve(
-        self,
+        mut self,
         partition: &str,
         mounts: &android::partition::Mounts,
         defaults: Option<&crate::patch::defaults::Defaults>,
     ) -> Result<PartitionTree, Error> {
+        self.close(None)?;
         self.tree.map(|path, kind, metadata| match metadata {
             EntryMetadata::Set(metadata) => Ok(metadata),
             EntryMetadata::Default(overrides) => {
@@ -492,4 +582,13 @@ fn set(metadata: &mut AndroidMetadata, overrides: &Overrides) {
     if let Some(label) = &overrides.selinux {
         metadata.set_selinux(label);
     }
+}
+
+/// Whether `entry` is `path`, or below it.
+fn within(entry: &RelativePath, path: &RelativePath) -> bool {
+    let (entry, path) = (entry.as_ref(), path.as_ref());
+    entry == path
+        || entry
+            .strip_prefix(path)
+            .is_some_and(|rest| rest.starts_with('/'))
 }

@@ -211,9 +211,7 @@ impl Composition {
                     .targets
                     .get(&entry.partition)
                     .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?;
-                Ok(target
-                    .store(context.images)
-                    .sha256(&target.file(&entry.path)?)?)
+                target.sha256(&entry.path, context.images)
             }
             _ => Ok(android::hash::Sha256Digest::bytes(
                 &self.content(entry, context)?,

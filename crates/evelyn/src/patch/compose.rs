@@ -249,7 +249,7 @@ impl Composition {
             self.target(&to.partition)?
                 .copy_within(&entry.path, &to.path, placing)
         } else {
-            let source = self
+            let mut source = self
                 .targets
                 .remove(&entry.partition)
                 .ok_or_else(|| Error::UnknownPartition(entry.partition.clone()))?;
