@@ -1,0 +1,18 @@
+[book]
+title = "Evelyn Guide"
+description = "Porting Android ROMs to devices with Evelyn"
+authors = ["Inam Ul Haq"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "build"
+
+[output.html]
+git-repository-url = "https://github.com/cyberphantom52/evelyn-rs"
+edit-url-template = "https://github.com/cyberphantom52/evelyn-rs/edit/main/book/{path}"
+site-url = "/evelyn-rs/"
+additional-css = ["theme/listing.css", "theme/diagram.css"]
+
+[output.html.search]
+enable = true

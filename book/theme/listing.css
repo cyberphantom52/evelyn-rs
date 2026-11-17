@@ -1,0 +1,23 @@
+/* A listing's file name, joined to the top of the code block after it. */
+p:has(> .filename:only-child) {
+    margin-bottom: 0;
+}
+
+.filename {
+    display: block;
+    padding: 0.4em 0.8em;
+    border-radius: 4px 4px 0 0;
+    background: var(--quote-bg);
+    color: var(--sidebar-fg);
+    font-family: var(--mono-font);
+    font-size: 0.85em;
+}
+
+p:has(> .filename:only-child) + pre {
+    margin-top: 0;
+}
+
+p:has(> .filename:only-child) + pre > code {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
