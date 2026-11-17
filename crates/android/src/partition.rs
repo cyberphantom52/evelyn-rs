@@ -94,6 +94,9 @@ impl Mounts {
 pub const VENDOR_SIDE: [&str; 5] = ["system_dlkm", "odm", "vendor", "vendor_dlkm", "odm_dlkm"];
 /// System-side partitions every port takes from the ROM, in `super` order.
 pub const STANDARD_SYSTEM: [&str; 3] = ["system", "system_ext", "product"];
+/// The boot images outside `super` whose ramdisk a build composes, from the
+/// stock firmware, when it has them: each mounted like a partition, at `/<name>`.
+pub const BOOT: [&str; 3] = ["boot", "init_boot", "vendor_boot"];
 
 /// The mount point a partition gets unless the port overrides it: `/<name>`, except
 /// `system`, which depends on the image (see `system_mount_point`).
