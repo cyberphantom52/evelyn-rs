@@ -9,6 +9,7 @@
 use crate::engine::{Error, IoAt};
 use android::ImageFormat;
 use android::hash::Sha256Digest;
+use android::partition::BOOT;
 use payload_dumper::{
     AsyncPayloadRead, DeltaArchiveManifest, ExtractionPaths, FileType, HttpReader,
     LocalAsyncPayloadReader, LocalAsyncZipPayloadReader, NoOpDownloadReporter, NoOpReporter,
@@ -54,6 +55,8 @@ impl std::fmt::Display for Given {
 pub(crate) struct OpenFirmware {
     /// Every filesystem partition it has, with its image once there.
     images: BTreeMap<String, Option<PathBuf>>,
+    /// The boot images it has whose ramdisks a build composes, likewise.
+    boot: BTreeMap<String, Option<PathBuf>>,
     /// Where a directory of images keeps those a flashable ZIP flashes.
     firmware_dir: Option<PathBuf>,
     ota: Option<Ota>,
@@ -96,14 +99,33 @@ impl OpenFirmware {
                 Some(ota) => Given::Path(ota),
                 None => {
                     let mut images = BTreeMap::new();
+                    let mut boot = BTreeMap::new();
+                    // A boot image may be beside the filesystems, or among the
+                    // images a flashable ZIP flashes.
+                    let firmware_dir = path.join("firmware");
+                    for (name, image) in image_files(&firmware_dir)? {
+                        if BOOT.contains(&name.as_str())
+                            && ImageFormat::detect(&image)? == ImageFormat::Boot
+                        {
+                            boot.insert(name, Some(image));
+                        }
+                    }
                     for (name, image) in image_files(path)? {
-                        if ImageFormat::detect(&image)? != ImageFormat::Unknown {
-                            images.insert(name, Some(image));
+                        match ImageFormat::detect(&image)? {
+                            ImageFormat::Unknown => {}
+                            ImageFormat::Boot if BOOT.contains(&name.as_str()) => {
+                                boot.insert(name, Some(image));
+                            }
+                            ImageFormat::Boot => {}
+                            _ => {
+                                images.insert(name, Some(image));
+                            }
                         }
                     }
                     return Ok(Self {
                         images,
-                        firmware_dir: Some(path.join("firmware")),
+                        boot,
+                        firmware_dir: Some(firmware_dir),
                         ota: None,
                     });
                 }
@@ -143,11 +165,17 @@ impl OpenFirmware {
                         .collect()
                 });
         let mut images = BTreeMap::new();
+        let mut boot = BTreeMap::new();
         let mut other = Vec::new();
         for partition in &manifest.partitions {
             let name = &partition.partition_name;
             match &dynamic {
-                Some(dynamic) if !dynamic.contains(name) => other.push(name.clone()),
+                Some(dynamic) if !dynamic.contains(name) => {
+                    if BOOT.contains(&name.as_str()) {
+                        boot.insert(name.clone(), None);
+                    }
+                    other.push(name.clone());
+                }
                 _ => {
                     images.insert(name.clone(), None);
                 }
@@ -155,6 +183,7 @@ impl OpenFirmware {
         }
         let mut firmware = Self {
             images,
+            boot,
             firmware_dir: None,
             ota: Some(Ota {
                 given,
@@ -173,8 +202,17 @@ impl OpenFirmware {
             firmware.extract(&all)?;
             for name in all {
                 let image = firmware.images[&name].clone().expect("extracted");
-                if ImageFormat::detect(&image)? == ImageFormat::Unknown {
-                    firmware.images.remove(&name);
+                match ImageFormat::detect(&image)? {
+                    ImageFormat::Unknown => {
+                        firmware.images.remove(&name);
+                    }
+                    ImageFormat::Boot => {
+                        firmware.images.remove(&name);
+                        if BOOT.contains(&name.as_str()) {
+                            firmware.boot.insert(name, Some(image));
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -186,9 +224,15 @@ impl OpenFirmware {
         self.images.keys()
     }
 
-    /// The image of `name`, once [`OpenFirmware::extract`] has it there.
+    /// The boot images whose ramdisks a build composes, of those it has.
+    pub(crate) fn boot_names(&self) -> impl Iterator<Item = &String> {
+        self.boot.keys()
+    }
+
+    /// The image of `name`, a filesystem or a boot image, once
+    /// [`OpenFirmware::extract`] has it there.
     pub(crate) fn image(&self, name: &str) -> Option<&Path> {
-        self.images.get(name)?.as_deref()
+        self.images.get(name).or(self.boot.get(name))?.as_deref()
     }
 
     /// Have the images of `names` there, extracting those of a package that are
@@ -199,11 +243,19 @@ impl OpenFirmware {
         };
         let wanted: Vec<&str> = names
             .iter()
-            .filter(|name| matches!(self.images.get(*name), Some(None)))
+            .filter(|name| {
+                matches!(self.images.get(*name), Some(None))
+                    || matches!(self.boot.get(*name), Some(None))
+            })
             .map(|name| name.as_str())
             .collect();
         for (name, image) in ota.dump(&wanted, &ota.scratch)? {
-            self.images.insert(name, Some(image));
+            match self.boot.get_mut(&name) {
+                Some(boot) => *boot = Some(image),
+                None => {
+                    self.images.insert(name, Some(image));
+                }
+            }
         }
         Ok(())
     }

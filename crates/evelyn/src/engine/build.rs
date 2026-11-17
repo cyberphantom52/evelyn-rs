@@ -8,7 +8,7 @@
 //! Work directory layout:
 //!   firmware/{rom,stock}/               partitions extracted from an OTA package
 //!   targets/<partition>/                the blobs edits wrote
-//!   images/<partition>.img              built filesystem images
+//!   images/<partition>.img              built filesystem and boot images
 
 use crate::Firmware;
 use crate::SourceRef;
@@ -19,7 +19,7 @@ use crate::recipe::Recipe;
 use crate::toolchain::Tools;
 use android::Filesystem;
 use android::lp::SuperImage;
-use android::partition::{Mounts, STANDARD_SYSTEM, VENDOR_SIDE};
+use android::partition::{BOOT, Mounts, STANDARD_SYSTEM, VENDOR_SIDE};
 use android::{Image, PartitionTree};
 use serde::Serialize;
 use std::{
@@ -148,6 +148,11 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
 
     let (mut partitions, ignored) = rom_partitions(&profile, &rom)?;
     partitions.extend(device_partitions(&profile, &mut stock)?);
+    let mut opened = BTreeMap::new();
+    for (partition, image) in boot_partitions(&profile, &mut stock)? {
+        opened.insert(partition.name.clone(), image);
+        partitions.push(partition);
+    }
     let mounts = Mounts::new(
         partitions
             .iter()
@@ -172,6 +177,8 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
 
     let mut images = crate::patch::Images::new();
     let mut sources = crate::patch::Sources::new();
+    // Each stock boot image's place among the images.
+    let mut boot_images = BTreeMap::new();
     for source in read {
         let firmware = match source.source {
             Firmware::Rom => &rom,
@@ -181,7 +188,13 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
         let Some(path) = firmware.image(&source.partition) else {
             continue;
         };
-        let image = Image::detect(path).map_err(|_| Error::SourceFilesystem(source.clone()))?;
+        let image = match source.source {
+            Firmware::Stock if let Some(image) = opened.remove(&source.partition) => {
+                boot_images.insert(source.partition.clone(), images.len());
+                image
+            }
+            _ => Image::detect(path).map_err(|_| Error::SourceFilesystem(source.clone()))?,
+        };
         tracing::info!(%source, "scanning source image");
         sources.insert(source, android::scan(&image, images.len())?);
         images.push(image);
@@ -220,11 +233,20 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
         &profile,
         output,
     )?;
+    let boot = boot_images_of(
+        build.work_dir,
+        &partitions,
+        &targets,
+        &sources,
+        &images,
+        &boot_images,
+    )?;
     let output_dir = build
         .output_dir
         .map(Path::to_path_buf)
         .unwrap_or_else(|| build.root.join("out").join(&profile.name));
-    built.outputs = crate::engine::output::publish(&output_dir, &profile, output, &stock, written)?;
+    built.outputs =
+        crate::engine::output::publish(&output_dir, &profile, output, &stock, written, boot)?;
     Ok(built)
 }
 
@@ -270,6 +292,37 @@ fn device_partitions(profile: &Profile, stock: &mut OpenFirmware) -> Result<Vec<
         let image = stock.image(name).expect("extracted");
         check_fingerprint(name, image, &profile.device.fingerprint)?;
         partitions.push(partition(profile, name, Firmware::Stock, stock)?);
+    }
+    Ok(partitions)
+}
+
+/// The stock firmware's boot images whose ramdisk can be composed, in `BOOT`
+/// order, each opened. One that cannot, such as an image without a ramdisk or
+/// with several, is left as it is.
+fn boot_partitions(
+    profile: &Profile,
+    stock: &mut OpenFirmware,
+) -> Result<Vec<(Partition, Image)>, Error> {
+    let names: Vec<String> = BOOT
+        .iter()
+        .filter(|name| stock.boot_names().any(|have| have == *name))
+        .map(|name| name.to_string())
+        .collect();
+    stock.extract(&names)?;
+    let mut partitions = Vec::new();
+    for name in &names {
+        let path = stock.image(name).expect("extracted");
+        match Image::detect(path) {
+            Ok(image) => {
+                let mut partition = partition(profile, name, Firmware::Stock, stock)?;
+                partition.filesystem = Some(Filesystem::Ramdisk);
+                partitions.push((partition, image));
+            }
+            Err(error) => {
+                let error = &error as &dyn std::error::Error;
+                tracing::warn!(partition = %name, error, "leaving the boot image as it is");
+            }
+        }
     }
     Ok(partitions)
 }
@@ -445,6 +498,17 @@ fn compose(
     Ok((targets, skipped))
 }
 
+/// Whether a recipe left `tree` as its source `base` was scanned.
+fn unchanged(base: &PartitionTree, tree: &PartitionTree) -> bool {
+    base.root == tree.root
+        && base.entries.len() == tree.entries.len()
+        && base
+            .entries
+            .iter()
+            .zip(&tree.entries)
+            .all(|((a, x), (b, y))| a == b && x.kind == y.kind && x.metadata == y.metadata)
+}
+
 /// Where a partition is built.
 enum To<'a> {
     Region(android::Region),
@@ -458,8 +522,43 @@ pub(crate) enum Written {
     Super(PathBuf),
 }
 
-/// Build every partition into `images/` in the work directory: each into its own
-/// image, or straight into its place in `super`.
+/// Build each boot image whose ramdisk a recipe changed into `images/` in the
+/// work directory, from its stock image (`boot_images` has where each is among
+/// `images`): each by name. One left as it was is not built.
+fn boot_images_of(
+    work_dir: &Path,
+    partitions: &[Partition],
+    targets: &Targets,
+    sources: &crate::patch::Sources,
+    images: &crate::patch::Images,
+    boot_images: &BTreeMap<String, usize>,
+) -> Result<Vec<(String, PathBuf)>, Error> {
+    let dir = work_dir.join("images");
+    let mut written = Vec::new();
+    for partition in partitions
+        .iter()
+        .filter(|partition| targets[&partition.name].1.filesystem == Filesystem::Ramdisk)
+    {
+        let (root, tree) = &targets[&partition.name];
+        let base = &sources[&SourceRef {
+            source: partition.from,
+            partition: partition.name.clone(),
+        }];
+        if unchanged(base, tree) {
+            continue;
+        }
+        tracing::info!(partition = %partition.name, "building boot image");
+        let store = android::Store::new(images, root);
+        let source = &images[boot_images[&partition.name]];
+        let image = dir.join(format!("{}.img", partition.name));
+        android::build::boot_image(tree, &store, source, &image, &partition.name)?;
+        written.push((partition.name.clone(), image));
+    }
+    Ok(written)
+}
+
+/// Build every partition but the boot images into `images/` in the work
+/// directory: each into its own image, or straight into its place in `super`.
 fn images_of(
     work_dir: &Path,
     partitions: &[Partition],
@@ -470,6 +569,9 @@ fn images_of(
 ) -> Result<Written, Error> {
     let dir = work_dir.join("images");
     reset(&dir)?;
+    let partitions = partitions
+        .iter()
+        .filter(|partition| targets[&partition.name].1.filesystem != Filesystem::Ramdisk);
     let build = |partition: &Partition, to: To| {
         let (root, tree) = &targets[&partition.name];
         tracing::info!(partition = %partition.name, filesystem = ?tree.filesystem, "building image");
@@ -484,7 +586,7 @@ fn images_of(
             }
         })
     };
-    Ok(match output {
+    let written = match output {
         Output::Partitions => {
             let mut written = Vec::new();
             for partition in partitions {
@@ -509,5 +611,6 @@ fn images_of(
             image.finish()?;
             Written::Super(path)
         }
-    })
+    };
+    Ok(written)
 }

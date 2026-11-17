@@ -401,8 +401,27 @@ impl Target {
         mounts: &android::partition::Mounts,
         defaults: Option<&crate::patch::defaults::Defaults>,
     ) -> Result<PartitionTree, Error> {
+        let ramdisk = self.tree.filesystem == Filesystem::Ramdisk;
         self.tree.map(|path, kind, metadata| match metadata {
             EntryMetadata::Set(metadata) => Ok(metadata),
+            // A ramdisk's entries have no SELinux labels, and get mkbootfs's
+            // defaults.
+            EntryMetadata::Default(overrides) if ramdisk => {
+                let mut metadata = AndroidMetadata {
+                    uid: 0,
+                    gid: 0,
+                    mode: match kind {
+                        EntryKind::Directory => 0o755,
+                        EntryKind::Symlink { .. } => 0o777,
+                        _ => 0o644,
+                    },
+                    xattrs: BTreeMap::new(),
+                };
+                for overrides in &overrides {
+                    set(&mut metadata, overrides);
+                }
+                Ok(metadata)
+            }
             EntryMetadata::Default(overrides) => {
                 let at = android::partition::PartitionPath {
                     partition: partition.to_owned(),
@@ -421,12 +440,14 @@ impl Target {
         })
     }
 
-    /// Whether an entry waits for Android's defaults.
+    /// Whether an entry waits for Android's defaults, which a ramdisk's do not.
     pub(crate) fn waits_for_defaults(&self) -> bool {
-        self.tree
-            .entries
-            .values()
-            .any(|entry| matches!(entry.metadata, EntryMetadata::Default(_)))
+        self.tree.filesystem != Filesystem::Ramdisk
+            && self
+                .tree
+                .entries
+                .values()
+                .any(|entry| matches!(entry.metadata, EntryMetadata::Default(_)))
     }
 
     /// Clear `path` for a new entry: an entry there is removed only to `overwrite`
