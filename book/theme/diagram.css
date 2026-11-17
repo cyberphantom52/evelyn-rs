@@ -1,0 +1,53 @@
+/* Diagrams drawn as inline SVG, coloured from the current theme. */
+.diagram {
+    margin: 1.5em 0;
+    text-align: center;
+}
+
+.diagram svg {
+    max-width: 100%;
+    height: auto;
+}
+
+.diagram .box {
+    fill: var(--quote-bg);
+    stroke: var(--quote-border);
+    stroke-width: 1.5;
+}
+
+.diagram .box.accent {
+    stroke: var(--links);
+}
+
+.diagram .title {
+    fill: var(--fg);
+    font-family: "Open Sans", sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    text-anchor: middle;
+}
+
+.diagram .detail {
+    fill: var(--sidebar-fg);
+    font-family: var(--mono-font);
+    font-size: 12.5px;
+    text-anchor: middle;
+}
+
+.diagram .line {
+    fill: none;
+    stroke: var(--fg);
+    stroke-width: 1.5;
+    opacity: 0.6;
+}
+
+.diagram .head {
+    fill: var(--fg);
+    opacity: 0.6;
+}
+
+.diagram figcaption {
+    margin-top: 0.5em;
+    font-size: 0.9em;
+    font-style: italic;
+}
