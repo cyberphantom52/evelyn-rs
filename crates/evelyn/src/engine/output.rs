@@ -38,7 +38,7 @@ pub(crate) fn publish(
             let partial = output_dir.join("evelyn.zip.partial");
             crate::engine::flashable::write(
                 &crate::engine::flashable::Contents {
-                    device: &profile.device.product_ids[0],
+                    device: &profile.device.product_id,
                     super_image: &super_image,
                     firmware: &stock.firmware_images()?,
                 },

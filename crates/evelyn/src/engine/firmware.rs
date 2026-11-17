@@ -186,10 +186,6 @@ impl OpenFirmware {
         self.images.keys()
     }
 
-    pub(crate) fn has(&self, name: &str) -> bool {
-        self.images.keys().any(|key| key.as_str() == name)
-    }
-
     /// The image of `name`, once [`OpenFirmware::extract`] has it there.
     pub(crate) fn image(&self, name: &str) -> Option<&Path> {
         self.images.get(name)?.as_deref()

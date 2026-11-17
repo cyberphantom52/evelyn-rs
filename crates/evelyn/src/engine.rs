@@ -70,8 +70,6 @@ pub enum Error {
     },
     #[error("ZIP output flashes the stock firmware's images from {0}, which does not exist")]
     MissingFirmware(PathBuf),
-    #[error("the stock firmware has no {0}.img, which evelyn.toml sets")]
-    MissingStockPartition(String),
     #[error(
         "stock {partition} is not the build evelyn.toml pins: expected {expected}, found {found}"
     )]
@@ -81,10 +79,10 @@ pub enum Error {
         found: String,
     },
     #[error(
-        "the system image has neither system/build.prop nor build.prop; set its mount_point in port.toml"
+        "the system image has neither system/build.prop nor build.prop; set mount_points.system in evelyn.toml"
     )]
     SystemLayout,
-    #[error("super and ZIP output need a [device.super] section in evelyn.toml")]
+    #[error("super and ZIP output need a [super] section in evelyn.toml")]
     MissingLayout,
     #[error("cannot start the threads that extract the OTA package")]
     Runtime(#[source] std::io::Error),

@@ -15,19 +15,58 @@ This repository is the tool. What it ports lives in device repositories.
 A device repository ports one ROM to one device:
 
 ```
-evelyn.toml            the ROM, and the device: product IDs, the stock build it is pinned to, its super layout
-ports/<name>/port.toml one ROM version: the ROM builds it is for, what it takes from the ROM, and the patches it applies
+evelyn.toml               the device: product ID, the stock build it is pinned to, how partitions are built, its super layout
+ports/<name>.toml         one ROM version: the ROM builds it is for, what it takes from the ROM, and the patches it applies
 patches/<name>/patch.ron  one patch, named for what it changes, with its assets beside it
-kits/*.ron             the repository's own kits: operations its patches share
-firmware/stock/        the device's stock firmware: a full OTA package or <partition>.img images
-firmware/rom/          the ROM being ported, likewise
-out/<port>/            what a build writes
-.evelyn/               each build's working space
+kits/*.ron                the repository's own kits: operations its patches share
+firmware/stock/           the device's stock firmware: a full OTA package or <partition>.img images
+firmware/rom/             the ROM being ported, likewise
+out/<port>/               what a build writes
+.evelyn/                  each build's working space
 ```
 
-A build takes the port the ROM matches: each port says which builds it is for
-as globs over properties the ROM sets, such as `"ro.build.version.release" = "17"`
-under `[rom]`. Porting a new OTA is replacing what `firmware/rom` holds.
+`evelyn.toml` describes the device, whichever ROM version is built:
+
+```toml
+# The ro.product.device value the installer accepts.
+product_id = "Pong"
+# Each device partition's ro.<partition>.build.fingerprint must equal this.
+fingerprint = "Nothing/aospa_phone2/phone2:17/CQ2A.260827.001-CP2A.260605.016/eng.nobody:user/release-keys"
+# Where a partition's filesystem or mount point is not the default (the source
+# image's, and /<name>), by name or glob; the most specific wins.
+[filesystems]
+system = "ext4"
+
+[mount_points]
+my_product = "/my_product"
+
+# The super partition, for super and ZIP output.
+[super]
+size = 7516192768
+metadata_size = 65536
+slots = "virtual_ab"
+group = "qti_dynamic_partitions"
+```
+
+A port, `ports/<name>.toml`, is one ROM version:
+
+```toml
+# The ROM partitions it takes beyond the standard system side, by name or glob.
+partitions = ["my_*"]
+
+# The patches it applies, in order.
+patches = [
+    "debloat",
+    "camera",
+]
+
+# The ROM builds it is for: properties the ROM sets, as globs.
+[rom]
+"ro.build.version.release" = "17"
+```
+
+A build takes the port the ROM matches, and porting a new OTA is replacing what
+`firmware/rom` holds. A ZIP is named for its SHA-256.
 
 A build reads `firmware/rom` and `firmware/stock` as they are: images in place,
 or an OTA package, of which it extracts only the partitions it reads, for that
@@ -187,10 +226,10 @@ checks what is there and reports what is missing; `evelyn init` runs it too.
 ```sh
 cargo build --release
 
-# A device repository: fill in the stock fingerprint and product IDs in
-# evelyn.toml, add ports/<name>/port.toml and patches/, and put the firmware in
+# A device repository: fill in the product ID and stock fingerprint in
+# evelyn.toml, add ports/<name>.toml and patches/, and put the firmware in
 # firmware/stock and firmware/rom.
-evelyn init pong-oxygenos --device pong --rom OxygenOS
+evelyn init pong-oxygenos
 
 # Inside the repository: a super image, or partition images for a device without
 # a super layout, in out/<port>.
