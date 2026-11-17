@@ -29,6 +29,9 @@ pub fn image(
             let label = if mount_point == "/" { "/" } else { partition };
             ext4::write(store, tree, region, label, uuid, EPOCH)
         }
+        Filesystem::Ramdisk => Err(Error::Unsupported(
+            "a ramdisk is built into its boot image, not on its own".into(),
+        )),
     }
     .map_err(|source| Error::Build {
         partition: partition.to_owned(),
