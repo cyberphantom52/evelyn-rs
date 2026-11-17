@@ -6,6 +6,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+bootimg.workspace = true
 regex.workspace = true
 serde.workspace = true
 sha2.workspace = true

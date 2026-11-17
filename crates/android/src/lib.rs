@@ -18,6 +18,7 @@ pub mod metadata;
 pub mod partition;
 pub mod path;
 pub mod property;
+mod ramdisk;
 mod region;
 mod scan;
 pub mod sepolicy;
@@ -110,4 +111,6 @@ pub enum Error {
     Super(String),
     #[error("EROFS filesystem")]
     Erofs(#[from] fs_erofs::Error),
+    #[error("boot image")]
+    Boot(#[from] bootimg::Error),
 }
