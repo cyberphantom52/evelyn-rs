@@ -23,12 +23,6 @@ enum Command {
     Init {
         /// The repository's directory [default: the current directory].
         dir: Option<PathBuf>,
-        /// The device, as the repository names it.
-        #[arg(long)]
-        device: String,
-        /// The ROM it ports to the device.
-        #[arg(long)]
-        rom: String,
     },
     /// Build the device repository the current directory is in into partition
     /// images, a super image, or a recovery-flashable ZIP.
@@ -172,9 +166,8 @@ fn print(value: &impl Serialize) -> Result<(), Error> {
 
 fn run(cli: Cli) -> Result<(), Error> {
     match cli.command {
-        Command::Init { dir, device, rom } => {
-            let repository =
-                evelyn::engine::init(&dir.unwrap_or_else(|| PathBuf::from(".")), &device, &rom)?;
+        Command::Init { dir } => {
+            let repository = evelyn::engine::init(&dir.unwrap_or_else(|| PathBuf::from(".")))?;
             let checked = check(&evelyn::toolchain::Tools::user()?)?;
             print(&serde_json::json!({ "repository": repository, "checked": checked }))
         }

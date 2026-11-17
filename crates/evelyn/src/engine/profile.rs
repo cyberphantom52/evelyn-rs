@@ -1,19 +1,20 @@
 //! Device repositories and their ports.
 //!
 //! A device repository ports one ROM to one device. `evelyn.toml` at its root
-//! names the ROM and describes the device: its product IDs, the stock build its
-//! partitions are pinned to and its `super` layout. Each port, one ROM version,
-//! is a directory under `ports/` whose `port.toml` says which ROM builds it is
-//! for, what it takes from the ROM and, in the order they apply, the patches it
-//! applies; a build takes the port the ROM it is given matches. A patch is a
-//! directory directly under `patches/`, named for what it changes, holding
-//! `patch.ron` and its assets; nothing applies unless a port lists it. Neither
-//! file names a firmware build: the firmware is supplied when building.
+//! describes the device: the product ID the installer accepts, the stock build
+//! its partitions are pinned to, how partitions are built where the defaults are
+//! wrong, and its `super` layout.
+//! Each port, one ROM version, is `ports/<name>.toml`, which says which ROM builds
+//! it is for, the ROM partitions it takes beyond the standard system side and, in
+//! the order they apply, the patches it applies; a build takes the port the ROM it
+//! is given matches. A patch is a directory directly under `patches/`, named for
+//! what it changes, holding `patch.ron` and its assets; nothing applies unless a
+//! port lists it. Neither file names a firmware build: the firmware is supplied
+//! when building.
 //!
-//! Partitions follow the Treble split. The device's own partitions (the vendor side
-//! the stock firmware supplies) always come from it, pinned by build fingerprint;
-//! the standard system side always comes from the ROM, and any other ROM partition
-//! only when `port.toml` lists it (by name or glob).
+//! Partitions follow the Treble split. The device's own partitions (the vendor side)
+//! always come from the stock firmware, pinned by build fingerprint; the standard system side always comes from the ROM, and any other
+//! ROM partition only when the port lists it (by name or glob).
 
 use android::Filesystem;
 use android::lp::SuperLayout;
@@ -29,8 +30,8 @@ use thiserror::Error;
 
 /// The repository's manifest, at its root.
 const MANIFEST: &str = "evelyn.toml";
-/// A port's settings, in its directory.
-const PORT: &str = "port.toml";
+/// Where the ports are, each `<name>.toml`.
+const PORTS: &str = "ports";
 /// A patch's recipe, in its directory.
 pub(crate) const PATCH: &str = "patch.ron";
 /// What a repository keeps out of git: the work directory, the firmware and
@@ -57,18 +58,13 @@ pub enum Error {
         #[source]
         source: toml::de::Error,
     },
-    #[error("{MANIFEST} sets no device.product_ids", MANIFEST = MANIFEST)]
-    NoProductIds,
-    #[error("{MANIFEST} sets no device.stock.fingerprint", MANIFEST = MANIFEST)]
+    #[error("{MANIFEST} sets no product_id", MANIFEST = MANIFEST)]
+    NoProductId,
+    #[error("{MANIFEST} sets no fingerprint", MANIFEST = MANIFEST)]
     NoFingerprint,
-    #[error("device partition {0} is system side, which comes from the ROM")]
-    SystemSidePartition(String),
-    #[error("partition {0} mount point must be absolute")]
+    #[error("mount point for {0} must be absolute")]
     RelativeMountPoint(String),
-    #[error(
-        "port partition {pattern} matches {vendor}, which comes from the stock firmware; set it in {MANIFEST}",
-        MANIFEST = MANIFEST
-    )]
+    #[error("port partition {pattern} matches {vendor}, which comes from the stock firmware")]
     VendorSidePartition { pattern: String, vendor: String },
     #[error("patch {0:?} is not a directory name: a patch is patches/<name>")]
     NestedPatch(String),
@@ -76,8 +72,9 @@ pub enum Error {
     DuplicatePatch(String),
     #[error("patch {0} has no patches/{0}/{PATCH}", PATCH = PATCH)]
     MissingPatch(String),
-    #[error("partition {partition} matches {a} and {b} equally, with different settings")]
+    #[error("partition {partition} matches {a} and {b} in {table} equally, with different values")]
     AmbiguousSettings {
+        table: &'static str,
         partition: String,
         a: String,
         b: String,
@@ -88,35 +85,23 @@ pub enum Error {
     NotInRepository(PathBuf),
 }
 
-/// `evelyn.toml`: the ROM a repository ports and the device it ports it to.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Repository {
-    /// The ROM the repository ports, for whoever reads the manifest.
-    #[serde(rename = "rom")]
-    _rom: String,
-    device: Device,
-}
-
+/// `evelyn.toml`: the device a repository ports its ROM to.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Device {
-    /// `ro.product.device` values the installer accepts.
-    pub product_ids: Vec<String>,
-    /// The stock firmware build the device's partitions must come from.
-    pub stock: Stock,
-    /// Settings for the device's own partitions, where the defaults are wrong.
-    #[serde(default)]
-    pub partitions: BTreeMap<String, Settings>,
-    #[serde(rename = "super", default)]
-    pub super_layout: Option<SuperLayout>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Stock {
+    /// The `ro.product.device` value the installer accepts.
+    pub product_id: String,
     /// Each device partition's `ro.<partition>.build.fingerprint` must equal this.
     pub fingerprint: String,
+    /// Filesystems for partitions, device or ROM, where the source image's is
+    /// wrong. Keys are names or globs; the most specific wins.
+    #[serde(default)]
+    pub filesystems: BTreeMap<String, Filesystem>,
+    /// Mount points for partitions where the default is wrong, keyed the same way.
+    #[serde(default)]
+    pub mount_points: BTreeMap<String, String>,
+    #[serde(rename = "super", default)]
+    pub super_layout: Option<SuperLayout>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -126,10 +111,10 @@ pub(crate) struct Port {
     /// its glob matches. A port without any is for every build.
     #[serde(default)]
     pub rom: BTreeMap<String, String>,
-    /// ROM partitions beyond the standard system side, and settings for any
-    /// system-side partition. Keys are names or globs; the most specific wins.
+    /// The ROM partitions this port takes beyond the standard system side, by
+    /// name or glob.
     #[serde(default)]
-    pub partitions: BTreeMap<String, Settings>,
+    pub partitions: Vec<String>,
     /// The patches this port applies, in order: directories directly under
     /// `patches/`, by name.
     #[serde(default)]
@@ -147,8 +132,8 @@ impl Port {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// How a partition is built.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Settings {
     /// Default: the source image's filesystem.
     pub filesystem: Option<Filesystem>,
@@ -159,7 +144,7 @@ pub(crate) struct Settings {
 #[derive(Clone, Debug)]
 pub(crate) struct Profile {
     pub device: Device,
-    /// The port's name: its directory under `ports/`.
+    /// The port's name: its file name under `ports/`, without `.toml`.
     pub name: String,
     pub port: Port,
     /// The repository root, where `evelyn.toml` is.
@@ -169,10 +154,10 @@ pub(crate) struct Profile {
 impl Profile {
     /// Load the port `name` of the repository at `root`.
     pub(crate) fn load(root: &Path, name: &str) -> Result<Self, Error> {
-        let repository: Repository = toml_file(&root.join(MANIFEST))?;
-        let port: Port = toml_file(&root.join("ports").join(name).join(PORT))?;
+        let device: Device = toml_file(&root.join(MANIFEST))?;
+        let port: Port = toml_file(&root.join(PORTS).join(format!("{name}.toml")))?;
         let profile = Self {
-            device: repository.device,
+            device,
             name: name.to_owned(),
             port,
             root: root.to_path_buf(),
@@ -182,41 +167,22 @@ impl Profile {
     }
 
     fn validate(&self) -> Result<(), Error> {
-        if self.device.product_ids.is_empty() {
-            return Err(Error::NoProductIds);
+        if self.device.product_id.is_empty() {
+            return Err(Error::NoProductId);
         }
-        if self.device.stock.fingerprint.is_empty() {
+        if self.device.fingerprint.is_empty() {
             return Err(Error::NoFingerprint);
         }
-        if let Some(standard) = self
+        if let Some((pattern, _)) = self
             .device
-            .partitions
-            .keys()
-            .find(|name| STANDARD_SYSTEM.contains(&name.as_str()))
-        {
-            return Err(Error::SystemSidePartition(standard.clone()));
-        }
-        let settings = self
-            .device
-            .partitions
+            .mount_points
             .iter()
-            .map(|(name, settings)| (name.as_str(), settings));
-        for (pattern, settings) in settings.chain(
-            self.port
-                .partitions
-                .iter()
-                .map(|(pattern, settings)| (pattern.as_str(), settings)),
-        ) {
-            if settings
-                .mount_point
-                .as_ref()
-                .is_some_and(|mount| !mount.starts_with('/'))
-            {
-                return Err(Error::RelativeMountPoint(pattern.to_owned()));
-            }
+            .find(|(_, mount)| !mount.starts_with('/'))
+        {
+            return Err(Error::RelativeMountPoint(pattern.clone()));
         }
-        for pattern in self.port.partitions.keys() {
-            if let Some(vendor) = self.vendor_side().find(|vendor| glob(pattern, vendor)) {
+        for pattern in &self.port.partitions {
+            if let Some(vendor) = VENDOR_SIDE.into_iter().find(|vendor| glob(pattern, vendor)) {
                 return Err(Error::VendorSidePartition {
                     pattern: pattern.clone(),
                     vendor: vendor.to_owned(),
@@ -252,52 +218,13 @@ impl Profile {
         Path::new("patches").join(patch).join(PATCH)
     }
 
-    /// Settings for `partition` from its most specific entry: an exact name beats
-    /// any glob, and a glob with more literal characters beats one with fewer.
-    pub(crate) fn settings(&self, partition: &str) -> Result<Option<&Settings>, Error> {
-        if let Some((_, settings)) = self
-            .device
-            .partitions
-            .iter()
-            .find(|(name, _)| name.as_str() == partition)
-        {
-            return Ok(Some(settings));
-        }
-        if let Some(settings) = self.port.partitions.get(partition) {
-            return Ok(Some(settings));
-        }
-        let mut matches: Vec<_> = self
-            .port
-            .partitions
-            .iter()
-            .filter(|(pattern, _)| glob(pattern, partition))
-            .map(|(pattern, settings)| (literals(pattern), pattern, settings))
-            .collect();
-        matches.sort_by_key(|(literals, ..)| std::cmp::Reverse(*literals));
-        match matches.as_slice() {
-            [] => Ok(None),
-            [(first, a, settings), (second, b, other), ..]
-                if first == second && settings != other =>
-            {
-                Err(Error::AmbiguousSettings {
-                    partition: partition.to_owned(),
-                    a: a.to_string(),
-                    b: b.to_string(),
-                })
-            }
-            [(.., settings), ..] => Ok(Some(settings)),
-        }
-    }
-
-    /// Treble's vendor-side names and the device's own partitions.
-    fn vendor_side(&self) -> impl Iterator<Item = &str> {
-        VENDOR_SIDE
-            .into_iter()
-            .chain(self.device.partitions.keys().map(|name| name.as_str()))
-    }
-
-    pub(crate) fn is_vendor_side(&self, partition: &str) -> bool {
-        self.vendor_side().any(|vendor| vendor == partition)
+    /// How `partition` is built: each setting from its most specific entry.
+    pub(crate) fn settings(&self, partition: &str) -> Result<Settings, Error> {
+        Ok(Settings {
+            filesystem: most_specific(&self.device.filesystems, "filesystems", partition)?.copied(),
+            mount_point: most_specific(&self.device.mount_points, "mount_points", partition)?
+                .cloned(),
+        })
     }
 
     /// `super` order for the device's partitions: Treble's order, then by name.
@@ -314,12 +241,43 @@ impl Profile {
     /// A ROM partition this port builds into `super`.
     pub(crate) fn takes_from_rom(&self, partition: &str) -> bool {
         STANDARD_SYSTEM.contains(&partition)
-            || (!self.is_vendor_side(partition)
+            || (!VENDOR_SIDE.contains(&partition)
                 && self
                     .port
                     .partitions
-                    .keys()
+                    .iter()
                     .any(|pattern| glob(pattern, partition)))
+    }
+}
+
+/// The value `table` sets for `partition` from its most specific entry: an exact
+/// name beats any glob, and a glob with more literal characters beats one with
+/// fewer.
+fn most_specific<'a, T: PartialEq>(
+    table: &'a BTreeMap<String, T>,
+    name: &'static str,
+    partition: &str,
+) -> Result<Option<&'a T>, Error> {
+    if let Some(value) = table.get(partition) {
+        return Ok(Some(value));
+    }
+    let mut matches: Vec<_> = table
+        .iter()
+        .filter(|(pattern, _)| glob(pattern, partition))
+        .map(|(pattern, value)| (literals(pattern), pattern, value))
+        .collect();
+    matches.sort_by_key(|(literals, ..)| std::cmp::Reverse(*literals));
+    match matches.as_slice() {
+        [] => Ok(None),
+        [(first, a, value), (second, b, other), ..] if first == second && value != other => {
+            Err(Error::AmbiguousSettings {
+                table: name,
+                partition: partition.to_owned(),
+                a: a.to_string(),
+                b: b.to_string(),
+            })
+        }
+        [(.., value), ..] => Ok(Some(value)),
     }
 }
 
@@ -327,15 +285,15 @@ impl Profile {
 #[derive(Debug, Serialize)]
 pub struct Initialized {
     pub root: PathBuf,
-    /// The manifest, for the device's stock fingerprint, product IDs and
+    /// The manifest, for the device's stock fingerprint, product ID and
     /// `super` layout to be filled in.
     pub manifest: PathBuf,
 }
 
-/// Set up a device repository at `root` that ports `rom` to `device`: its
-/// manifest, the `ports/`, `patches/` and `firmware/` directories, and what git
-/// ignores. One already there is left alone.
-pub fn init(root: &Path, device: &str, rom: &str) -> Result<Initialized, Error> {
+/// Set up a device repository at `root`: its manifest, the `ports/`, `patches/`
+/// and `firmware/` directories, and what git ignores. One already there is left
+/// alone.
+pub fn init(root: &Path) -> Result<Initialized, Error> {
     let manifest = root.join(MANIFEST);
     if manifest.exists() {
         return Err(Error::AlreadyRepository(root.to_path_buf()));
@@ -344,49 +302,22 @@ pub fn init(root: &Path, device: &str, rom: &str) -> Result<Initialized, Error> 
         let path = path.to_path_buf();
         move |source| Error::Write { path, source }
     };
-    let dirs = ["ports", "patches", "firmware/stock", "firmware/rom"].map(|dir| root.join(dir));
+    let dirs = [PORTS, "patches", "firmware/stock", "firmware/rom"].map(|dir| root.join(dir));
     for dir in dirs {
         fs::create_dir_all(&dir).map_err(write(&dir))?;
     }
-    let text = format!(
-        r#"# {rom} ported to {device}.
-rom = "{rom}"
-
-[device]
-# The ro.product.device values the installer accepts.
-product_ids = []
-# Settings for the device's own partitions, where the defaults are wrong:
-# partitions.<name> = {{ filesystem = "ext4", mount_point = "/<name>" }}
-
-# The stock build the device's partitions come from: each device partition's
-# ro.<partition>.build.fingerprint must equal it.
-[device.stock]
+    let text = r#"# The ro.product.device value the installer accepts.
+product_id = ""
+# Each device partition's ro.<partition>.build.fingerprint must equal this.
 fingerprint = ""
 
 # The super partition, for super and ZIP output.
-# [device.super]
+# [super]
 # size = 0
 # metadata_size = 65536
 # slots = "virtual_ab"
 # group = ""
-
-# A port is ports/<name>/port.toml: the patches it applies, as directories
-# under patches/, each holding a {PATCH}; the ROM builds it is for,
-# as globs over properties the ROM sets; and any ROM partitions it takes beyond
-# the standard system side. A build takes the port the ROM matches.
-#
-# patches = ["<name>"]
-#
-# [rom]
-# "ro.build.version.release" = "17"
-#
-# [partitions]
-# "my_*" = {{}}
-#
-# The firmware a build reads: the stock firmware in firmware/stock and the ROM
-# in firmware/rom, each a directory of <partition>.img images or an OTA package.
-"#
-    );
+"#;
     fs::write(&manifest, text).map_err(write(&manifest))?;
     let ignore = root.join(".gitignore");
     let ignored = match fs::read_to_string(&ignore) {
@@ -434,7 +365,7 @@ pub fn find(start: &Path) -> Result<PathBuf, Error> {
 
 /// The ports of the repository at `root`, by name.
 pub(crate) fn ports(root: &Path) -> Result<BTreeMap<String, Port>, Error> {
-    let dir = root.join("ports");
+    let dir = root.join(PORTS);
     let entries = fs::read_dir(&dir).map_err(|source| Error::Read {
         path: dir.clone(),
         source,
@@ -447,14 +378,14 @@ pub(crate) fn ports(root: &Path) -> Result<BTreeMap<String, Port>, Error> {
                 source,
             })?
             .path();
-        if !path.join(PORT).is_file() {
+        if path.extension().is_none_or(|extension| extension != "toml") || !path.is_file() {
             continue;
         }
         let name = path
-            .file_name()
+            .file_stem()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        ports.insert(name, toml_file(&path.join(PORT))?);
+        ports.insert(name, toml_file(&path)?);
     }
     Ok(ports)
 }
@@ -472,4 +403,100 @@ fn toml_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, Error> {
 
 fn literals(pattern: &str) -> usize {
     pattern.chars().filter(|c| !matches!(c, '*' | '?')).count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DEVICE: &str = r#"
+        product_id = "Pong"
+        fingerprint = "Nothing/phone2/phone2:17/A/B:user/release-keys"
+
+        [filesystems]
+        system = "ext4"
+        "my_*" = "erofs"
+
+        [mount_points]
+        my_product = "/my_product"
+    "#;
+
+    fn profile(device: &str, port: &str) -> Result<Profile, Error> {
+        let profile = Profile {
+            device: toml::from_str(device).unwrap(),
+            name: "17".to_owned(),
+            port: toml::from_str(port).unwrap(),
+            root: PathBuf::new(),
+        };
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    #[test]
+    fn settings_come_from_the_manifest() {
+        let profile = profile(DEVICE, r#"partitions = ["my_*"]"#).unwrap();
+        assert_eq!(
+            profile.settings("system").unwrap(),
+            Settings {
+                filesystem: Some(Filesystem::Ext4),
+                mount_point: None
+            }
+        );
+        assert_eq!(
+            profile.settings("my_product").unwrap(),
+            Settings {
+                filesystem: Some(Filesystem::Erofs),
+                mount_point: Some("/my_product".to_owned())
+            }
+        );
+        assert_eq!(profile.settings("vendor").unwrap(), Settings::default());
+    }
+
+    #[test]
+    fn equally_specific_globs_must_agree() {
+        let device = DEVICE.replace(
+            r#""my_*" = "erofs""#,
+            r#""my_*" = "erofs"
+        "*uct" = "ext4""#,
+        );
+        let profile = profile(&device, "").unwrap();
+        assert!(matches!(
+            profile.settings("my_product"),
+            Err(Error::AmbiguousSettings {
+                table: "filesystems",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn ports_take_rom_partitions_only() {
+        let profile = profile(DEVICE, r#"partitions = ["my_*"]"#).unwrap();
+        assert!(profile.takes_from_rom("system_ext"));
+        assert!(profile.takes_from_rom("my_bigball"));
+        assert!(!profile.takes_from_rom("odm"));
+        assert!(matches!(
+            super::tests::profile(DEVICE, r#"partitions = ["o*"]"#),
+            Err(Error::VendorSidePartition { vendor, .. }) if vendor == "odm"
+        ));
+    }
+
+    #[test]
+    fn mount_points_are_absolute() {
+        let relative = DEVICE.replace(r#""/my_product""#, r#""my_product""#);
+        assert!(matches!(
+            profile(&relative, ""),
+            Err(Error::RelativeMountPoint(_))
+        ));
+    }
+
+    #[test]
+    fn the_old_manifest_is_refused() {
+        let old = r#"
+            rom = "OxygenOS"
+            [device]
+            name = "pong"
+        "#;
+        assert!(toml::from_str::<Device>(old).is_err());
+    }
 }

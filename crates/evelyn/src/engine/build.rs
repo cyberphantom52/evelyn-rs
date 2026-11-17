@@ -242,35 +242,25 @@ fn rom_partitions(
         }
     }
     for name in rom.names() {
-        if STANDARD_SYSTEM.contains(&name.as_str()) || profile.is_vendor_side(name.as_str()) {
+        if STANDARD_SYSTEM.contains(&name.as_str()) || VENDOR_SIDE.contains(&name.as_str()) {
             continue;
         }
         if profile.takes_from_rom(name.as_str()) {
             partitions.push(partition(profile, name, Firmware::Rom, rom)?);
         } else {
-            tracing::warn!(partition = %name, "the ROM's partition is not in port.toml; leaving it out");
+            tracing::warn!(partition = %name, "the port does not take the ROM's partition; leaving it out");
             ignored.push(name.clone());
         }
     }
     Ok((partitions, ignored))
 }
 
-/// The device's partitions: the vendor side the stock firmware has, and any other
-/// partition `evelyn.toml` sets, each extracted and checked to be the pinned build.
+/// The device's partitions: the vendor side the stock firmware has, each
+/// extracted and checked to be the pinned build.
 fn device_partitions(profile: &Profile, stock: &mut OpenFirmware) -> Result<Vec<Partition>, Error> {
-    if let Some(missing) = profile
-        .device
-        .partitions
-        .keys()
-        .find(|name| !stock.has(name.as_str()))
-    {
-        return Err(Error::MissingStockPartition(missing.clone()));
-    }
     let mut device: Vec<String> = stock
         .names()
-        .filter(|name| {
-            VENDOR_SIDE.contains(&name.as_str()) || profile.device.partitions.contains_key(*name)
-        })
+        .filter(|name| VENDOR_SIDE.contains(&name.as_str()))
         .cloned()
         .collect();
     device.sort_by_key(|name| Profile::device_order(name));
@@ -278,21 +268,22 @@ fn device_partitions(profile: &Profile, stock: &mut OpenFirmware) -> Result<Vec<
     let mut partitions = Vec::new();
     for name in &device {
         let image = stock.image(name).expect("extracted");
-        check_fingerprint(name, image, &profile.device.stock.fingerprint)?;
+        check_fingerprint(name, image, &profile.device.fingerprint)?;
         partitions.push(partition(profile, name, Firmware::Stock, stock)?);
     }
     Ok(partitions)
 }
 
-/// `name` from `firmware`, with the port's settings for it. Where `system` is
-/// mounted, unless the port says, is decided from its image, which is extracted.
+/// `name` from `firmware`, with the settings `evelyn.toml` has for it. Where
+/// `system` is mounted, unless `evelyn.toml` says, is decided from its image,
+/// which is extracted.
 fn partition(
     profile: &Profile,
     name: &str,
     from: Firmware,
     firmware: &OpenFirmware,
 ) -> Result<Partition, Error> {
-    let settings = profile.settings(name)?.cloned().unwrap_or_default();
+    let settings = profile.settings(name)?;
     let mount_point = match settings
         .mount_point
         .or_else(|| android::partition::default_mount_point(name))
