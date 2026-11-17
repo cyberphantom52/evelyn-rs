@@ -6,7 +6,9 @@ images, a `super.img`, or a recovery-flashable ZIP.
 
 Source images (EROFS or ext4, raw or sparse) are read in place, never
 extracted. Only the files a patch changes are written out; everything else
-streams straight from the source into the new image.
+streams straight from the source into the new image. The ramdisks of the stock
+`boot`, `init_boot` and `vendor_boot` images are patched the same way, through
+[bootimg](https://github.com/cyberphantom52/bootimg).
 
 This repository is the tool. What it ports lives in device repositories.
 
@@ -40,7 +42,7 @@ evelyn build
 ## Layout
 
 - `crates/`: the Rust workspace
-  - `android`: what is true of Android whatever ports it: EROFS and ext4 images (raw or sparse) read in place, scanned into partition trees and built back, alone or straight into a `super` image; partition paths, mount points and Treble sides; Android file metadata and its defaults; `.prop` files
+  - `android`: what is true of Android whatever ports it: EROFS and ext4 images (raw or sparse) read in place, scanned into partition trees and built back, alone or straight into a `super` image; boot images' ramdisks, scanned and built back into their images; partition paths, mount points and Treble sides; Android file metadata and its defaults; `.prop` files
   - `smali`: smali as a lossless tree, and edits of its methods and instructions
   - `evelyn`: the `evelyn` binary, and the library it is built on:
     - `recipe`: the recipe language and its kits
