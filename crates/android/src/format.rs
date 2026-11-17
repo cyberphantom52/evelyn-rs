@@ -14,6 +14,8 @@ pub enum ImageFormat {
     Erofs,
     Ext4,
     AndroidSparse,
+    /// A boot or vendor_boot image, whose ramdisk is read as a partition.
+    Boot,
     Unknown,
 }
 
@@ -24,6 +26,8 @@ impl ImageFormat {
         let magic = |at: usize, bytes: &[u8]| prefix.get(at..at + bytes.len()) == Some(bytes);
         if magic(0, &[0x3a, 0xff, 0x26, 0xed]) {
             Self::AndroidSparse
+        } else if magic(0, b"ANDROID!") || magic(0, b"VNDRBOOT") {
+            Self::Boot
         } else if magic(1024, &[0xe2, 0xe1, 0xf5, 0xe0]) {
             Self::Erofs
         } else if magic(1080, &[0x53, 0xef]) {
@@ -57,6 +61,8 @@ fn header(file: &mut File) -> io::Result<Vec<u8>> {
 pub enum Filesystem {
     Erofs,
     Ext4,
+    /// A boot image's cpio ramdisk.
+    Ramdisk,
 }
 
 impl fmt::Display for Filesystem {
@@ -64,6 +70,7 @@ impl fmt::Display for Filesystem {
         f.write_str(match self {
             Self::Erofs => "erofs",
             Self::Ext4 => "ext4",
+            Self::Ramdisk => "ramdisk",
         })
     }
 }
