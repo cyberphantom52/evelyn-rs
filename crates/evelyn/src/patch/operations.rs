@@ -843,7 +843,7 @@ impl Composition {
     }
 
     /// The content of the device's policy files other than `target`, which a
-    /// patched `target` must resolve with, in the order init compiles them.
+    /// patched `target` must compile with, in the order init compiles them.
     fn other_policies(
         &self,
         target: &str,

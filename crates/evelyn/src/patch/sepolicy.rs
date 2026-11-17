@@ -24,7 +24,7 @@ fn macros(context: &Context<'_>) -> Result<Vec<String>, crate::patch::Error> {
 }
 
 /// `bytes`, a CIL policy file, patched with the TE `policies` (the recipe's assets).
-/// It must resolve with `resolve_with`, the device's other policy files.
+/// It must compile with `resolve_with`, the device's other policy files.
 pub(crate) fn apply(
     bytes: &[u8],
     policies: &[RelativePath],
@@ -50,7 +50,7 @@ pub(crate) fn apply(
 
 /// `bytes`, a CIL policy file, patched with `rules`, TE taken from another
 /// policy, named `name` in errors. Taken rules have no macros, so they are not
-/// expanded: a type named like a macro stays a type. The result must resolve
+/// expanded: a type named like a macro stays a type. The result must compile
 /// with `resolve_with`, the device's other policy files.
 pub(crate) fn import(
     bytes: &[u8],
@@ -93,15 +93,15 @@ pub enum Error {
         #[source]
         source: Box<sepolicy::Error>,
     },
-    #[error("the patched SELinux policy does not resolve with the device's other policy files")]
-    Unresolved(#[source] Box<sepolicy::Error>),
+    #[error("the patched SELinux policy does not compile with the device's other policy files")]
+    Uncompiled(#[source] Box<sepolicy::Error>),
     #[error("cannot render the patched SELinux policy")]
     Render(#[source] Box<sepolicy::Error>),
 }
 
 /// `policy` with every TE policy in `patches` (name, parsed rules) added. The
-/// result must resolve when `resolve_with` is loaded before it, as the device
-/// loads its other policy files.
+/// result must compile, as init compiles it at boot, when `resolve_with` is
+/// loaded before it.
 fn patch(
     policy: &str,
     resolve_with: &[impl AsRef<str>],
@@ -122,8 +122,8 @@ fn patch(
         .map_err(at("resolve_with"))?;
     checked = merged(checked).map_err(at("the patched policy"))?;
     checked
-        .validate()
-        .map_err(|source| Error::Unresolved(Box::new(source)))?;
+        .compile()
+        .map_err(|source| Error::Uncompiled(Box::new(source)))?;
     Ok(merged(sepolicy::CilPolicy::new())
         .map_err(at("the patched policy"))?
         .to_cil()
@@ -148,7 +148,7 @@ mod tests {
     const VENDOR: &str = "(type vendor_t) (roletype object_r vendor_t)";
 
     #[test]
-    fn a_patch_that_resolves_is_added_to_the_policy_alone() {
+    fn a_patch_that_compiles_is_added_to_the_policy_alone() {
         let rules = "type hal_test_exec;\nallow vendor_t hal_test_exec:test_class test_perm;";
         let rules = expanded("test.te", rules, &[]).unwrap();
         let patched = patch(VENDOR, &[PLATFORM], &[("test.te".into(), rules)]).unwrap();
@@ -185,7 +185,7 @@ mod tests {
         assert!(
             matches!(
                 refused,
-                Err(crate::patch::Error::Sepolicy(Error::Unresolved(_)))
+                Err(crate::patch::Error::Sepolicy(Error::Uncompiled(_)))
             ),
             "{refused:?}"
         );

@@ -36,7 +36,7 @@ allow mydaemon vendor_data_file:file create_file_perms;
 - **`Policy(path, [ … ])`** patches one of the vendor's CIL files.
 - **`Add(asset)`** compiles the TE file and adds it. Several `Add`s in a row
   are added together, so one can use types another declares.
-- The result must resolve with the device's other policy files, as init loads
-  them. A rule that names an undeclared type fails the build.
+- The result must compile with the device's other policy files, as init
+  compiles them at boot. A rule that names an undeclared type fails the build.
 - **`Text` with `Append`** adds the file's label to `vendor_file_contexts`, so
   a relabel keeps it.

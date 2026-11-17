@@ -172,8 +172,8 @@ Policy("/vendor/etc/selinux/vendor_sepolicy.cil", [
 ```
 
 `Policy(path, [edits])` patches one of the vendor's CIL policy files. The
-result must resolve with the device's other policy files, as init loads them,
-or the build fails. The edits:
+result must compile with the device's other policy files, as init compiles
+them at boot, or the build fails. The edits:
 
 - **`Add(asset)`** adds a TE policy written with Android's policy macros, such
   as `allow`, `domain_auto_trans` and `hal_client_domain`. Policies added one
