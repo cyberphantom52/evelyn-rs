@@ -9,7 +9,8 @@
    port whose `[rom]` globs match them.
 3. **Resolve the partitions.** The vendor side comes from the stock firmware
    and is checked against `fingerprint` in `evelyn.toml`. The system side, and
-   anything the port lists, comes from the ROM.
+   anything the port lists, comes from the ROM. So do the ramdisks of the stock
+   [boot images](#boot-images).
 4. **Extract and scan.** Evelyn extracts each partition the build reads, if the
    firmware is a package. It then scans the partition into a tree whose files
    point back into the source image.
@@ -17,12 +18,13 @@
    1. the port's patches
    2. Evelyn's built-in recipes
    3. the debug recipe, with `--debug`
-6. **Check the fstab.** Evelyn reads the composed `vendor/etc/fstab.*`. The build
-   must supply every `logical` entry that is not `nofail`, in a filesystem that
-   entry accepts.
+6. **Check the fstab.** Evelyn reads the composed `vendor/etc/fstab.*`, and the
+   first-stage `fstab.*` in `vendor_boot`. The build must supply every
+   `logical` entry that is not `nofail`, in a filesystem that entry accepts.
 7. **Build the images.** Evelyn writes each partition back out as EROFS or ext4.
    Untouched files stream straight from the source image. Only edited files
-   come from disk.
+   come from disk. A boot image is built again only if a recipe changed its
+   ramdisk.
 8. **Publish.** Evelyn writes partition images, a `super` image, or a ZIP to
    `out/<port>/`.
 
@@ -39,6 +41,26 @@ new image is built. Edits write their results into the work directory:
 └── images/<partition>.img  built filesystem images
 ```
 
+## Boot images
+
+The ramdisks of the stock `boot`, `init_boot` and `vendor_boot` images are
+partitions too, mounted at `/<name>`. A recipe edits the first-stage fstab as
+`/vendor_boot/first_stage_ramdisk/fstab.qcom`. Evelyn finds the images beside
+the stock firmware's filesystems, in its `firmware/` directory, or in its OTA
+package.
+
+A boot image whose ramdisk a recipe changes is built again from the stock one,
+with the new ramdisk compressed as the old one was. Its AVB footer, and a GKI
+boot signature, are re-signed with the AOSP test key of the original key's
+size. A `vbmeta` image that holds the boot image's hash is left as it is, so
+flash it with verification disabled. A new file in a ramdisk gets owner and
+group `root`, and mode `0644`, or `0755` for a directory, unless the recipe sets
+other metadata. Ramdisk entries have no SELinux labels.
+
+A boot image is left as it is, with a warning, if Evelyn cannot read its
+ramdisk. This happens when the image has no ramdisk, has several (some
+`vendor_boot` images do), or holds device nodes.
+
 ## Partition settings
 
 Each built partition keeps its source image's filesystem and is mounted at
@@ -51,8 +73,8 @@ override them, for partitions from either firmware.
 
 | `--output`   | Writes                                                    | Default when                    |
 |--------------|-----------------------------------------------------------|---------------------------------|
-| `super`      | `super.img`, built to `[super]`                           | `evelyn.toml` has a super layout |
-| `partitions` | one `<partition>.img` per partition                       | it has none                     |
+| `super`      | `super.img`, built to `[super]`, and the changed boot images | `evelyn.toml` has a super layout |
+| `partitions` | one `<partition>.img` per partition and changed boot image | it has none                     |
 | `zip`        | a recovery-flashable ZIP, named `<sha256>.zip`            | never; ask for it               |
 
 The ZIP holds:
@@ -61,7 +83,8 @@ The ZIP holds:
 - the installer, which accepts only a device whose `ro.product.device` is
   `product_id`
 - the device firmware outside `super`: the stock OTA's other partitions, or the
-  images in `firmware/stock/firmware/`
+  images in `firmware/stock/firmware/`, with the changed boot images in place
+  of their stock ones
 
 > **Note:** ZIP output has not been flash-tested yet.
 
