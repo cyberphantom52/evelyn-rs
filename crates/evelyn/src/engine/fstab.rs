@@ -2,8 +2,8 @@
 //! filesystems each may use. A build must supply every `logical` entry that is not
 //! `nofail`, in a filesystem the entry accepts.
 //!
-//! Only the composed `vendor/etc/fstab.*` is read. The first-stage copy inside
-//! `vendor_boot` is patched outside Evelyn and normally matches it.
+//! Both copies are read: the composed `vendor/etc/fstab.*`, and the first-stage
+//! one in `vendor_boot`'s ramdisk, which mounts the dynamic partitions.
 
 use crate::engine::{Error, build::Targets};
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,18 +15,39 @@ struct Mount {
 }
 
 pub(crate) fn check(targets: &Targets, images: &crate::patch::Images) -> Result<(), Error> {
-    let Some((root, tree)) = targets
-        .iter()
-        .find(|(name, _)| name.as_str() == "vendor")
-        .map(|(_, target)| target)
-    else {
+    if !targets.contains_key("vendor") {
         tracing::warn!("no vendor partition; its fstab cannot be checked");
         return Ok(());
+    }
+    if !check_in(targets, images, "vendor", "etc/")? {
+        tracing::warn!("vendor has no etc/fstab.*; the partitions it mounts cannot be checked");
+    }
+    // A ramdisk without a first-stage fstab leaves the mounting to the vendor's.
+    check_in(targets, images, "vendor_boot", "first_stage_ramdisk/")?;
+    check_in(targets, images, "vendor_boot", "")?;
+    Ok(())
+}
+
+/// Check the `fstab.*` files in `directory` of `partition`, if the build has
+/// it; whether there were any.
+fn check_in(
+    targets: &Targets,
+    images: &crate::patch::Images,
+    partition: &str,
+    directory: &str,
+) -> Result<bool, Error> {
+    let Some((root, tree)) = targets.get(partition) else {
+        return Ok(false);
     };
     let store = android::Store::new(images, root);
     let mut checked = false;
     for path in tree.entries.keys() {
-        let Some(name) = path.as_ref().strip_prefix("etc/fstab.") else {
+        let Some(name) = path
+            .as_ref()
+            .strip_prefix(directory)
+            .and_then(|rest| rest.strip_prefix("fstab."))
+            .filter(|name| !name.contains('/'))
+        else {
             continue;
         };
         let Ok(file) = tree.file(path) else {
@@ -36,12 +57,13 @@ pub(crate) fn check(targets: &Targets, images: &crate::patch::Images) -> Result<
             continue;
         };
         checked = true;
-        check_one(&format!("fstab.{name}"), &text, targets)?;
+        check_one(
+            &format!("{partition}/{directory}fstab.{name}"),
+            &text,
+            targets,
+        )?;
     }
-    if !checked {
-        tracing::warn!("vendor has no etc/fstab.*; the partitions it mounts cannot be checked");
-    }
-    Ok(())
+    Ok(checked)
 }
 
 fn check_one(fstab: &str, text: &str, targets: &Targets) -> Result<(), Error> {
