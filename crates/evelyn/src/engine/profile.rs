@@ -101,7 +101,6 @@ struct Repository {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Device {
-    pub name: String,
     /// `ro.product.device` values the installer accepts.
     pub product_ids: Vec<String>,
     /// The stock firmware build the device's partitions must come from.
@@ -354,7 +353,6 @@ pub fn init(root: &Path, device: &str, rom: &str) -> Result<Initialized, Error> 
 rom = "{rom}"
 
 [device]
-name = "{device}"
 # The ro.product.device values the installer accepts.
 product_ids = []
 # Settings for the device's own partitions, where the defaults are wrong:
