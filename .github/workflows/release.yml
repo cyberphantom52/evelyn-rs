@@ -48,6 +48,6 @@ jobs:
           build-tool: cargo
           locked: true
           archive: $bin-$tag-$target
-          include: README.md
+          include: README.md,LICENSE
           checksum: sha256
           token: ${{ secrets.GITHUB_TOKEN }}

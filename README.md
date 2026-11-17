@@ -63,3 +63,8 @@ evelyn build
 ## Authors
 
 - [@Cyber-Phantom](https://github.com/Cyber-Phantom)
+
+## License
+
+Evelyn is free software under the [GNU General Public License](LICENSE),
+version 3 or (at your option) any later version.
