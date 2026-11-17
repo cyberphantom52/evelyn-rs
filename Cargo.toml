@@ -60,3 +60,8 @@ all = "warn"
 # the workspace crates keep theirs.
 [profile.dev.package."*"]
 debug = false
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
