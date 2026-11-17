@@ -86,7 +86,9 @@ PutChild(parent: "permissions", key: "feature[@name='x']", element: r#"<feature 
 
 - **Device paths** always start with `/`, and are written as the device sees
   them: `/vendor/etc/fstab.qcom`. Evelyn resolves each one to a partition by
-  mount point. On system-as-root devices, `system` is mounted at `/`.
+  mount point. On system-as-root devices, `system` is mounted at `/`. The stock
+  boot images' ramdisks are mounted at `/boot`, `/init_boot` and
+  `/vendor_boot`: `/vendor_boot/first_stage_ramdisk/fstab.qcom`.
 - **Globs** are allowed wherever an operation matches files.
 - **Asset paths** are relative to the patch's directory. This is also true when
   a [kit](./kits.md) operation names an asset: it is the calling patch's
