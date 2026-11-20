@@ -84,20 +84,19 @@ pub struct Composition {
     pub(crate) package: Option<PartitionPath>,
     /// What the step being applied left out of the policies it imported.
     pub(crate) held: Vec<Held>,
-    /// What steps left out of the policies they imported, with the step.
-    held_back: Vec<(Skipped, Held)>,
-    /// Every rule an import added, so one left out earlier is not reported.
-    pub(crate) imported: BTreeSet<String>,
 }
 
 /// The rules a step left out of its imports, and the names they need.
-type LeftOut<'a> = (BTreeSet<&'a str>, BTreeSet<&'a str>);
+type LeftOut = (BTreeSet<String>, BTreeSet<String>);
 
-/// A rule a policy `Import` left out, and a name it needs that nothing defines.
+/// A rule a policy `Import` left out of the policy file `file`, and the names
+/// it needs that nothing defined then, until its step is done and the file
+/// holds it.
 #[derive(Clone, Debug)]
 pub(crate) struct Held {
+    pub(crate) file: Located,
     pub(crate) rule: String,
-    pub(crate) needs: String,
+    pub(crate) needs: BTreeSet<String>,
 }
 
 /// The values the strings of an operation can name as `{name}`: what a `Let` binds,
@@ -113,8 +112,6 @@ impl Composition {
             skips: Vec::new(),
             package: None,
             held: Vec::new(),
-            held_back: Vec::new(),
-            imported: BTreeSet::new(),
         }
     }
 
@@ -139,13 +136,19 @@ impl Composition {
                     reason,
                 });
             }
-            for held in self.held.drain(..) {
-                let at = Skipped {
+            for held in std::mem::take(&mut self.held) {
+                let rule = crate::patch::sepolicy::Held {
                     recipe: path.to_path_buf(),
                     step: step.id().to_owned(),
-                    reason: String::new(),
+                    rule: held.rule,
+                    needs: held.needs,
                 };
-                self.held_back.push((at, held));
+                self.document(&held.file)
+                    .map_err(|source| Error::Step {
+                        step: step.id().to_owned(),
+                        source: Box::new(source),
+                    })?
+                    .hold(rule);
             }
         }
         Ok(())
@@ -324,13 +327,31 @@ impl Composition {
     /// Give the entries waiting for them Android's defaults, from the finished
     /// build's own policy as the device labels with it, then what was set over
     /// them; the finished trees, with the steps that were skipped. The rules
-    /// an import left out, and no later import added, are reported with their
-    /// step, with the names they need.
+    /// an import left out that still need a name no policy defines are
+    /// reported with their step, with the names they need.
     pub fn finish(
         mut self,
         mounts: &Mounts,
         images: &Images,
     ) -> Result<(BTreeMap<String, PartitionTree>, Vec<Skipped>), Error> {
+        // For each step, the rules it left out that still need a name no
+        // policy defines, and those names, before the policies are written.
+        let mut left: BTreeMap<(PathBuf, String), LeftOut> = BTreeMap::new();
+        for target in self.targets.values() {
+            for (_, open) in target.open_files() {
+                let Open::Policy(document) = open else {
+                    continue;
+                };
+                for held in document.unresolved() {
+                    tracing::debug!(step = %held.step, needs = ?held.needs, rule = %held.rule, "policy rule left out");
+                    let (rules, names) = left
+                        .entry((held.recipe.clone(), held.step.clone()))
+                        .or_default();
+                    rules.insert(held.rule.clone());
+                    names.extend(held.needs.iter().cloned());
+                }
+            }
+        }
         let defaults = match self.targets.values().any(Target::waits_for_defaults) {
             true => Some(Defaults::new(&self.targets, mounts, images)?),
             false => None,
@@ -343,23 +364,10 @@ impl Composition {
                 Ok((name, tree))
             })
             .collect::<Result<_, Error>>()?;
-        // For each step, the rules it left out and the names they need.
-        let mut left: BTreeMap<(PathBuf, String), LeftOut<'_>> = BTreeMap::new();
-        for (at, held) in &self.held_back {
-            if self.imported.contains(&held.rule) {
-                continue;
-            }
-            tracing::debug!(step = %at.step, needs = %held.needs, rule = %held.rule, "policy rule left out");
-            let (rules, names) = left
-                .entry((at.recipe.clone(), at.step.clone()))
-                .or_default();
-            rules.insert(&held.rule);
-            names.insert(&held.needs);
-        }
         let mut reports = Vec::new();
         for ((recipe, step), (rules, names)) in left {
             let plural = if rules.len() == 1 { "rule" } else { "rules" };
-            let names: Vec<&str> = names.into_iter().collect();
+            let names: Vec<String> = names.into_iter().collect();
             reports.push(Skipped {
                 recipe,
                 step,

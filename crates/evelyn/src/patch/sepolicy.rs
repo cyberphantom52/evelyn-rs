@@ -4,15 +4,18 @@
 //! written. Each patch is added under a name of its own: a TE asset by its path,
 //! an import by what it takes and from where. Once every step is applied, the file
 //! is compiled with the device's other policy files, as init compiles it at boot,
-//! so an error names the patch it is in.
+//! so an error names the patch it is in. A rule an import left out, needing a
+//! name nothing defined then, is held in the file too: it goes in once a later
+//! step defines every name it needs, under the step that held it.
 
 use crate::patch::Context;
 use crate::patch::target::IoAt;
 use android::path::RelativePath;
 use sepolicy::CilPolicy;
 use sepolicy::parser::ast::Policy;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
+use std::path::PathBuf;
 use thiserror::Error;
 
 /// Android's M4 macros, which TE policies are written with, in the order they
@@ -108,6 +111,19 @@ pub(crate) struct Document {
     /// The types, attributes and aliases this file, its patches and the device's
     /// other policy files declare, which an import does not declare again.
     declared: HashSet<String>,
+    /// The rules imports left out, which go in once the file declares every
+    /// name they need.
+    held: Vec<Held>,
+}
+
+/// A rule the import at a recipe's step left out, and the names it needs that
+/// nothing defined then.
+#[derive(Clone, Debug)]
+pub(crate) struct Held {
+    pub(crate) recipe: PathBuf,
+    pub(crate) step: String,
+    pub(crate) rule: String,
+    pub(crate) needs: BTreeSet<String>,
 }
 
 impl Document {
@@ -132,11 +148,27 @@ impl Document {
             text,
             patches: Vec::new(),
             declared,
+            held: Vec::new(),
         })
     }
 
     pub(crate) fn declared(&self) -> &HashSet<String> {
         &self.declared
+    }
+
+    /// Hold `held` until the file declares every name it needs.
+    pub(crate) fn hold(&mut self, held: Held) {
+        self.held.push(held);
+    }
+
+    /// The held rules that still need a name the file does not declare.
+    pub(crate) fn unresolved(&self) -> impl Iterator<Item = &Held> {
+        self.held.iter().filter(|held| !self.resolves(held))
+    }
+
+    /// Whether the file declares every name `held` needs.
+    fn resolves(&self, held: &Held) -> bool {
+        held.needs.iter().all(|name| self.declared.contains(name))
     }
 
     /// Add `rules` under `name`, made unique so an error names one patch.
@@ -157,15 +189,32 @@ impl Document {
         Ok(())
     }
 
-    /// The file's text with every patch, loaded after `before`.
+    /// The file's text with every patch, loaded after `before`, then the held
+    /// rules whose names it declares, each step's under a name of its own.
     fn load(&self, before: CilPolicy) -> Result<CilPolicy, Error> {
         let loaded = before
             .add_file_named(&self.name, &self.text)
             .map_err(at(&self.name))?;
-        self.patches
+        let loaded = self
+            .patches
             .iter()
             .try_fold(loaded, |loaded, (name, rules)| {
                 loaded.add_policy_named(name, rules).map_err(at(name))
+            })?;
+        let mut resolved: BTreeMap<(&PathBuf, &str), Vec<&str>> = BTreeMap::new();
+        for held in self.held.iter().filter(|held| self.resolves(held)) {
+            resolved
+                .entry((&held.recipe, &held.step))
+                .or_default()
+                .push(&held.rule);
+        }
+        resolved
+            .into_iter()
+            .try_fold(loaded, |loaded, ((recipe, step), rules)| {
+                let name = format!("{} step {step} (held)", recipe.display());
+                tracing::debug!(policy = %self.name, %name, "held policy added:\n{}", rules.join("\n"));
+                let rules = parse(&name, &rules.join("\n"))?;
+                loaded.add_policy_named(&name, &rules).map_err(at(&name))
             })
     }
 
@@ -188,5 +237,71 @@ impl Document {
             .compile()
             .map_err(|source| Error::Uncompiled(Box::new(source)))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn held(rule: &str, needs: &[&str]) -> Held {
+        Held {
+            recipe: PathBuf::from("patches/a/patch.ron"),
+            step: "a".to_owned(),
+            rule: rule.to_owned(),
+            needs: needs.iter().map(|name| (*name).to_owned()).collect(),
+        }
+    }
+
+    fn document() -> Document {
+        Document::open(
+            "vendor_sepolicy.cil".to_owned(),
+            "(typeattribute client)".to_owned(),
+            &[],
+        )
+        .expect("the policy opens")
+    }
+
+    #[test]
+    fn holds_a_rule_until_a_later_patch_declares_its_name() {
+        let mut document = document();
+        document.hold(held("typeattribute daemon client;", &["daemon"]));
+        assert_eq!(document.unresolved().count(), 1);
+        assert!(!document.render().expect("renders").contains("daemon"));
+
+        document
+            .add("b.te", parse("b.te", "type daemon;").expect("parses"))
+            .expect("adds");
+        assert_eq!(document.unresolved().count(), 0);
+        let rendered = document.render().expect("renders");
+        assert!(
+            rendered.contains("(typeattributeset client (daemon))"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn a_rule_needing_two_names_waits_for_both() {
+        let mut document = document();
+        document.hold(held(
+            "allow daemon server:file read;",
+            &["daemon", "server"],
+        ));
+        document
+            .add("b.te", parse("b.te", "type daemon;").expect("parses"))
+            .expect("adds");
+        assert_eq!(document.unresolved().count(), 1);
+        assert!(!document.render().expect("renders").contains("server"));
+
+        document
+            .add("c.te", parse("c.te", "type server;").expect("parses"))
+            .expect("adds");
+        assert_eq!(document.unresolved().count(), 0);
+        assert!(
+            document
+                .render()
+                .expect("renders")
+                .contains("daemon server")
+        );
     }
 }

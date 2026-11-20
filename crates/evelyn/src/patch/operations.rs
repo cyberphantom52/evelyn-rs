@@ -18,7 +18,7 @@ use crate::recipe::{
 use android::hash::Sha256Digest;
 use android::partition::PartitionPath;
 use android::path::{DevicePath, RelativePath};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl Composition {
     /// Apply one operation, with the values `bound` holds for the `{name}`s in it.
@@ -749,7 +749,7 @@ impl Composition {
     }
 
     /// The policy file `file`, open.
-    fn document(&mut self, file: &Located) -> Result<&mut Document, Error> {
+    pub(crate) fn document(&mut self, file: &Located) -> Result<&mut Document, Error> {
         match self.target(&file.partition)?.opened(&file.path)? {
             Some(Open::Policy(document)) => Ok(document),
             _ => unreachable!("the policy file is open"),
@@ -804,8 +804,8 @@ impl Composition {
     /// Add to the policy file `file`, open as a document, what the compiled policy
     /// at `from` has for the types and attributes `types` names. What the device's
     /// policy files already declare is not declared again, and a rule that needs a
-    /// name none of them, nor the import, defines is held back, for a later import
-    /// that defines it to add.
+    /// name none of them, nor the import, defines is held in the document, which
+    /// adds it once a later step defines every name it needs.
     fn import_policy(
         &mut self,
         file: &Located,
@@ -846,13 +846,19 @@ impl Composition {
             )));
         }
         let extraction = donor.extract(selected, Some(self.document(file)?.declared()));
+        // Each rule left out once, with every name it needs.
+        let mut held: BTreeMap<&String, BTreeSet<String>> = BTreeMap::new();
         for (needs, rules) in &extraction.unresolved {
             for rule in rules {
-                self.held.push(crate::patch::compose::Held {
-                    rule: rule.clone(),
-                    needs: needs.clone(),
-                });
+                held.entry(rule).or_default().insert(needs.clone());
             }
+        }
+        for (rule, needs) in held {
+            self.held.push(crate::patch::compose::Held {
+                file: file.clone(),
+                rule: rule.clone(),
+                needs,
+            });
         }
         if extraction.declarations.is_empty() && extraction.rules.is_empty() {
             self.skip(format!(
@@ -861,14 +867,13 @@ impl Composition {
             ));
             return Ok(());
         }
-        let rules = [extraction.declarations, extraction.rules.clone()]
+        let rules = [extraction.declarations, extraction.rules]
             .concat()
             .join("\n");
         tracing::debug!(path = %file.path, types = %patterns.join(", "), "imported policy:\n{rules}");
         let input = format!("{} from {from}", patterns.join(", "));
         let rules = crate::patch::sepolicy::parse(&input, &rules)?;
         self.document(file)?.add(&input, rules)?;
-        self.imported.extend(extraction.rules);
         Ok(())
     }
 
