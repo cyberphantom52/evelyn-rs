@@ -104,7 +104,7 @@ patches = []
 - **`[rom]`** matches ROM builds: each key is a property the ROM sets, and each
   value a glob over it. A build takes the port that matches.
 - **`partitions`** takes every `my_*` partition from the ROM, as well as
-  `system`, `system_ext`, `product` and `system_dlkm`.
+  `system`, `system_ext` and `product`.
 - **`patches`** lists the patches to apply. Both lists must come before the
   `[rom]` header, because TOML puts every key after a header into that table.
 

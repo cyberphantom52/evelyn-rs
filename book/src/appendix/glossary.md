@@ -14,6 +14,6 @@
 - **ROM**: The firmware being ported. It supplies the system side.
 - **Stock firmware**: The device's own firmware. It supplies the vendor side.
 - **`super`**: The partition holding the dynamic partitions, described by `[super]` in `evelyn.toml`.
-- **System side**: `system`, `system_ext`, `product` and `system_dlkm`, and whatever other ROM partitions a port takes.
+- **System side**: `system`, `system_ext` and `product`, and whatever other ROM partitions a port takes.
 - **Treble**: Android's split between the system side and the vendor side.
-- **Vendor side**: `vendor`, `odm`, `vendor_dlkm` and `odm_dlkm`.
+- **Vendor side**: `vendor`, `odm`, `vendor_dlkm` and `odm_dlkm`, and `system_dlkm`, the GKI modules built with the device's kernel.

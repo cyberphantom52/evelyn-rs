@@ -21,9 +21,9 @@ A **device repository** ports one ROM to one device. It holds:
 
 - **In-place images.** Source images are scanned into trees whose files point
   back at the image. Untouched files are never copied to disk.
-- **Treble-aware composition.** `vendor`, `odm`, `vendor_dlkm` and `odm_dlkm`
-  always come from the stock firmware. `system`, `system_ext`, `product` and
-  `system_dlkm` always come from the ROM. Anything else comes from the ROM only
+- **Treble-aware composition.** `vendor`, `odm`, `vendor_dlkm`, `odm_dlkm` and
+  `system_dlkm` always come from the stock firmware. `system`, `system_ext` and
+  `product` always come from the ROM. Anything else comes from the ROM only
   when the port asks for it.
 - **Declarative patches.** A patch is a [RON](https://github.com/ron-rs/ron)
   recipe: named steps, each a list of operations applied in order. Operations
@@ -57,11 +57,11 @@ A **device repository** ports one ROM to one device. It holds:
 <rect class="box" x="40" y="94" width="260" height="74" rx="8"/>
 <text class="title" x="170" y="117">System side</text>
 <text class="detail" x="170" y="137">system · system_ext · product</text>
-<text class="detail" x="170" y="155">system_dlkm · what the port lists</text>
+<text class="detail" x="170" y="155">what the port lists</text>
 <rect class="box" x="340" y="94" width="260" height="74" rx="8"/>
 <text class="title" x="470" y="117">Vendor side</text>
 <text class="detail" x="470" y="137">vendor · odm</text>
-<text class="detail" x="470" y="155">vendor_dlkm · odm_dlkm</text>
+<text class="detail" x="470" y="155">vendor_dlkm · odm_dlkm · system_dlkm</text>
 <path class="line" d="M170,168 V186 H470 V168"/>
 <path class="line" d="M320,186 V210" marker-end="url(#flow-head)"/>
 <rect class="box" x="160" y="212" width="320" height="54" rx="8"/>

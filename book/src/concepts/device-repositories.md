@@ -63,9 +63,12 @@ Evelyn composes the build along Android's Treble boundary:
 
 | Side   | Partitions                                         | Comes from      |
 |--------|----------------------------------------------------|-----------------|
-| Vendor | `vendor`, `odm`, `vendor_dlkm`, `odm_dlkm`         | stock firmware  |
-| System | `system`, `system_ext`, `product`, `system_dlkm`   | ROM             |
+| Vendor | `vendor`, `odm`, `vendor_dlkm`, `odm_dlkm`, `system_dlkm` | stock firmware |
+| System | `system`, `system_ext`, `product`                  | ROM             |
 | Other  | e.g. Oplus's `my_*` partitions                     | ROM, if the port lists them |
+
+`system_dlkm` is on the vendor side because it holds the GKI modules built
+with the device's kernel: a ROM's are built for another kernel.
 
 Every vendor-side partition is checked against the build fingerprint that
 `evelyn.toml` pins. A mismatch fails the build.

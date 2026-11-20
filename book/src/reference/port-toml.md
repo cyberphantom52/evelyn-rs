@@ -24,13 +24,13 @@ patches = [
 ## `partitions`
 
 The ROM partitions the port takes beyond the standard system side, by name or
-glob. The standard system side, `system`, `system_ext`, `product` and
-`system_dlkm`, is always taken. A ROM partition no entry matches is left out,
+glob. The standard system side, `system`, `system_ext` and `product`, is always
+taken. A ROM partition no entry matches is left out,
 and listed as `ignored` in the build's output.
 
 A name or glob that matches a vendor-side partition, `vendor`, `odm`,
-`vendor_dlkm` or `odm_dlkm`, is an error. Those always come from the stock
-firmware.
+`vendor_dlkm`, `odm_dlkm` or `system_dlkm`, is an error. Those always come from
+the stock firmware.
 
 How a partition is built, its filesystem and mount point, is set in
 [`evelyn.toml`](./evelyn-toml.md#partition-settings).

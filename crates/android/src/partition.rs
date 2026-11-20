@@ -87,11 +87,13 @@ impl Mounts {
     }
 }
 
-/// Treble's vendor side, in the order partitions are laid out in `super`. A device
-/// lists the ones it has; recipes may name any of them, for conditions.
-pub const VENDOR_SIDE: [&str; 4] = ["odm", "vendor", "vendor_dlkm", "odm_dlkm"];
+/// The partitions that come from the device, in the order they are laid out in
+/// `super`: Treble's vendor side, and `system_dlkm`, the GKI modules built with
+/// the device's kernel. A device lists the ones it has; recipes may name any of
+/// them, for conditions.
+pub const VENDOR_SIDE: [&str; 5] = ["system_dlkm", "odm", "vendor", "vendor_dlkm", "odm_dlkm"];
 /// System-side partitions every port takes from the ROM, in `super` order.
-pub const STANDARD_SYSTEM: [&str; 4] = ["system", "system_ext", "product", "system_dlkm"];
+pub const STANDARD_SYSTEM: [&str; 3] = ["system", "system_ext", "product"];
 
 /// The mount point a partition gets unless the port overrides it: `/<name>`, except
 /// `system`, which depends on the image (see `system_mount_point`).

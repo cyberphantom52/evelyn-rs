@@ -47,8 +47,8 @@ changed.
 
 ## Extra ROM partitions
 
-The standard system side (`system`, `system_ext`, `product`, `system_dlkm`) is
-always taken from the ROM. A ROM may have other partitions, such as Oplus's
+The standard system side (`system`, `system_ext`, `product`) is always taken
+from the ROM. A ROM may have other partitions, such as Oplus's
 `my_product` or `my_stock`. The port must list those in `partitions`, by
 name or by glob, or they are left out:
 
