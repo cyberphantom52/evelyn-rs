@@ -5,8 +5,11 @@
     Step("debug-logging", [
         Install("logcat.rc", "/vendor/etc/init/logcat.rc"),
     ]),
+    // In the system partition's build.prop: init applies a vendor-side one's
+    // properties with vendor_init's policy, which may not set these, so with
+    // SELinux enforcing they would not override the ROM's.
     Step("debug-adb", [
-        Props(Build("/vendor/build.prop"), [
+        Props(Build("/system/build.prop"), [
             Set("ro.adb.secure", "0"),
             Set("ro.secure", "0"),
             Set("ro.debuggable", "1"),

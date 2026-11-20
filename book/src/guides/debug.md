@@ -18,7 +18,7 @@ the next boot, or for recovery.
 
 ## adb from boot
 
-It sets these properties in `/vendor/build.prop`:
+It sets these properties in `/system/build.prop`:
 
 | Property                  | Value     |
 |---------------------------|-----------|
