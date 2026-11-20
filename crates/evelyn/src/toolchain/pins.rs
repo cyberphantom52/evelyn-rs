@@ -30,15 +30,31 @@ macro_rules! sepolicy {
     };
 }
 
-pub(crate) const PINS: [Pin; 3] = [
+/// The VNDK APEX of `version`, published with Evelyn in the `vndk` release.
+macro_rules! vndk {
+    ($version:literal, $sha256:literal) => {
+        Pin {
+            path: concat!("apex/com.android.vndk.v", $version, ".apex"),
+            url: concat!(
+                "https://github.com/cyberphantom52/evelyn-rs/releases/download/vndk/",
+                "com.android.vndk.v",
+                $version,
+                ".apex"
+            ),
+            encoding: Encoding::Raw,
+            sha256: $sha256,
+        }
+    };
+}
+
+pub(crate) const PINS: [Pin; 7] = [
     // VNDK APEXes for vendors older than Android 15, which ROMs from Android 15 on
-    // no longer ship; built from AOSP and published with Evelyn.
-    Pin {
-        path: "apex/com.android.vndk.v32.apex",
-        url: "https://github.com/cyberphantom52/evelyn-rs/releases/download/vndk/com.android.vndk.v32.apex",
-        encoding: Encoding::Raw,
-        sha256: "d4cedaf37d6424a6899730a2d867b108f2a47035e300df78420a29ff12e6bd7d",
-    },
+    // no longer ship; published with Evelyn.
+    vndk!("30", "52b2ea015b7df7fa0ae4a1027a9b3b48f68dc246daf86a91f553ec01ada9223c"),
+    vndk!("31", "1eea0e1f314624137082dbf1321efdfb7c82a836802d58875fe8beb12e9a4c4f"),
+    vndk!("32", "d4cedaf37d6424a6899730a2d867b108f2a47035e300df78420a29ff12e6bd7d"),
+    vndk!("33", "1911ff1bea746bf33e4b358469a313db68d3e437a3bcf9bd188c5fa144428797"),
+    vndk!("34", "344a628641751a43e15032837b6989ea220bd2b667d10e974c9548c474bdfc1c"),
     // Android's M4 macros, which TE policies in patches are written with.
     Pin {
         path: "selinux/te_macros",
