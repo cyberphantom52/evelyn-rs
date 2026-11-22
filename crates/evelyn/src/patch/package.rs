@@ -9,7 +9,7 @@
 //! changed, and signs it once.
 
 use crate::recipe::{Expr, Location, Operation};
-use apkscope_core::smali::{Classes, model::Class};
+use apkscope_core::smali::{Classes, Document, model::Class};
 use apkscope_core::{apk::Apk, apksign, rebuild, resources};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -211,22 +211,18 @@ impl Package {
         Ok(self.classes.as_mut().expect("opened above"))
     }
 
-    /// The class `class`, a descriptor, as the edits so far left it.
-    pub(crate) fn class(&mut self, class: &str) -> Result<Class, Error> {
+    /// The class `class`, a descriptor, as the edits so far left it, with the
+    /// DEX file it is of: what the class refers to is in that file's source, and
+    /// setting the class in the file is an edit, unless it is the class as the
+    /// build had it.
+    pub(crate) fn class(&mut self, class: &str) -> Result<(&mut Document, Class), Error> {
         Ok(self.classes()?.class(class)?)
-    }
-
-    /// Give the package `class`, in place of the one of its name: an edit, unless
-    /// it is the class as the build had it.
-    pub(crate) fn set_class(&mut self, class: Class) -> Result<(), Error> {
-        Ok(self.classes()?.set(class)?)
     }
 
     /// The classes, as the edits so far left them, with an instruction that has
     /// `operand`, written as smali.
     pub(crate) fn classes_with(&mut self, operand: &str) -> Result<Vec<String>, Error> {
-        let operand = apkscope_core::smali::text::parse_operand(operand)?;
-        Ok(self.classes()?.find(&operand)?)
+        Ok(self.classes()?.find(operand)?)
     }
 
     /// How the package's entries change: the files the edits changed, added or

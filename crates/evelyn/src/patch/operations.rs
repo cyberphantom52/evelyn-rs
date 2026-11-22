@@ -19,7 +19,7 @@ use crate::recipe::{
 use android::hash::Sha256Digest;
 use android::partition::PartitionPath;
 use android::path::{DevicePath, RelativePath};
-use apkscope_core::smali::model::Class;
+use apkscope_core::smali::model::{Class, Source};
 use std::collections::{BTreeMap, BTreeSet};
 
 impl Composition {
@@ -139,8 +139,8 @@ impl Composition {
                 class,
                 method,
                 returns,
-            } => self.code(class, method, bound, |class, method| {
-                code::stub_method(class, method, *returns)
+            } => self.code(class, method, bound, |source, class, method| {
+                code::stub_method(source, class, method, *returns)
             }),
             Operation::ReplaceMethod {
                 class,
@@ -148,8 +148,8 @@ impl Composition {
                 body,
             } => {
                 let body = self.asset(body, bound, context)?;
-                self.code(class, method, bound, |class, method| {
-                    code::replace_method(class, method, &body)
+                self.code(class, method, bound, |source, class, method| {
+                    code::replace_method(source, class, method, &body)
                 })
             }
             Operation::InsertMethod {
@@ -158,8 +158,8 @@ impl Composition {
                 body,
             } => {
                 let body = self.asset(body, bound, context)?;
-                self.code(class, method, bound, |class, method| {
-                    code::insert_method(class, method, &body)
+                self.code(class, method, bound, |source, class, method| {
+                    code::insert_method(source, class, method, &body)
                 })
             }
             Operation::ReplaceOperand {
@@ -613,16 +613,17 @@ impl Composition {
         class: &str,
         method: &str,
         bound: &Bound,
-        edit: impl Fn(&mut Class, &str) -> Result<(), code::Error>,
+        edit: impl Fn(&mut Source, &mut Class, &str) -> Result<(), code::Error>,
     ) -> Result<(), Error> {
         let (class, method) = (
             crate::recipe::substitute(class, bound)?,
             crate::recipe::substitute(method, bound)?,
         );
-        let package = self.open_package()?;
-        let mut class = package.class(&class)?;
-        edit(&mut class, &method)?;
-        Ok(package.set_class(class)?)
+        let (file, mut class) = self.open_package()?.class(&class)?;
+        edit(file.source_mut(), &mut class, &method)?;
+        Ok(file
+            .set(class)
+            .map_err(crate::patch::package::Error::from)?)
     }
 
     /// The package a `Package` is applying its edits to.
@@ -651,9 +652,11 @@ impl Composition {
         };
         let mut replaced = 0;
         for class in classes {
-            let mut class = package.class(&class)?;
-            replaced += code::replace_operand(&mut class, &from, &to, method.as_deref())?;
-            package.set_class(class)?;
+            let (file, mut class) = package.class(&class)?;
+            let method = method.as_deref();
+            replaced += code::replace_operand(file.source_mut(), &mut class, &from, &to, method)?;
+            file.set(class)
+                .map_err(crate::patch::package::Error::from)?;
         }
         match replaced {
             0 => Err(Error::Assertion(format!(
