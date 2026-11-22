@@ -1,7 +1,17 @@
-//! ART's compiled artifacts as a build ships them next to a JAR or APK
-//! (`oat/<isa>/<name>.{odex,vdex,art}`): what an odex's oat header records of how
-//! it was compiled, and the fs-verity metadata (`.fsv_meta`) the build writes
-//! beside each file.
+//! ART's compiled artifacts as a build ships them: what an oat file's header
+//! records of how it was compiled (an odex beside a JAR or APK, or a boot image's
+//! `boot*.oat`), what a boot image's `.art` header records of its layout, and the
+//! fs-verity metadata (`.fsv_meta`) the build writes beside each file.
+//!
+//! The layouts are those of the ART release a ROM ships, from AOSP's sources at
+//! `android-17.0.0_r1` (oat version 275, image version 119):
+//! - the oat header: `art/runtime/oat/oat.h`, `OatHeader`'s fields and keys;
+//! - the arm64 feature bitmap: `art/runtime/arch/arm64/instruction_set_features_arm64.{h,cc}`,
+//!   `AsBitmap` and `GetFeatureString`;
+//! - `InstructionSet`: `art/libartbase/arch/instruction_set.h`;
+//! - the image header: `art/runtime/oat/image.h`, `ImageHeader`'s fields;
+//! - the fs-verity metadata: the platform build's `fsverity_metadata_generator`,
+//!   checked byte for byte against a ROM's.
 
 use crate::Error;
 use crate::elf::{dynamic_symbol, int};
@@ -21,9 +31,12 @@ pub struct Oat {
 
 /// ART's `InstructionSet` of arm64.
 const ARM64: u32 = 2;
-/// The fields of the oat header after its magic and version, the last of them
-/// the key-value store's size, which the store follows.
-const FIELDS: usize = 16;
+/// For each oat version Evelyn knows, how many 32-bit fields follow the header's
+/// magic and version, the last of them the key-value store's size, which the
+/// store follows.
+const OAT_VERSIONS: [(&[u8; 4], usize); 1] = [(b"275\0", 16)];
+/// The arm64 features in the order of their bits.
+const ARM64_FEATURES: [&str; 6] = ["a53", "crc", "lse", "fp16", "dotprod", "sve"];
 
 impl Oat {
     /// The oat header of an odex, at its `oatdata` symbol: `odex` may be just the
@@ -34,10 +47,21 @@ impl Oat {
         if odex.get(at..at + 4) != Some(b"oat\n") {
             return Err(unsupported("no oat header at oatdata"));
         }
+        let version = odex.get(at + 4..at + 8).unwrap_or_default();
+        let fields = OAT_VERSIONS
+            .iter()
+            .find(|(known, _)| known.as_slice() == version)
+            .map(|(_, fields)| *fields)
+            .ok_or_else(|| {
+                unsupported(&format!(
+                    "oat version {}",
+                    String::from_utf8_lossy(version).trim_end_matches('\0')
+                ))
+            })?;
         let field = |i: usize| int(odex, at + 8 + 4 * i, 4).map(|value| value as u32);
-        let start = at + 8 + 4 * FIELDS;
+        let start = at + 8 + 4 * fields;
         let store = odex
-            .get(start..start + field(FIELDS - 1)? as usize)
+            .get(start..start + field(fields - 1)? as usize)
             .ok_or_else(|| unsupported("truncated oat key-value store"))?;
         // Keys and values are NUL-terminated; a value may be padded with NULs,
         // which read as empty keys.
@@ -80,8 +104,13 @@ impl Oat {
                 "features of an instruction set other than arm64",
             ));
         }
-        let names = ["a53", "crc", "lse", "fp16", "dotprod", "sve"];
-        let list: Vec<String> = names
+        if self.features >> ARM64_FEATURES.len() != 0 {
+            return Err(unsupported(&format!(
+                "arm64 feature bitmap {:#x}",
+                self.features
+            )));
+        }
+        let list: Vec<String> = ARM64_FEATURES
             .iter()
             .enumerate()
             .map(|(bit, name)| match self.features & 1 << bit {
@@ -90,6 +119,45 @@ impl Oat {
             })
             .collect();
         Ok(list.join(","))
+    }
+}
+
+/// What a boot image's `.art` file records of where it is and what it covers.
+pub struct ImageHeader {
+    /// For the first file of a boot image or extension, how many boot class path
+    /// jars it covers; 0 for the others.
+    pub component_count: u32,
+    /// The address it is mapped at, which the first image file is compiled for.
+    pub image_begin: u32,
+    /// Its checksum, which, for the first file, an oat file compiled against the
+    /// image records in `bootclasspath-checksums`.
+    pub image_checksum: u32,
+    /// For an extension, how many boot class path jars the images it extends cover.
+    pub boot_image_component_count: u32,
+}
+
+impl ImageHeader {
+    /// The header at the start of an `.art` file, version 119.
+    pub fn read(art: &[u8]) -> Result<Self, Error> {
+        if art.get(..8) != Some(b"art\n119\0") {
+            return Err(unsupported("an image that is not version 119"));
+        }
+        // After the magic and version: image_reservation_size_, component_count_,
+        // image_begin_, image_size_, image_checksum_, … boot_image_component_count_
+        // (the 13th field).
+        let field = |i: usize| int(art, 8 + 4 * i, 4).map(|value| value as u32);
+        Ok(Self {
+            component_count: field(1)?,
+            image_begin: field(2)?,
+            image_checksum: field(4)?,
+            boot_image_component_count: field(12)?,
+        })
+    }
+
+    /// This image as an oat file compiled against it records it in
+    /// `bootclasspath-checksums`.
+    pub fn checksum(&self) -> String {
+        format!("i;{}/{:08x}", self.component_count, self.image_checksum)
     }
 }
 
