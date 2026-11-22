@@ -56,7 +56,7 @@ pub enum Error {
     #[error(transparent)]
     Package(#[from] crate::patch::package::Error),
     #[error(transparent)]
-    Smali(#[from] smali::Error),
+    Code(#[from] crate::patch::code::Error),
     #[error(transparent)]
     Tool(#[from] crate::toolchain::Error),
     #[error(transparent)]

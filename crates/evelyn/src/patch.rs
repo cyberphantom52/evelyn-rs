@@ -3,6 +3,7 @@
 //! over the build's files or an open package's.
 
 mod binary;
+mod code;
 mod compose;
 mod defaults;
 mod eval;

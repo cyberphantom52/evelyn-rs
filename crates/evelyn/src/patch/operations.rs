@@ -1,6 +1,7 @@
 //! Each operation a recipe can name, over the files of the build or of the open
 //! package: what [`crate::patch::files`] selects, reads and writes.
 
+use crate::patch::code;
 use crate::patch::target::IoAt;
 use crate::patch::{
     Composition, Error,
@@ -13,11 +14,12 @@ use crate::patch::{
 };
 use crate::recipe::{
     Expr, Hex, Location, Metadata, Operation, PolicyEdit, PropEdit, ResourceEdit, ResourceValue,
-    Returns, TextEdit, XmlEdit,
+    TextEdit, XmlEdit,
 };
 use android::hash::Sha256Digest;
 use android::partition::PartitionPath;
 use android::path::{DevicePath, RelativePath};
+use apkscope_core::smali::model::Class;
 use std::collections::{BTreeMap, BTreeSet};
 
 impl Composition {
@@ -137,24 +139,17 @@ impl Composition {
                 class,
                 method,
                 returns,
-            } => {
-                let stub = match returns {
-                    Returns::Void => smali::Stub::Void,
-                    Returns::Zero => smali::Stub::Zero,
-                    Returns::One => smali::Stub::One,
-                };
-                self.smali(class, method, bound, |source, class, method| {
-                    smali::stub_method(source, class, method, stub)
-                })
-            }
+            } => self.code(class, method, bound, |class, method| {
+                code::stub_method(class, method, *returns)
+            }),
             Operation::ReplaceMethod {
                 class,
                 method,
                 body,
             } => {
                 let body = self.asset(body, bound, context)?;
-                self.smali(class, method, bound, |source, class, method| {
-                    smali::replace_method(source, class, method, &body)
+                self.code(class, method, bound, |class, method| {
+                    code::replace_method(class, method, &body)
                 })
             }
             Operation::InsertMethod {
@@ -163,8 +158,8 @@ impl Composition {
                 body,
             } => {
                 let body = self.asset(body, bound, context)?;
-                self.smali(class, method, bound, |source, class, method| {
-                    smali::insert_method(source, class, method, &body)
+                self.code(class, method, bound, |class, method| {
+                    code::insert_method(class, method, &body)
                 })
             }
             Operation::ReplaceOperand {
@@ -605,20 +600,7 @@ impl Composition {
         context: &Context<'_>,
     ) -> Result<(), Error> {
         let at = self.open_package_at(target, bound, context)?;
-        // The operands the edits search the whole package for are found in one
-        // pass; one only a later edit binds is searched for when it runs.
-        let operands: Vec<String> = edits
-            .iter()
-            .filter_map(|edit| match edit {
-                Operation::ReplaceOperand {
-                    from, class: None, ..
-                } => crate::recipe::substitute(from, bound).ok(),
-                _ => None,
-            })
-            .collect();
-        let package = self.package_at(&at)?;
-        package.prepare(edits)?;
-        package.search(&operands)?;
+        self.package_at(&at)?.prepare(edits)?;
         self.package = Some(at);
         let ran = self.operations(edits, bound.clone(), context);
         self.package = None;
@@ -626,21 +608,21 @@ impl Composition {
     }
 
     /// Change one method of a class in the open package.
-    fn smali(
+    fn code(
         &mut self,
         class: &str,
         method: &str,
         bound: &Bound,
-        edit: impl Fn(&str, &str, &str) -> Result<String, smali::Error>,
+        edit: impl Fn(&mut Class, &str) -> Result<(), code::Error>,
     ) -> Result<(), Error> {
         let (class, method) = (
             crate::recipe::substitute(class, bound)?,
             crate::recipe::substitute(method, bound)?,
         );
         let package = self.open_package()?;
-        let source = package.class(&class)?;
-        package.set_class(&class, edit(&source, &class, &method)?)?;
-        Ok(())
+        let mut class = package.class(&class)?;
+        edit(&mut class, &method)?;
+        Ok(package.set_class(class)?)
     }
 
     /// The package a `Package` is applying its edits to.
@@ -651,8 +633,7 @@ impl Composition {
     }
 
     /// Replace an operand of the instructions that have it, in every class of the
-    /// open package, or in one, or in one of its methods. Only a class in which
-    /// it is written is parsed.
+    /// open package, or in one, or in one of its methods.
     fn replace_operand(
         &mut self,
         (from, to): (&str, &str),
@@ -670,10 +651,9 @@ impl Composition {
         };
         let mut replaced = 0;
         for class in classes {
-            let source = package.class(&class)?;
-            let (edited, count) = smali::replace_operand(&source, &from, &to, method.as_deref())?;
-            package.set_class(&class, edited)?;
-            replaced += count;
+            let mut class = package.class(&class)?;
+            replaced += code::replace_operand(&mut class, &from, &to, method.as_deref())?;
+            package.set_class(class)?;
         }
         match replaced {
             0 => Err(Error::Assertion(format!(

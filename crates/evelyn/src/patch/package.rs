@@ -1,16 +1,16 @@
 //! Packages (APKs and JARs) a `Package` edits, open in their target until the
-//! build is written. Their code is edited as smali, a class at a time, and
-//! assembled back into the DEX files in place: only the classes whose smali the
-//! edits changed, as reading or searching a class changes nothing. The DEX files
-//! are read once, when an edit first reaches the code, and a search for an
-//! operand is done once, over the package as the build had it. Only when an edit reaches the
+//! build is written. Their code is edited a class at a time, as apkscope models
+//! it, in DEX files apkscope keeps open: a class is read when an edit asks for
+//! it, and only the classes the edits changed are written back, as reading or
+//! searching a class changes nothing. Only when an edit reaches the
 //! package's files are they read into memory, by their paths in the package:
 //! resources and the manifest as text when an edit reaches them, everything else
 //! as it is, the DEX files left out. Writing it puts back only what the edits
 //! changed, and signs it once.
 
 use crate::recipe::{Expr, Location, Operation};
-use apkscope_core::{apk::Apk, apksign, rebuild, resources, smali};
+use apkscope_core::smali::{Classes, model::Class};
+use apkscope_core::{apk::Apk, apksign, rebuild, resources};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -24,8 +24,6 @@ pub enum Error {
     Io(PathBuf, #[source] std::io::Error),
     #[error("cannot edit the package")]
     Package(#[from] apkscope_core::Error),
-    #[error(transparent)]
-    Smali(#[from] ::smali::Error),
 }
 
 /// The manifest, which with `res/` and the resource table is decoded as one.
@@ -43,17 +41,9 @@ pub(crate) struct Package {
     read: BTreeSet<String>,
     /// Whether its resources and manifest are in `files` too, as text.
     resources: bool,
-    /// Its DEX files as the build had it, once an edit reaches its code.
-    original: Option<Apk>,
-    /// The smali of the classes read so far, by descriptor, as the build had
-    /// them.
-    originals: BTreeMap<String, String>,
-    /// The classes whose smali the edits changed, as they left it: what is
-    /// written back.
-    edited: BTreeMap<String, String>,
-    /// For each operand searched for, the classes as the build had them with an
-    /// instruction that has it.
-    found: BTreeMap<String, BTreeSet<String>>,
+    /// Its DEX files, open with the classes the edits changed, once an edit
+    /// reaches its code.
+    classes: Option<Classes>,
 }
 
 /// A package's files, by their paths from its root with `/` between names. A
@@ -122,10 +112,7 @@ impl Package {
             files: None,
             read: BTreeSet::new(),
             resources: false,
-            original: None,
-            originals: BTreeMap::new(),
-            edited: BTreeMap::new(),
-            found: BTreeMap::new(),
+            classes: None,
         }
     }
 
@@ -216,81 +203,30 @@ impl Package {
         ))
     }
 
-    /// The package's DEX files as the build had it.
-    fn original(&mut self) -> Result<&mut Apk, Error> {
-        if self.original.is_none() {
-            self.original = Some(open_apk(&self.source)?);
+    /// The package's DEX files, open for edits.
+    fn classes(&mut self) -> Result<&mut Classes, Error> {
+        if self.classes.is_none() {
+            self.classes = Some(Classes::new(open_apk(&self.source)?.dex));
         }
-        Ok(self.original.as_mut().expect("opened above"))
+        Ok(self.classes.as_mut().expect("opened above"))
     }
 
-    /// The smali of `class`, a descriptor, as the build had it.
-    fn original_class(&mut self, class: &str) -> Result<&str, Error> {
-        if !self.originals.contains_key(class) {
-            let text = smali::export_class_from(self.original()?, class)?;
-            self.originals.insert(class.to_owned(), text);
-        }
-        Ok(&self.originals[class])
+    /// The class `class`, a descriptor, as the edits so far left it.
+    pub(crate) fn class(&mut self, class: &str) -> Result<Class, Error> {
+        Ok(self.classes()?.class(class)?)
     }
 
-    /// The smali of `class`, a descriptor, as the edits so far left it.
-    pub(crate) fn class(&mut self, class: &str) -> Result<String, Error> {
-        match self.edited.get(class) {
-            Some(text) => Ok(text.clone()),
-            None => Ok(self.original_class(class)?.to_owned()),
-        }
+    /// Give the package `class`, in place of the one of its name: an edit, unless
+    /// it is the class as the build had it.
+    pub(crate) fn set_class(&mut self, class: Class) -> Result<(), Error> {
+        Ok(self.classes()?.set(class)?)
     }
 
-    /// Give `class` the smali `text`: an edit of it, unless it is the class as the
-    /// build had it.
-    pub(crate) fn set_class(&mut self, class: &str, text: String) -> Result<(), Error> {
-        match self.original_class(class)? == text {
-            true => self.edited.remove(class),
-            false => self.edited.insert(class.to_owned(), text),
-        };
-        Ok(())
-    }
-
-    /// Find, in one pass over the package as the build had it, the classes with
-    /// an instruction that has each of `operands` not searched for yet.
-    pub(crate) fn search(&mut self, operands: &[String]) -> Result<(), Error> {
-        let mut found: BTreeMap<String, BTreeSet<String>> = operands
-            .iter()
-            .filter(|operand| !self.found.contains_key(*operand))
-            .map(|operand| (operand.clone(), BTreeSet::new()))
-            .collect();
-        if found.is_empty() {
-            return Ok(());
-        }
-        for (_, dex) in &self.original()?.dex {
-            for class in smali::read::read(dex)? {
-                let text = smali::text::print(&class);
-                for (operand, classes) in &mut found {
-                    if text.contains(operand.as_str()) && ::smali::has_operand(&text, operand)? {
-                        classes.insert(String::from_utf8_lossy(&class.name).into_owned());
-                    }
-                }
-            }
-        }
-        self.found.extend(found);
-        Ok(())
-    }
-
-    /// The classes with an instruction that has `operand`, as the edits so far
-    /// left them.
+    /// The classes, as the edits so far left them, with an instruction that has
+    /// `operand`, written as smali.
     pub(crate) fn classes_with(&mut self, operand: &str) -> Result<Vec<String>, Error> {
-        self.search(&[operand.to_owned()])?;
-        let mut classes: BTreeSet<String> = self.found[operand]
-            .iter()
-            .filter(|class| !self.edited.contains_key(*class))
-            .cloned()
-            .collect();
-        for (class, text) in &self.edited {
-            if text.contains(operand) && ::smali::has_operand(text, operand)? {
-                classes.insert(class.clone());
-            }
-        }
-        Ok(classes.into_iter().collect())
+        let operand = apkscope_core::smali::text::parse_operand(operand)?;
+        Ok(self.classes()?.find(&operand)?)
     }
 
     /// How the package's entries change: the files the edits changed, added or
@@ -325,9 +261,8 @@ impl Package {
                 }
             }
         }
-        if !self.edited.is_empty() {
-            let classes: Vec<String> = self.edited.values().cloned().collect();
-            smali::inject_into(apk, &classes, &mut edits)?;
+        if let Some(classes) = &self.classes {
+            classes.write(&mut edits)?;
         }
         Ok(edits)
     }
