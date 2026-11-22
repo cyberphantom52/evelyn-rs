@@ -175,7 +175,8 @@ pub fn stub_method(
 
 /// Replace the operand written as `from` with `to`, in every instruction of the
 /// file, or of its method `signature`: a method, a field, a type, a string in its
-/// quotes, a number, a register. Says how many it replaced.
+/// quotes, a number, a register. Says how many it replaced; with none replaced,
+/// the source is returned as it is.
 pub fn replace_operand(
     source: &str,
     from: &str,
@@ -184,7 +185,27 @@ pub fn replace_operand(
 ) -> Result<(String, usize), Error> {
     let mut file = parse(source)?;
     let to = parser::parse_as(Kind::operand_only, to)?;
-    let mut replaced = 0;
+    let replaced = operands(&mut file, from, signature, |operand| *operand = to.clone());
+    match replaced {
+        0 => Ok((source.to_owned(), 0)),
+        _ => Ok((file.to_string(), replaced)),
+    }
+}
+
+/// Whether an instruction of the file has the operand written as `operand`.
+pub fn has_operand(source: &str, operand: &str) -> Result<bool, Error> {
+    Ok(operands(&mut parse(source)?, operand, None, |_| {}) > 0)
+}
+
+/// Apply `each` to every instruction operand written as `from`, in the file or
+/// its method `signature`; how many there were.
+fn operands(
+    file: &mut Node,
+    from: &str,
+    signature: Option<&str>,
+    mut each: impl FnMut(&mut Node),
+) -> usize {
+    let mut found = 0;
     for child in &mut file.children {
         let Element::Node(method) = child else {
             continue;
@@ -201,11 +222,11 @@ pub fn replace_operand(
                     && operand.kind != Kind::opcode
                     && operand.to_string() == from
                 {
-                    *operand = to.clone();
-                    replaced += 1;
+                    each(operand);
+                    found += 1;
                 }
             }
         });
     }
-    Ok((file.to_string(), replaced))
+    found
 }
