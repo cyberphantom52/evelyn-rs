@@ -2,6 +2,9 @@
 //! a ROM to a device from them.
 
 mod build;
+mod derived;
+mod device;
+mod dexopt;
 mod firmware;
 mod flashable;
 mod fstab;
@@ -100,6 +103,30 @@ pub enum Error {
     NoPort(String),
     #[error("the ROM matches more than one port: {0}")]
     Ports(String),
+    #[error(transparent)]
+    Tool(#[from] crate::toolchain::Error),
+    #[error("the build has no APEX named {0}")]
+    NoApex(String),
+    #[error("the build has no boot image {0}")]
+    NoBootImage(String),
+    #[error("{0} changed, so the boot image is stale, and Evelyn does not compile one")]
+    StaleBootImage(String),
+    #[error("cannot compile the odex of {dex} again")]
+    Dexopt {
+        dex: String,
+        #[source]
+        source: Box<Error>,
+    },
+    #[error("cannot run {0}")]
+    ArtRun(PathBuf, #[source] std::io::Error),
+    #[error("{0} exited with {1}; it logs only to logd, which the host lacks")]
+    ArtFailed(&'static str, std::process::ExitStatus),
+    #[error("the new odex records {key} {built:?}, the ROM's {stock:?}")]
+    ArtDiffers {
+        key: &'static str,
+        stock: String,
+        built: String,
+    },
 }
 
 /// What a build produces: partition images, a super image, or a flashable ZIP.

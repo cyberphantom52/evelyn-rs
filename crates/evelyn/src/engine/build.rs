@@ -442,6 +442,17 @@ fn compose(
         assets: None,
         mounts,
     })?;
+    // Each document is written back before what derives from it is made.
+    composition.write_back()?;
+    crate::engine::derived::refresh(
+        &mut composition.targets,
+        &composition.origins,
+        sources,
+        images,
+        mounts,
+        build.tools,
+        &build.work_dir.join("derived"),
+    )?;
     let (trees, skipped) = composition.finish(mounts, images)?;
     let targets = trees
         .into_iter()

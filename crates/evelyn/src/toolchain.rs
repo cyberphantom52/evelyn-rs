@@ -1,6 +1,7 @@
 //! What a build needs beyond Evelyn itself, kept in Evelyn's data directory: the
 //! pinned files it downloads the first time one is needed, each checked by its
-//! SHA-256, and the key it signs APKs with, generated the first time.
+//! SHA-256, and the key it signs APKs with, generated the first time. Programs the
+//! host provides are found on its `PATH`.
 
 mod pins;
 
@@ -34,6 +35,8 @@ pub enum Error {
     Changed(PathBuf),
     #[error("cannot generate the signing key")]
     Key(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0} is not on PATH; it comes with qemu-user")]
+    Host(&'static str),
     #[error("cannot access {path}")]
     Io {
         path: PathBuf,
@@ -104,6 +107,16 @@ impl Tools {
             self.fetch(pin, &path)?;
         }
         Ok(path)
+    }
+
+    /// A program the host provides, the first of `names` on its `PATH`.
+    pub(crate) fn host(&self, names: &[&'static str]) -> Result<PathBuf, Error> {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        names
+            .iter()
+            .flat_map(|name| std::env::split_paths(&path).map(move |dir| dir.join(name)))
+            .find(|path| path.is_file())
+            .ok_or(Error::Host(names[0]))
     }
 
     /// The signing key, generated if there is none yet.
