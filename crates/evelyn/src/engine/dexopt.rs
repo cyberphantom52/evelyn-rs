@@ -1,12 +1,53 @@
-//! Compiling an odex again the way the ROM's own was: by the ROM's dex2oat, run
-//! under qemu-user on the host with the build's files as its root, given what the
-//! odex's oat header records (compiler filter, class loader context, boot class
-//! path and image, instruction set features, assumed SDK version) and the options
-//! the platform build compiles with. The new odex must record the boot image and
-//! class loader context the old one did, or the device would reject it too.
+//! Compiling ART's artifacts again the way the ROM's own were: the boot image
+//! and an odex, by the ROM's dex2oat, run under qemu-user on the host with the
+//! build's files as its root. The options are those the platform build gives
+//! dex2oat, from AOSP's Soong at `android-17.0.0_r1`:
+//!
+//! - `build/soong/dexpreopt/dexpreopt.go` (`dexpreoptCommand`) for an odex, and
+//!   `build/soong/java/dexpreopt_bootjars.go` (`buildBootImageVariant`) with
+//!   `build/soong/java/dexpreopt_config.go` (`genBootImageConfigRaw`) for the
+//!   boot image.
+//! - Given to every compilation: `--avoid-storing-invocation`,
+//!   `--generate-debug-info --strip --oat-symbols=…` (the installed file is the
+//!   stripped one), `--generate-build-id`, `--force-determinism`,
+//!   `--no-inline-from=core-oj.jar`. Soong also gives
+//!   `--abort-on-hard-verifier-error`, which changes nothing dex2oat writes, only
+//!   whether a class that fails verification stops it; a ROM's build does not
+//!   always: the vdex OxygenOS ships for its Settings records such classes, and
+//!   is byte for byte what dex2oat writes without it. It is left out.
+//! - Product choices the files record, read from the ROM's: the instruction set
+//!   features (the oat header's bitmap; `--instruction-set-variant` only picks
+//!   features, so `generic` with the explicit list stands for any), the GC
+//!   (`concurrent-copying`: `-Xgc:CMC` from `PRODUCT_ENABLE_UFFD_GC`), the
+//!   assumed SDK version (`assume-value-sdk-int`), profiling code
+//!   (`enable-profile-code`), the compiler filter, the compilation reason, mini
+//!   debug info for an odex (its `.gnu_debugdata`), an app image (an `.art`
+//!   beside the odex), and the primary boot image's address (`--base`, its
+//!   header's `image_begin`).
+//! - Product choices the files do not record, taken as the platform's defaults:
+//!   `--resolve-startup-const-strings=true` for an app image (unless
+//!   `PRODUCT_DEX_PREOPT_RESOLVE_STARTUP_STRINGS` is off), no extra
+//!   `PRODUCT_DEX_PREOPT_DEFAULT_FLAGS`/`PRODUCT_DEX_PREOPT_BOOT_FLAGS`, and
+//!   `--preloaded-classes` given to the primary boot image (unless
+//!   `RELEASE_ART_NOPRELOAD_CLASSES_IN_PROFILE`). `-Xms`/`-Xmx` are left out:
+//!   they bound dex2oat's heap, not what it writes.
+//! - Constants of the boot image: the primary image covers the platform's boot
+//!   jars (ART's and the framework's) as one image per jar, compiled with
+//!   `/system/etc/boot-image.prof` and every APEX's `etc/boot-image.prof`,
+//!   `--preloaded-classes` and `--dirty-image-objects`; the extension covers the
+//!   APEXes' boot jars as one image (`--single-image`), compiled against the
+//!   primary (`--boot-image`) with the APEXes' profiles and
+//!   `--dirty-image-objects`; both `--image-format=lz4hc`, named `boot`, which
+//!   dex2oat makes `boot-<first jar>` for an extension and for each further jar
+//!   of a multi-image primary.
+//!
+//! Compiled this way from the ROM's own jars, the boot image and odex files have
+//! the ROM's layout, vdex files and key-value stores byte for byte; the code of a
+//! few JNI stubs differs, as the ROM's host dex2oat was built apart from the ART
+//! module whose dex2oat runs here.
 
 use crate::engine::{Error, IoAt, device::Device};
-use android::art::{self, Oat};
+use android::art::{self, ImageHeader, Oat};
 use android::elf::Elf;
 use android::partition::PartitionPath;
 use std::{
@@ -38,6 +79,10 @@ const LIBRARY_PATH: [&str; 5] = [
 const OPENED: [&str; 1] = ["libartpalette-system.so"];
 /// The directories a boot image may be in.
 const BOOT_IMAGE_DIRS: [&str; 2] = ["/system/framework", "/apex/com.android.art/javalib"];
+/// The boot image's inputs the platform build installs.
+const BOOT_PROFILE: &str = "/system/etc/boot-image.prof";
+const PRELOADED_CLASSES: &str = "/system/etc/preloaded-classes";
+const DIRTY_IMAGE_OBJECTS: &str = "/system/etc/dirty-image-objects";
 
 /// An odex to compile again.
 pub(crate) struct Job {
@@ -56,6 +101,32 @@ impl Job {
         PartitionPath {
             partition: self.artifacts.partition.clone(),
             path: crate::engine::device::relative(format!("{}.{extension}", self.artifacts.path)),
+        }
+    }
+}
+
+/// One image of the boot image to compile again: the primary image (the first)
+/// or an extension of the images before it.
+pub(crate) struct BootJob {
+    pub isa: String,
+    /// Its index among the boot image's images.
+    pub index: usize,
+    /// The boot class path jars of the images before it, then its own.
+    pub before: Vec<String>,
+    pub jars: Vec<String>,
+    /// The checksums of the images before it, as an oat file records them.
+    pub before_checksums: String,
+    /// The ROM's content of each of its jars that changed: the primary image's
+    /// profile is listed against them.
+    pub originals: Vec<(String, Vec<u8>)>,
+}
+
+impl BootJob {
+    /// Its name: `boot` for the primary image, `boot-<first jar>` for an extension.
+    pub fn name(&self) -> String {
+        match self.before.is_empty() {
+            true => "boot".to_owned(),
+            false => format!("boot-{}", file_stem(&self.jars[0])),
         }
     }
 }
@@ -150,6 +221,7 @@ impl Art {
 
     /// Run `program` with `args` to success; what it printed.
     fn run(&self, program: &'static str, args: &[String]) -> Result<Vec<u8>, Error> {
+        tracing::debug!(program, ?args, "running");
         let output = self
             .command(program)
             .args(args)
@@ -161,12 +233,198 @@ impl Art {
         }
     }
 
-    /// Compile `job`'s odex again; the files it writes over the build's, by where
-    /// they go, the new profile among them when the package itself changed.
+    /// Compile one image of the boot image again, into the root for what is
+    /// compiled after it; the files it writes over the build's, by where they go,
+    /// and its first file's header.
+    pub fn compile_boot(
+        &self,
+        job: &BootJob,
+        device: &mut Device<'_>,
+    ) -> Result<(Vec<(PartitionPath, PathBuf)>, ImageHeader), Error> {
+        let name = job.name();
+        let (dir, stock_art) = self.boot_image(device, &job.isa, &name)?;
+        let stock_header = ImageHeader::read(&stock_art)?;
+        let stock = Oat::read(
+            &device
+                .read(&format!("{dir}/{}/{name}.oat", job.isa))?
+                .ok_or_else(|| Error::NoBootImage(name.clone()))?,
+        )?;
+        let primary = job.before.is_empty();
+        let mut before = Vec::new();
+        let mut start = 0;
+        let counts = match primary {
+            true => Vec::new(),
+            false => art::boot_image_components(&job.before_checksums)?,
+        };
+        for count in counts {
+            let name = match start {
+                0 => "boot".to_owned(),
+                _ => format!("boot-{}", file_stem(&job.before[start])),
+            };
+            before.push(self.boot_image(device, &job.isa, &name)?.0 + "/" + &name + ".art");
+            start += count;
+        }
+        let classpath: Vec<&str> = job
+            .before
+            .iter()
+            .chain(&job.jars)
+            .map(String::as_str)
+            .collect();
+        for jar in &classpath {
+            self.provide(device, jar)?;
+        }
+
+        let out = self.out.join(&job.isa).join(&name);
+        fs::create_dir_all(out.join("symbols")).at(&out)?;
+        let classpath = classpath.join(":");
+        let mut args = common(&stock)?;
+        args.extend([
+            "--runtime-arg".to_owned(),
+            format!("-Xbootclasspath:{classpath}"),
+            "--runtime-arg".to_owned(),
+            format!("-Xbootclasspath-locations:{classpath}"),
+            format!("--oat-symbols={}", out.join("symbols/boot.oat").display()),
+            format!("--oat-file={}", out.join("boot.oat").display()),
+            format!("--oat-location={dir}/{}/boot.oat", job.isa),
+            format!("--image={}", out.join("boot.art").display()),
+            "--image-format=lz4hc".to_owned(),
+        ]);
+        for jar in &job.jars {
+            args.push(format!("--dex-file={jar}"));
+            args.push(format!("--dex-location={jar}"));
+        }
+        match primary {
+            true => {
+                args.push(format!("--base={:#x}", stock_header.image_begin));
+                if self.provide(device, PRELOADED_CLASSES)? {
+                    args.push(format!("--preloaded-classes={PRELOADED_CLASSES}"));
+                }
+            }
+            false => {
+                args.push(format!("--boot-image={}", before.join(":")));
+                args.push("--single-image".to_owned());
+            }
+        }
+        if self.provide(device, DIRTY_IMAGE_OBJECTS)? {
+            args.push(format!("--dirty-image-objects={DIRTY_IMAGE_OBJECTS}"));
+        }
+        let mut written = Vec::new();
+        if stock.get("compiler-filter")? == "speed-profile" {
+            if primary && self.provide(device, BOOT_PROFILE)? {
+                let profile = match job.originals.is_empty() {
+                    true => self.host(BOOT_PROFILE),
+                    false => {
+                        let made = self.boot_profile(job, &out)?;
+                        if let Some(at) = device.locate(BOOT_PROFILE)? {
+                            written.push((at, made.clone()));
+                        }
+                        made
+                    }
+                };
+                args.push(format!("--profile-file={}", profile.display()));
+            }
+            for apex in device.apex_names()? {
+                let profile = format!("/apex/{apex}/etc/boot-image.prof");
+                if self.provide(device, &profile)? {
+                    args.push(format!("--profile-file={profile}"));
+                }
+            }
+        }
+        self.run(DEX2OAT, &args)?;
+
+        let header = ImageHeader::read(&fs::read(out.join(format!("{name}.art"))).at(&out)?)?;
+        let built = Oat::read(&fs::read(out.join(format!("{name}.oat"))).at(&out)?)?;
+        for (key, stock, built) in [
+            (
+                "component count",
+                stock_header.component_count,
+                header.component_count,
+            ),
+            ("address", stock_header.image_begin, header.image_begin),
+            (
+                "extended component count",
+                stock_header.boot_image_component_count,
+                header.boot_image_component_count,
+            ),
+        ] {
+            if stock != built {
+                return Err(Error::ArtDiffers {
+                    key,
+                    stock: format!("{stock:#x}"),
+                    built: format!("{built:#x}"),
+                });
+            }
+        }
+        let checksums = match primary {
+            true => "",
+            false => job.before_checksums.as_str(),
+        };
+        check(&stock, &built, checksums)?;
+        for entry in fs::read_dir(&out).at(&out)? {
+            let entry = entry.at(&out)?;
+            if !entry.file_type().at(entry.path())?.is_file() {
+                continue;
+            }
+            let file = entry.file_name().to_string_lossy().into_owned();
+            if ![".art", ".oat", ".vdex"].iter().any(|e| file.ends_with(e)) {
+                continue;
+            }
+            let path = format!("{dir}/{}/{file}", job.isa);
+            fs::copy(entry.path(), self.host(&path)).at(entry.path())?;
+            if let Some(at) = device.locate(&path)? {
+                written.push((at, entry.path()));
+            }
+        }
+        Ok((written, header))
+    }
+
+    /// The primary image's profile, made again against the changed jars, as the
+    /// odex profiles are (see [`Art::profile`]), as a boot image profile.
+    fn boot_profile(&self, job: &BootJob, out: &Path) -> Result<PathBuf, Error> {
+        let mut rom = Vec::new();
+        for jar in &job.jars {
+            match job.originals.iter().find(|(path, _)| path == jar) {
+                Some((_, data)) => {
+                    let host = out.join("rom").join(file_stem(jar)).with_extension("jar");
+                    write(&host, data)?;
+                    rom.push(format!("--apk={}", host.display()));
+                }
+                None => rom.push(format!("--apk={jar}")),
+            }
+        }
+        let locations: Vec<String> = job
+            .jars
+            .iter()
+            .map(|jar| format!("--dex-location={jar}"))
+            .collect();
+        let mut dump = vec![
+            "--dump-classes-and-methods".to_owned(),
+            format!("--profile-file={BOOT_PROFILE}"),
+        ];
+        dump.extend(rom);
+        dump.extend(locations.iter().cloned());
+        let text = out.join("boot-image.txt");
+        write(&text, &self.run(PROFMAN, &dump)?)?;
+        let made = out.join("boot-image.prof");
+        let mut create = vec![
+            "--output-profile-type=boot".to_owned(),
+            format!("--create-profile-from={}", text.display()),
+            format!("--reference-profile-file={}", made.display()),
+        ];
+        create.extend(job.jars.iter().map(|jar| format!("--apk={jar}")));
+        create.extend(locations);
+        self.run(PROFMAN, &create)?;
+        Ok(made)
+    }
+
+    /// Compile `job`'s odex again, against a boot image whose checksums are
+    /// `checksums`; the files it writes over the build's, by where they go, the
+    /// new profile among them when the package itself changed.
     pub fn compile(
         &self,
         job: &Job,
         device: &mut Device<'_>,
+        checksums: &str,
     ) -> Result<Vec<(PartitionPath, PathBuf)>, Error> {
         let stock_odex = device.read_at(&job.artifact("odex"))?;
         let stock = Oat::read(&stock_odex)?;
@@ -183,12 +441,12 @@ impl Art {
         let jars: Vec<&str> = classpath.split(':').collect();
         let mut boot_image = Vec::new();
         let mut start = 0;
-        for count in art::boot_image_components(stock.get("bootclasspath-checksums")?)? {
+        for count in art::boot_image_components(checksums)? {
             let name = match start {
                 0 => "boot".to_owned(),
                 _ => format!("boot-{}", file_stem(jars[start])),
             };
-            boot_image.push(self.boot_image(device, &job.isa, &name)?);
+            boot_image.push(self.boot_image(device, &job.isa, &name)?.0 + "/" + &name + ".art");
             start += count;
         }
         let loader = without_checksums(stock.get("classpath")?);
@@ -204,56 +462,40 @@ impl Art {
             .rsplit('/')
             .next()
             .unwrap_or_default();
-        let output = |extension: &str| self.out.join(format!("{name}.{extension}"));
-        fs::create_dir_all(&self.out).at(&self.out)?;
+        let output = |extension: &str| self.out.join(&job.isa).join(format!("{name}.{extension}"));
+        fs::create_dir_all(self.out.join(&job.isa).join("symbols")).at(&self.out)?;
         let filter = stock.get("compiler-filter")?;
-        let mut args = vec![
+        let mut args = common(&stock)?;
+        args.extend([
             "--runtime-arg".to_owned(),
             format!("-Xbootclasspath:{classpath}"),
             "--runtime-arg".to_owned(),
             format!("-Xbootclasspath-locations:{classpath}"),
-            "--runtime-arg".to_owned(),
-            match stock.get("concurrent-copying")? {
-                "true" => "-Xgc:CC",
-                _ => "-Xgc:CMC",
-            }
-            .to_owned(),
             format!("--boot-image={}", boot_image.join(":")),
             format!("--class-loader-context={loader}"),
             format!("--dex-file={}", job.dex),
             format!("--dex-location={}", job.dex),
             format!("--oat-file={}", output("odex").display()),
             format!("--output-vdex={}", output("vdex").display()),
-            format!("--instruction-set={}", stock.isa()?),
-            "--instruction-set-variant=generic".to_owned(),
-            format!("--instruction-set-features={}", stock.feature_list()?),
-            format!("--compiler-filter={filter}"),
-            format!("--compilation-reason={}", stock.get("compilation-reason")?),
-            // What the platform build compiles every package with.
-            "--no-inline-from=core-oj.jar".to_owned(),
-            "--avoid-storing-invocation".to_owned(),
-            "--force-determinism".to_owned(),
-            "--abort-on-hard-verifier-error".to_owned(),
-            "--generate-build-id".to_owned(),
             format!(
-                "-j{}",
-                std::thread::available_parallelism().map_or(1, |n| n.get())
+                "--oat-symbols={}",
+                self.out
+                    .join(&job.isa)
+                    .join("symbols")
+                    .join(format!("{name}.odex"))
+                    .display()
             ),
-        ];
+            format!("--compilation-reason={}", stock.get("compilation-reason")?),
+            match debug_data {
+                true => "--generate-mini-debug-info",
+                false => "--no-generate-mini-debug-info",
+            }
+            .to_owned(),
+        ]);
         if image {
             args.push(format!("--app-image-file={}", output("art").display()));
             args.push("--image-format=lz4".to_owned());
             args.push("--resolve-startup-const-strings=true".to_owned());
-        }
-        if let Some(sdk) = stock.store.get("assume-value-sdk-int") {
-            args.push(format!(
-                "--assume-value=Landroid/os/Build$VERSION;->SDK_INT:{sdk}"
-            ));
-        }
-        // Full DWARF, which some ROMs ship, is left out: the device never maps it,
-        // and the mini debug info still names the methods in stack traces.
-        if debug_data {
-            args.push("--generate-mini-debug-info".to_owned());
         }
         let mut written = Vec::new();
         if filter.ends_with("-profile") {
@@ -273,7 +515,7 @@ impl Art {
         self.run(DEX2OAT, &args)?;
 
         let odex = fs::read(output("odex")).at(output("odex"))?;
-        check(&stock, &Oat::read(&odex)?)?;
+        check(&stock, &Oat::read(&odex)?, checksums)?;
         for extension in ["odex", "vdex"].into_iter().chain(image.then_some("art")) {
             written.push((job.artifact(extension), output(extension)));
         }
@@ -317,12 +559,18 @@ impl Art {
         Ok(made.to_path_buf())
     }
 
-    /// The boot image component `name` for `isa`, as dex2oat names its location,
-    /// with its files, and those of the images of the further jars it covers, in
-    /// the root.
-    fn boot_image(&self, device: &mut Device<'_>, isa: &str, name: &str) -> Result<String, Error> {
+    /// The directory of the boot image component `name` for `isa`, with its
+    /// files, and those of the images of the further jars it covers, in the root;
+    /// and its `.art` file as the root has it.
+    fn boot_image(
+        &self,
+        device: &mut Device<'_>,
+        isa: &str,
+        name: &str,
+    ) -> Result<(String, Vec<u8>), Error> {
         for dir in BOOT_IMAGE_DIRS {
-            if !self.provide(device, &format!("{dir}/{isa}/{name}.art"))? {
+            let art = format!("{dir}/{isa}/{name}.art");
+            if !self.provide(device, &art)? {
                 continue;
             }
             for file in device.list(&format!("{dir}/{isa}"))? {
@@ -330,24 +578,61 @@ impl Art {
                     self.provide(device, &format!("{dir}/{isa}/{file}"))?;
                 }
             }
-            return Ok(format!("{dir}/{name}.art"));
+            let data = fs::read(self.host(&art)).at(self.host(&art))?;
+            return Ok((dir.to_owned(), data));
         }
         Err(Error::NoBootImage(name.to_owned()))
     }
 }
 
-/// What the new odex must record as the ROM's did for the device to use it: the
-/// boot image and boot class path it was compiled against, the class loader
-/// context (whose checksums are of the jars as the build has them), how it was
-/// compiled, and the instruction set features.
-fn check(stock: &Oat, built: &Oat) -> Result<(), Error> {
+/// What the platform build gives every compilation, with the product's choices
+/// that `stock`, the ROM's oat file, records.
+fn common(stock: &Oat) -> Result<Vec<String>, Error> {
+    let mut args = vec![
+        "--avoid-storing-invocation".to_owned(),
+        "--generate-debug-info".to_owned(),
+        "--strip".to_owned(),
+        "--generate-build-id".to_owned(),
+        "--force-determinism".to_owned(),
+        "--no-inline-from=core-oj.jar".to_owned(),
+        format!("--instruction-set={}", stock.isa()?),
+        "--instruction-set-variant=generic".to_owned(),
+        format!("--instruction-set-features={}", stock.feature_list()?),
+        format!("--compiler-filter={}", stock.get("compiler-filter")?),
+        "--runtime-arg".to_owned(),
+        match stock.get("concurrent-copying")? {
+            "true" => "-Xgc:CC",
+            _ => "-Xgc:CMC",
+        }
+        .to_owned(),
+        format!(
+            "-j{}",
+            std::thread::available_parallelism().map_or(1, |n| n.get())
+        ),
+    ];
+    if let Some(sdk) = stock.store.get("assume-value-sdk-int") {
+        args.push(format!(
+            "--assume-value=Landroid/os/Build$VERSION;->SDK_INT:{sdk}"
+        ));
+    }
+    if stock.store.get("enable-profile-code").map(String::as_str) == Some("true") {
+        args.push("--allow-profile-code".to_owned());
+    }
+    Ok(args)
+}
+
+/// What the new oat file must record as the ROM's did for the device to use it:
+/// the boot class path and how it was compiled, the instruction set features,
+/// the class loader context (whose checksums are of the jars as the build has
+/// them), and `checksums`, the boot image it was compiled against as the build
+/// has it ("" for the primary image).
+fn check(stock: &Oat, built: &Oat, checksums: &str) -> Result<(), Error> {
     let differs = |key: &'static str, stock: String, built: String| match stock == built {
         true => Ok(()),
         false => Err(Error::ArtDiffers { key, stock, built }),
     };
     for key in [
         "bootclasspath",
-        "bootclasspath-checksums",
         "compiler-filter",
         "compilation-reason",
         "concurrent-copying",
@@ -355,6 +640,13 @@ fn check(stock: &Oat, built: &Oat) -> Result<(), Error> {
         let get = |oat: &Oat| oat.store.get(key).cloned().unwrap_or_default();
         differs(key, get(stock), get(built))?;
     }
+    let get = |oat: &Oat| {
+        oat.store
+            .get("bootclasspath-checksums")
+            .cloned()
+            .unwrap_or_default()
+    };
+    differs("bootclasspath-checksums", checksums.to_owned(), get(built))?;
     let classpath = |oat: &Oat| without_checksums(oat.store.get("classpath").map_or("", |s| s));
     differs("classpath", classpath(stock), classpath(built))?;
     differs(
@@ -382,7 +674,7 @@ pub(crate) fn paths(context: &str) -> Vec<String> {
 }
 
 /// A file name without its extension.
-fn file_stem(path: &str) -> &str {
+pub(crate) fn file_stem(path: &str) -> &str {
     let name = path.rsplit('/').next().unwrap_or(path);
     name.rsplit_once('.').map_or(name, |(stem, _)| stem)
 }

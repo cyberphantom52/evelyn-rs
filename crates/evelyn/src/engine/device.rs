@@ -84,6 +84,14 @@ impl<'a> Device<'a> {
         Ok(Some(self.read_at(&at)?))
     }
 
+    /// Whether the build has a file at `path`.
+    pub fn exists(&mut self, path: &str) -> Result<bool, Error> {
+        match apex_path(path) {
+            Some(_) => Ok(self.read(path)?.is_some()),
+            None => Ok(self.locate(path)?.is_some()),
+        }
+    }
+
     pub fn read_at(&self, at: &PartitionPath) -> Result<Vec<u8>, Error> {
         Ok(self.targets[&at.partition].read(&at.path, self.images)?)
     }
@@ -153,8 +161,19 @@ impl<'a> Device<'a> {
         source(self.sources, &self.origins, partition)
     }
 
+    /// The names of the build's APEXes.
+    pub fn apex_names(&mut self) -> Result<Vec<String>, Error> {
+        Ok(self.apexes()?.keys().cloned().collect())
+    }
+
     /// The build's APEX file named `name`, if it has one.
     fn apex_file(&mut self, name: &str) -> Result<Option<PartitionPath>, Error> {
+        Ok(self.apexes()?.get(name).cloned())
+    }
+
+    /// The build's APEX files, in the `apex/` directory of any partition, by the
+    /// name their manifest gives them.
+    fn apexes(&mut self) -> Result<&BTreeMap<String, PartitionPath>, Error> {
         if self.apexes.is_none() {
             let mut found = BTreeMap::new();
             for (partition, target) in self.targets {
@@ -179,11 +198,7 @@ impl<'a> Device<'a> {
             }
             self.apexes = Some(found);
         }
-        Ok(self
-            .apexes
-            .as_ref()
-            .and_then(|apexes| apexes.get(name))
-            .cloned())
+        Ok(self.apexes.as_ref().expect("read above"))
     }
 
     fn payload(&mut self, name: &str) -> Result<&Image, Error> {

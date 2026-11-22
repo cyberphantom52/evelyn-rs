@@ -109,8 +109,6 @@ pub enum Error {
     NoApex(String),
     #[error("the build has no boot image {0}")]
     NoBootImage(String),
-    #[error("{0} changed, so the boot image is stale, and Evelyn does not compile one")]
-    StaleBootImage(String),
     #[error("cannot compile the odex of {dex} again")]
     Dexopt {
         dex: String,
