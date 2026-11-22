@@ -13,6 +13,7 @@ thiserror.workspace = true
 fs-core.workspace = true
 fs-ext4.workspace = true
 fs-erofs.workspace = true
+zip = { workspace = true, features = ["deflate"] }
 
 [lints]
 workspace = true
