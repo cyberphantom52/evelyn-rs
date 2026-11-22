@@ -324,16 +324,10 @@ impl Composition {
             .ok_or_else(|| Error::UnknownPartition(name.to_owned()))
     }
 
-    /// Give the entries waiting for them Android's defaults, from the finished
-    /// build's own policy as the device labels with it, then what was set over
-    /// them; the finished trees, with the steps that were skipped. The rules
-    /// an import left out that still need a name no policy defines are
-    /// reported with their step, with the names they need.
-    pub fn finish(
-        mut self,
-        mounts: &Mounts,
-        images: &Images,
-    ) -> Result<(BTreeMap<String, PartitionTree>, Vec<Skipped>), Error> {
+    /// Write every open document back into its file, and report the rules an
+    /// import left out that still need a name no policy defines, with their step
+    /// and the names they need.
+    pub fn write_back(&mut self) -> Result<(), Error> {
         // For each step, the rules it left out that still need a name no
         // policy defines, and those names, before the policies are written.
         let mut left: BTreeMap<(PathBuf, String), LeftOut> = BTreeMap::new();
@@ -352,6 +346,35 @@ impl Composition {
                 }
             }
         }
+        for target in self.targets.values_mut() {
+            target.close(None)?;
+        }
+        for ((recipe, step), (rules, names)) in left {
+            let plural = if rules.len() == 1 { "rule" } else { "rules" };
+            let names: Vec<String> = names.into_iter().collect();
+            self.skipped.push(Skipped {
+                recipe,
+                step,
+                reason: format!(
+                    "{} policy {plural} left out, needing what no policy defines: {}",
+                    rules.len(),
+                    names.join(", ")
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// Give the entries waiting for them Android's defaults, from the finished
+    /// build's own policy as the device labels with it, then what was set over
+    /// them; the finished trees, with the steps that were skipped. The documents
+    /// are written back first.
+    pub fn finish(
+        mut self,
+        mounts: &Mounts,
+        images: &Images,
+    ) -> Result<(BTreeMap<String, PartitionTree>, Vec<Skipped>), Error> {
+        self.write_back()?;
         let defaults = match self.targets.values().any(Target::waits_for_defaults) {
             true => Some(Defaults::new(&self.targets, mounts, images)?),
             false => None,
@@ -364,21 +387,6 @@ impl Composition {
                 Ok((name, tree))
             })
             .collect::<Result<_, Error>>()?;
-        let mut reports = Vec::new();
-        for ((recipe, step), (rules, names)) in left {
-            let plural = if rules.len() == 1 { "rule" } else { "rules" };
-            let names: Vec<String> = names.into_iter().collect();
-            reports.push(Skipped {
-                recipe,
-                step,
-                reason: format!(
-                    "{} policy {plural} left out, needing what no policy defines: {}",
-                    rules.len(),
-                    names.join(", ")
-                ),
-            });
-        }
-        self.skipped.extend(reports);
         Ok((trees, self.skipped))
     }
 }

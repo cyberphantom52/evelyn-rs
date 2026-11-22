@@ -503,15 +503,15 @@ impl Target {
         }
     }
 
-    /// The finished tree: every entry waiting for them gets Android's defaults
-    /// for where it is on the device, from `defaults`, then what was set over them.
+    /// The finished tree, its documents written back: every entry waiting for
+    /// them gets Android's defaults for where it is on the device, from
+    /// `defaults`, then what was set over them.
     pub(crate) fn resolve(
-        mut self,
+        self,
         partition: &str,
         mounts: &android::partition::Mounts,
         defaults: Option<&crate::patch::defaults::Defaults>,
     ) -> Result<PartitionTree, Error> {
-        self.close(None)?;
         self.tree.map(|path, kind, metadata| match metadata {
             EntryMetadata::Set(metadata) => Ok(metadata),
             EntryMetadata::Default(overrides) => {
