@@ -605,7 +605,20 @@ impl Composition {
         context: &Context<'_>,
     ) -> Result<(), Error> {
         let at = self.open_package_at(target, bound, context)?;
-        self.package_at(&at)?.prepare(edits)?;
+        // The operands the edits search the whole package for are found in one
+        // pass; one only a later edit binds is searched for when it runs.
+        let operands: Vec<String> = edits
+            .iter()
+            .filter_map(|edit| match edit {
+                Operation::ReplaceOperand {
+                    from, class: None, ..
+                } => crate::recipe::substitute(from, bound).ok(),
+                _ => None,
+            })
+            .collect();
+        let package = self.package_at(&at)?;
+        package.prepare(edits)?;
+        package.search(&operands)?;
         self.package = Some(at);
         let ran = self.operations(edits, bound.clone(), context);
         self.package = None;
@@ -624,8 +637,9 @@ impl Composition {
             crate::recipe::substitute(class, bound)?,
             crate::recipe::substitute(method, bound)?,
         );
-        let source = self.open_package()?.class(&class)?;
-        *source = edit(source, &class, &method)?;
+        let package = self.open_package()?;
+        let source = package.class(&class)?;
+        package.set_class(&class, edit(&source, &class, &method)?)?;
         Ok(())
     }
 
@@ -657,8 +671,8 @@ impl Composition {
         let mut replaced = 0;
         for class in classes {
             let source = package.class(&class)?;
-            let (edited, count) = smali::replace_operand(source, &from, &to, method.as_deref())?;
-            *source = edited;
+            let (edited, count) = smali::replace_operand(&source, &from, &to, method.as_deref())?;
+            package.set_class(&class, edited)?;
             replaced += count;
         }
         match replaced {
