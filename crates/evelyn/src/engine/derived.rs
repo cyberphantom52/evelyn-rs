@@ -35,6 +35,9 @@ use std::path::Path;
 /// dynamic tables and the header itself.
 const HEADER: u64 = 1 << 18;
 
+/// Make the build's stale derived files again; with `compile` false, as for a
+/// dry run, only say which ART files are stale, which takes no dex2oat.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn refresh(
     targets: &mut Workspace,
     origins: &BTreeMap<String, Firmware>,
@@ -43,6 +46,7 @@ pub(crate) fn refresh(
     mounts: &Mounts,
     tools: &Tools,
     work: &Path,
+    compile: bool,
 ) -> Result<(), Error> {
     if work.exists() {
         std::fs::remove_dir_all(work).at(work)?;
@@ -61,8 +65,16 @@ pub(crate) fn refresh(
         // Without qemu-user the stale files stay as they are, which ART ignores,
         // as it would have without this stage.
         let stale = boot.len() + jobs.len();
+        if stale > 0 && !compile {
+            tracing::info!(
+                boot_images = boot.len(),
+                odex = jobs.len(),
+                "ART files that a build compiles again"
+            );
+        }
         let qemu = match stale {
             0 => None,
+            _ if !compile => None,
             _ => match tools.host(&["qemu-aarch64-static", "qemu-aarch64"]) {
                 Ok(qemu) => Some(qemu),
                 Err(error) => {

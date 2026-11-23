@@ -452,6 +452,7 @@ fn compose(
         mounts,
         build.tools,
         &build.work_dir.join("derived"),
+        !build.dry_run,
     )?;
     let (trees, skipped) = composition.finish(mounts, images)?;
     let targets = trees
