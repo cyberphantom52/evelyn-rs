@@ -35,8 +35,17 @@ use std::path::Path;
 /// dynamic tables and the header itself.
 const HEADER: u64 = 1 << 18;
 
-/// Make the build's stale derived files again; with `compile` false, as for a
-/// dry run, only say which ART files are stale, which takes no dex2oat.
+/// What becomes of the ART files an edit made stale.
+pub(crate) enum Dexpreopt {
+    /// They are compiled again.
+    Compile,
+    /// They are counted, for a dry run, which writes nothing.
+    Count,
+    /// They are left as they are, which ART does not use.
+    Skip,
+}
+
+/// Make the build's stale derived files again, the ART files as `dexpreopt` says.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn refresh(
     targets: &mut Workspace,
@@ -46,7 +55,7 @@ pub(crate) fn refresh(
     mounts: &Mounts,
     tools: &Tools,
     work: &Path,
-    compile: bool,
+    dexpreopt: Dexpreopt,
 ) -> Result<(), Error> {
     if work.exists() {
         std::fs::remove_dir_all(work).at(work)?;
@@ -63,13 +72,21 @@ pub(crate) fn refresh(
         );
         let (boot, jobs) = stale(&mut device)?;
         let stale = boot.len() + jobs.len();
-        if stale > 0 && !compile {
-            tracing::info!(
+        match dexpreopt {
+            _ if stale == 0 => {}
+            Dexpreopt::Compile => {}
+            Dexpreopt::Count => tracing::info!(
                 boot_images = boot.len(),
                 odex = jobs.len(),
                 "ART files that a build compiles again"
-            );
+            ),
+            Dexpreopt::Skip => tracing::warn!(
+                boot_images = boot.len(),
+                odex = jobs.len(),
+                "ART files left stale, which ART will not use, as --no-dexpreopt asks"
+            ),
         }
+        let compile = matches!(dexpreopt, Dexpreopt::Compile);
         // The ROM's tools run as they are on arm64 Linux and Android, and
         // under qemu-user elsewhere; without qemu-user the stale files stay as
         // they are, which ART ignores, as it would have without this stage.

@@ -49,6 +49,8 @@ pub struct Build<'a> {
     pub dry_run: bool,
     /// Apply the debug recipe built into Evelyn after every other patch.
     pub debug: bool,
+    /// Compile again the ART files an edit made stale.
+    pub dexpreopt: bool,
     pub tools: &'a Tools,
 }
 
@@ -452,7 +454,11 @@ fn compose(
         mounts,
         build.tools,
         &build.work_dir.join("derived"),
-        !build.dry_run,
+        match (build.dry_run, build.dexpreopt) {
+            (true, _) => crate::engine::derived::Dexpreopt::Count,
+            (false, true) => crate::engine::derived::Dexpreopt::Compile,
+            (false, false) => crate::engine::derived::Dexpreopt::Skip,
+        },
     )?;
     let (trees, skipped) = composition.finish(mounts, images)?;
     let targets = trees

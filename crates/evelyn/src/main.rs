@@ -49,6 +49,12 @@ enum Command {
         /// boot without authorisation, applied after every other patch.
         #[arg(long)]
         debug: bool,
+        /// Leave the ART files an edit made stale (the boot image, odex, vdex
+        /// and app images) as they are rather than compile them again, for a
+        /// quicker build: ART does not use them, and the code they are for runs
+        /// uncompiled.
+        #[arg(long)]
+        no_dexpreopt: bool,
     },
     /// Replace the OTA package in firmware/rom or firmware/stock, or both, by its
     /// images, so builds read them in place instead of extracting the package
@@ -194,6 +200,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             patches,
             dry_run,
             debug,
+            no_dexpreopt,
         } => {
             let root = evelyn::engine::profile::find(Path::new("."))?;
             print(&evelyn::engine::build(&evelyn::engine::Build {
@@ -206,6 +213,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 extra_patches: &patches,
                 dry_run,
                 debug,
+                dexpreopt: !no_dexpreopt,
                 tools: &evelyn::toolchain::Tools::user()?,
             })?)
         }
