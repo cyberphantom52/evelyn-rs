@@ -12,7 +12,7 @@ license = "GPL-3.0-or-later"
 [workspace.dependencies]
 android = { path = "crates/android" }
 thiserror = "2.0.21"
-apkscope-core = { git = "https://github.com/cyberphantom52/apkscope", rev = "6319c6672a532b2a7c2dee8e7863021adf7be4e6" }
+apkscope-core = { git = "https://github.com/cyberphantom52/apkscope", rev = "57f86187449d012793d21d3ffc0a5a3fd35d91ec" }
 clap = { version = "4.6.7", features = ["derive"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

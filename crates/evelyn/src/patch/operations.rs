@@ -134,7 +134,7 @@ impl Composition {
                 self.package_at(&at)?.sign(keys);
                 Ok(())
             }
-            Operation::Resources(edits) => self.resources(edits, bound, context),
+            Operation::Resources(edits) => self.resources(edits, bound),
             Operation::StubMethod {
                 class,
                 method,
@@ -578,7 +578,8 @@ impl Composition {
         let target = self.target(&at.partition)?;
         if !matches!(target.opened(&at.path)?, Some(Open::Package(_))) {
             let source = target.content_path(&at.path, context.images)?;
-            target.open(&at.path, Open::Package(Package::new(source)))?;
+            let package = Package::open(&source)?;
+            target.open(&at.path, Open::Package(Box::new(package)))?;
         }
         Ok(at)
     }
@@ -600,7 +601,6 @@ impl Composition {
         context: &Context<'_>,
     ) -> Result<(), Error> {
         let at = self.open_package_at(target, bound, context)?;
-        self.package_at(&at)?.prepare(edits)?;
         self.package = Some(at);
         let ran = self.operations(edits, bound.clone(), context);
         self.package = None;
@@ -753,14 +753,10 @@ impl Composition {
         }
     }
 
-    /// Set values resources of the open package, each in its configuration's
-    /// file for its type, which must be there.
-    fn resources(
-        &mut self,
-        edits: &[ResourceEdit],
-        bound: &Bound,
-        context: &Context<'_>,
-    ) -> Result<(), Error> {
+    /// Set value resources of the open package, each in the configuration it
+    /// names. One that has no value there is an error, or with `create`, is
+    /// added.
+    fn resources(&mut self, edits: &[ResourceEdit], bound: &Bound) -> Result<(), Error> {
         if self.package.is_none() {
             return Err(Error::OutsidePackage("Resources".to_owned()));
         }
@@ -783,17 +779,15 @@ impl Composition {
                         .collect::<Result<_, _>>()?,
                 ),
             };
-            let file = crate::patch::xml::resource_file(&kind)?;
-            let directory = match config.as_str() {
-                "" => "values".to_owned(),
-                config => format!("values-{config}"),
-            };
-            let target = format!("/res/{directory}/{file}");
-            self.edit_named(&target, &Bound::new(), context, |bytes| {
-                Ok(crate::patch::xml::set_resource(
-                    bytes, &kind, &name, &value, *create,
-                )?)
-            })?;
+            if kind.ends_with("array") != matches!(value, ResourceValue::Items(_)) {
+                return Err(Error::Assertion(format!(
+                    "{kind} {name}: an array has items, anything else one value"
+                )));
+            }
+            let package = self.open_package()?;
+            if !package.set_resource(&kind, &name, &config, &value)? && !create {
+                return Err(Error::Assertion(format!("{kind} {name} is not there")));
+            }
         }
         Ok(())
     }

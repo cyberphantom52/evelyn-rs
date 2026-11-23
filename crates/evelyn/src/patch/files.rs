@@ -187,10 +187,8 @@ impl Composition {
                 let package = self
                     .current()
                     .ok_or(Error::Unsupported("no package is open"))?;
-                let data = package.files()?.read(entry.path.as_ref());
-                Ok(data
-                    .ok_or_else(|| layout::Error::MissingPath(entry.path.clone()))?
-                    .to_vec())
+                let data = package.read(entry.path.as_ref())?;
+                Ok(data.ok_or_else(|| layout::Error::MissingPath(entry.path.clone()))?)
             }
             Place::Firmware(firmware) => {
                 let tree = context.source(&source_of(firmware, &entry.partition))?;
@@ -270,7 +268,7 @@ impl Composition {
                     let edited = edit(&bytes)?;
                     if edited != bytes {
                         let package = self.current_mut().expect("a package's file is in it");
-                        package.files_mut()?.write(entry.path.as_ref(), edited);
+                        package.write(entry.path.as_ref(), edited)?;
                     }
                 }
                 _ => return Err(Error::Unsupported("only the build can be edited")),
@@ -301,12 +299,10 @@ impl Composition {
         match (entry.place, self.current_mut()) {
             (Place::Build, _) => self.target(&entry.partition)?.remove(&entry.path),
             (Place::Package, Some(package)) => {
-                let files = package.files_mut()?;
-                if !files.exists(entry.path.as_ref()) {
+                if !package.files()?.exists(entry.path.as_ref()) {
                     return Err(layout::Error::MissingPath(entry.path.clone()).into());
                 }
-                files.remove(entry.path.as_ref());
-                Ok(())
+                Ok(package.remove(entry.path.as_ref())?)
             }
             _ => Err(Error::Unsupported("only the build can be removed from")),
         }

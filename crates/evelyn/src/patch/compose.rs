@@ -211,7 +211,7 @@ impl Composition {
         let source = context.asset(asset)?;
         if let Some(package) = self.current_mut() {
             let inside = RelativePath::try_from(to.to_string()[1..].to_owned())?;
-            let files = package.files_mut()?;
+            let files = package.files()?;
             let path: &str = inside.as_ref();
             if files.exists(path) && !placing.overwrite {
                 return Err(layout::Error::DestinationExists(inside).into());
@@ -221,8 +221,7 @@ impl Composition {
                 return Err(layout::Error::MissingParent(inside).into());
             }
             let data = std::fs::read(&source).map_err(crate::patch::package::io(&source))?;
-            files.write(path, data);
-            return Ok(());
+            return Ok(package.write(path, data)?);
         }
         // A partition's mount point is its root; anything else is a path in one.
         let (partition, base) = match context.mounts.partition_at(to) {

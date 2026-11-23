@@ -147,7 +147,7 @@ pub struct Target {
 /// is written.
 pub(crate) enum Open {
     Policy(Document),
-    Package(Package),
+    Package(Box<Package>),
 }
 
 impl Open {
