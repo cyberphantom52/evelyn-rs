@@ -62,8 +62,6 @@ pub(crate) fn refresh(
             &work.join("apex"),
         );
         let (boot, jobs) = stale(&mut device)?;
-        // Without qemu-user the stale files stay as they are, which ART ignores,
-        // as it would have without this stage.
         let stale = boot.len() + jobs.len();
         if stale > 0 && !compile {
             tracing::info!(
@@ -72,19 +70,25 @@ pub(crate) fn refresh(
                 "ART files that a build compiles again"
             );
         }
-        let qemu = match stale {
+        // The ROM's tools run as they are on arm64 Linux and Android, and
+        // under qemu-user elsewhere; without qemu-user the stale files stay as
+        // they are, which ART ignores, as it would have without this stage.
+        let native = cfg!(any(target_os = "linux", target_os = "android"))
+            && std::env::consts::ARCH == "aarch64";
+        let runner = match stale {
             0 => None,
             _ if !compile => None,
+            _ if native => Some(None),
             _ => match tools.host(&["qemu-aarch64-static", "qemu-aarch64"]) {
-                Ok(qemu) => Some(qemu),
+                Ok(qemu) => Some(Some(qemu)),
                 Err(error) => {
                     tracing::warn!(stale, reason = %error, "ART files left stale, which ART will not use");
                     None
                 }
             },
         };
-        if let Some(qemu) = qemu {
-            let art = Art::new(&mut device, qemu, work)?;
+        if let Some(emulator) = runner {
+            let art = Art::new(&mut device, emulator, work)?;
             // Each image's checksum as oat files record it, by instruction set,
             // the ROM's until it is compiled again.
             let mut checksums: BTreeMap<String, Vec<String>> = BTreeMap::new();

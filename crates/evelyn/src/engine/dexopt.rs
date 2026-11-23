@@ -31,6 +31,13 @@
 //!   `--preloaded-classes` given to the primary boot image (unless
 //!   `RELEASE_ART_NOPRELOAD_CLASSES_IN_PROFILE`). `-Xms`/`-Xmx` are left out:
 //!   they bound dex2oat's heap, not what it writes.
+//! - As the platform build, which runs dex2oat on the build host, does, each
+//!   file is given by where it is on the host and by its location on the device
+//!   apart: `--dex-file` and `--dex-location`, `-Xbootclasspath` and
+//!   `-Xbootclasspath-locations`, `--class-loader-context` and
+//!   `--stored-class-loader-context`, `--oat-file` and `--oat-location`; what
+//!   dex2oat records is the device's. So dex2oat reads the build's files and
+//!   never the host's own `/system`, whatever the host.
 //! - Constants of the boot image: the primary image covers the platform's boot
 //!   jars (ART's and the framework's) as one image per jar, compiled with
 //!   `/system/etc/boot-image.prof` and every APEX's `etc/boot-image.prof`,
@@ -61,11 +68,8 @@ use std::{
 /// dex2oat and profman, in the build's APEXes.
 const DEX2OAT: &str = "/apex/com.android.art/bin/dex2oat64";
 const PROFMAN: &str = "/apex/com.android.art/bin/profman";
-/// The linker dex2oat names as its interpreter, and where the ROM has its file.
-const LINKER: (&str, &str) = (
-    "/system/bin/linker64",
-    "/apex/com.android.runtime/bin/linker64",
-);
+/// The ROM's linker, which runs dex2oat and profman given as its first argument.
+const LINKER: &str = "/apex/com.android.runtime/bin/linker64";
 /// Where dex2oat's libraries are found: the ART APEX's own, bionic, and those of
 /// the APEXes and the system its linker namespace links to on the device.
 const LIBRARY_PATH: [&str; 5] = [
@@ -131,20 +135,26 @@ impl BootJob {
     }
 }
 
-/// The ROM's ART tools, runnable on the host: a root holding them and the
-/// build's files they read, and qemu-user to run them in it.
+/// The ROM's ART tools, runnable on the host: a directory holding them and the
+/// build's files they read, at their device paths below it, and qemu-user to
+/// run them on a host that is not arm64 Linux or Android.
 pub(crate) struct Art {
-    qemu: PathBuf,
+    emulator: Option<PathBuf>,
     root: PathBuf,
     out: PathBuf,
 }
 
 impl Art {
     /// dex2oat and profman, the APEXes on their library path, their linker, and
-    /// the system libraries they need, in a new root in `work`, run by `qemu`.
-    pub fn new(device: &mut Device<'_>, qemu: PathBuf, work: &Path) -> Result<Self, Error> {
+    /// the system libraries they need, in a new directory in `work`, run by
+    /// `emulator` if the host needs one.
+    pub fn new(
+        device: &mut Device<'_>,
+        emulator: Option<PathBuf>,
+        work: &Path,
+    ) -> Result<Self, Error> {
         let art = Self {
-            qemu,
+            emulator,
             root: work.join("root"),
             out: work.join("out"),
         };
@@ -155,8 +165,6 @@ impl Art {
                 }
             }
         }
-        let linker = fs::read(art.host(LINKER.1)).at(art.host(LINKER.1))?;
-        art.place(LINKER.0, &linker)?;
         let mut pending = vec![DEX2OAT.to_owned(), PROFMAN.to_owned()];
         let mut seen = BTreeSet::new();
         let mut libraries: Vec<String> = OPENED.iter().map(|name| (*name).to_owned()).collect();
@@ -190,32 +198,51 @@ impl Art {
         }
     }
 
-    /// Write `data` at the device path `path` in the root, runnable, as qemu-user
-    /// runs only what it may execute.
+    /// Write `data` at the device path `path` in the directory, runnable.
     fn place(&self, path: &str, data: &[u8]) -> Result<(), Error> {
         let host = self.host(path);
         write(&host, data)?;
         fs::set_permissions(&host, fs::Permissions::from_mode(0o755)).at(&host)
     }
 
+    /// Where the device path `path` is on the host.
     fn host(&self, path: &str) -> PathBuf {
         self.root.join(path.trim_start_matches('/'))
     }
 
-    /// `program` under qemu-user, with the root as `/` for the files it opens that
-    /// the root has, and the environment it has on the device.
+    /// `host` of `path`, as an argument.
+    fn at(&self, path: &str) -> String {
+        self.host(path).display().to_string()
+    }
+
+    /// A class loader context with its jars where they are on the host.
+    fn context_at(&self, context: &str) -> String {
+        regex::Regex::new(r"/[^\[\]{}:;*!#]+")
+            .expect("valid")
+            .replace_all(context, |found: &regex::Captures<'_>| self.at(&found[0]))
+            .into_owned()
+    }
+
+    /// `program` run by the ROM's linker, under the emulator if the host needs
+    /// one, with the device's environment, its directories on the host.
     fn command(&self, program: &str) -> Command {
-        let mut command = Command::new(&self.qemu);
+        let mut command = match &self.emulator {
+            Some(emulator) => {
+                let mut command = Command::new(emulator);
+                command.arg(self.host(LINKER));
+                command
+            }
+            None => Command::new(self.host(LINKER)),
+        };
+        let libraries: Vec<String> = LIBRARY_PATH.iter().map(|dir| self.at(dir)).collect();
         command
-            .arg("-L")
-            .arg(&self.root)
             .arg(self.host(program))
             .env_clear()
-            .env("LD_LIBRARY_PATH", LIBRARY_PATH.join(":"))
-            .env("ANDROID_ROOT", "/system")
-            .env("ANDROID_ART_ROOT", "/apex/com.android.art")
-            .env("ANDROID_I18N_ROOT", "/apex/com.android.i18n")
-            .env("ANDROID_DATA", "/data");
+            .env("LD_LIBRARY_PATH", libraries.join(":"))
+            .env("ANDROID_ROOT", self.host("/system"))
+            .env("ANDROID_ART_ROOT", self.host("/apex/com.android.art"))
+            .env("ANDROID_I18N_ROOT", self.host("/apex/com.android.i18n"))
+            .env("ANDROID_DATA", self.host("/data"));
         command
     }
 
@@ -226,7 +253,10 @@ impl Art {
             .command(program)
             .args(args)
             .output()
-            .map_err(|source| Error::ArtRun(self.qemu.clone(), source))?;
+            .map_err(|source| {
+                let program = self.emulator.clone().unwrap_or(self.host(LINKER));
+                Error::ArtRun(program, source)
+            })?;
         match output.status.success() {
             true => Ok(output.stdout),
             false => Err(Error::ArtFailed(program, output.status)),
@@ -261,7 +291,8 @@ impl Art {
                 0 => "boot".to_owned(),
                 _ => format!("boot-{}", file_stem(&job.before[start])),
             };
-            before.push(self.boot_image(device, &job.isa, &name)?.0 + "/" + &name + ".art");
+            let dir = self.boot_image(device, &job.isa, &name)?.0;
+            before.push(self.at(&format!("{dir}/{name}.art")));
             start += count;
         }
         let classpath: Vec<&str> = job
@@ -276,11 +307,12 @@ impl Art {
 
         let out = self.out.join(&job.isa).join(&name);
         fs::create_dir_all(out.join("symbols")).at(&out)?;
+        let files: Vec<String> = classpath.iter().map(|jar| self.at(jar)).collect();
         let classpath = classpath.join(":");
         let mut args = common(&stock)?;
         args.extend([
             "--runtime-arg".to_owned(),
-            format!("-Xbootclasspath:{classpath}"),
+            format!("-Xbootclasspath:{}", files.join(":")),
             "--runtime-arg".to_owned(),
             format!("-Xbootclasspath-locations:{classpath}"),
             format!("--oat-symbols={}", out.join("symbols/boot.oat").display()),
@@ -290,14 +322,17 @@ impl Art {
             "--image-format=lz4hc".to_owned(),
         ]);
         for jar in &job.jars {
-            args.push(format!("--dex-file={jar}"));
+            args.push(format!("--dex-file={}", self.at(jar)));
             args.push(format!("--dex-location={jar}"));
         }
         match primary {
             true => {
                 args.push(format!("--base={:#x}", stock_header.image_begin));
                 if self.provide(device, PRELOADED_CLASSES)? {
-                    args.push(format!("--preloaded-classes={PRELOADED_CLASSES}"));
+                    args.push(format!(
+                        "--preloaded-classes={}",
+                        self.at(PRELOADED_CLASSES)
+                    ));
                 }
             }
             false => {
@@ -306,7 +341,10 @@ impl Art {
             }
         }
         if self.provide(device, DIRTY_IMAGE_OBJECTS)? {
-            args.push(format!("--dirty-image-objects={DIRTY_IMAGE_OBJECTS}"));
+            args.push(format!(
+                "--dirty-image-objects={}",
+                self.at(DIRTY_IMAGE_OBJECTS)
+            ));
         }
         let mut written = Vec::new();
         if stock.get("compiler-filter")? == "speed-profile" {
@@ -326,7 +364,7 @@ impl Art {
             for apex in device.apex_names()? {
                 let profile = format!("/apex/{apex}/etc/boot-image.prof");
                 if self.provide(device, &profile)? {
-                    args.push(format!("--profile-file={profile}"));
+                    args.push(format!("--profile-file={}", self.at(&profile)));
                 }
             }
         }
@@ -389,7 +427,7 @@ impl Art {
                     write(&host, data)?;
                     rom.push(format!("--apk={}", host.display()));
                 }
-                None => rom.push(format!("--apk={jar}")),
+                None => rom.push(format!("--apk={}", self.at(jar))),
             }
         }
         let locations: Vec<String> = job
@@ -399,7 +437,7 @@ impl Art {
             .collect();
         let mut dump = vec![
             "--dump-classes-and-methods".to_owned(),
-            format!("--profile-file={BOOT_PROFILE}"),
+            format!("--profile-file={}", self.at(BOOT_PROFILE)),
         ];
         dump.extend(rom);
         dump.extend(locations.iter().cloned());
@@ -411,7 +449,7 @@ impl Art {
             format!("--create-profile-from={}", text.display()),
             format!("--reference-profile-file={}", made.display()),
         ];
-        create.extend(job.jars.iter().map(|jar| format!("--apk={jar}")));
+        create.extend(job.jars.iter().map(|jar| format!("--apk={}", self.at(jar))));
         create.extend(locations);
         self.run(PROFMAN, &create)?;
         Ok(made)
@@ -446,7 +484,8 @@ impl Art {
                 0 => "boot".to_owned(),
                 _ => format!("boot-{}", file_stem(jars[start])),
             };
-            boot_image.push(self.boot_image(device, &job.isa, &name)?.0 + "/" + &name + ".art");
+            let dir = self.boot_image(device, &job.isa, &name)?.0;
+            boot_image.push(self.at(&format!("{dir}/{name}.art")));
             start += count;
         }
         let loader = without_checksums(stock.get("classpath")?);
@@ -465,15 +504,17 @@ impl Art {
         let output = |extension: &str| self.out.join(&job.isa).join(format!("{name}.{extension}"));
         fs::create_dir_all(self.out.join(&job.isa).join("symbols")).at(&self.out)?;
         let filter = stock.get("compiler-filter")?;
+        let files: Vec<String> = jars.iter().map(|jar| self.at(jar)).collect();
         let mut args = common(&stock)?;
         args.extend([
             "--runtime-arg".to_owned(),
-            format!("-Xbootclasspath:{classpath}"),
+            format!("-Xbootclasspath:{}", files.join(":")),
             "--runtime-arg".to_owned(),
             format!("-Xbootclasspath-locations:{classpath}"),
             format!("--boot-image={}", boot_image.join(":")),
-            format!("--class-loader-context={loader}"),
-            format!("--dex-file={}", job.dex),
+            format!("--class-loader-context={}", self.context_at(&loader)),
+            format!("--stored-class-loader-context={loader}"),
+            format!("--dex-file={}", self.at(&job.dex)),
             format!("--dex-location={}", job.dex),
             format!("--oat-file={}", output("odex").display()),
             format!("--output-vdex={}", output("vdex").display()),
@@ -502,7 +543,7 @@ impl Art {
             let profile = format!("{}.prof", job.dex);
             self.provide(device, &profile)?;
             match &job.original {
-                None => args.push(format!("--profile-file={profile}")),
+                None => args.push(format!("--profile-file={}", self.at(&profile))),
                 Some(original) => {
                     let made = self.profile(job, &profile, original, &output("prof"))?;
                     args.push(format!("--profile-file={}", made.display()));
@@ -540,7 +581,7 @@ impl Art {
             PROFMAN,
             &[
                 "--dump-classes-and-methods".to_owned(),
-                format!("--profile-file={profile}"),
+                format!("--profile-file={}", self.at(profile)),
                 format!("--apk={}", rom.display()),
                 format!("--dex-location={}", job.dex),
             ],
@@ -551,7 +592,7 @@ impl Art {
             PROFMAN,
             &[
                 format!("--create-profile-from={}", text.display()),
-                format!("--apk={}", job.dex),
+                format!("--apk={}", self.at(&job.dex)),
                 format!("--dex-location={}", job.dex),
                 format!("--reference-profile-file={}", made.display()),
             ],
