@@ -13,7 +13,7 @@ use apkscope_core::{apk::Apk, apksign, values::Body};
 use std::{
     cell::RefCell,
     collections::BTreeSet,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
 };
 use thiserror::Error;
@@ -21,7 +21,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("cannot access {0}")]
-    Io(PathBuf, #[source] std::io::Error),
+    Io(PathBuf, #[source] io::Error),
     #[error("cannot edit the package")]
     Package(#[from] apkscope_core::Error),
 }
@@ -148,18 +148,18 @@ impl Package {
         Ok(self.apk.get_mut().classes()?.find(operand)?)
     }
 
-    /// The package as its edits left it, with only what they changed changed,
-    /// stored entries aligned, and signed if it has keys.
-    pub(crate) fn render(&self) -> Result<Vec<u8>, Error> {
-        let (mut bytes, central_directory) = self.apk.borrow_mut().rebuild()?;
-        if let Some(keys) = &self.keys {
-            let key = apksign::load(&keys.key, &keys.certificate)?;
-            bytes = apksign::sign(bytes, central_directory, &key)?;
-        }
-        Ok(bytes)
+    /// Write the package as its edits left it into `out`, with only what they
+    /// changed changed, stored entries aligned, and signed if it has keys. How
+    /// many bytes that is.
+    pub(crate) fn render(&self, out: impl io::Write) -> Result<u64, Error> {
+        let key = match &self.keys {
+            Some(keys) => Some(apksign::load(&keys.key, &keys.certificate)?),
+            None => None,
+        };
+        Ok(self.apk.borrow_mut().rebuild(out, key.as_ref())?)
     }
 }
 
-pub(crate) fn io(path: &Path) -> impl FnOnce(std::io::Error) -> Error + '_ {
+pub(crate) fn io(path: &Path) -> impl FnOnce(io::Error) -> Error + '_ {
     |source| Error::Io(path.into(), source)
 }

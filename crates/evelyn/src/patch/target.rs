@@ -155,7 +155,11 @@ impl Open {
     fn render(&self) -> Result<Vec<u8>, Error> {
         Ok(match self {
             Open::Policy(document) => document.render()?.into_bytes(),
-            Open::Package(package) => package.render()?,
+            Open::Package(package) => {
+                let mut bytes = Vec::new();
+                package.render(&mut bytes)?;
+                bytes
+            }
         })
     }
 }
@@ -213,8 +217,19 @@ impl Target {
             .cloned()
             .collect();
         for canonical in open {
-            let open = self.open.remove(&canonical).expect("listed above");
-            let kind = self.write_blob(open.render()?.as_slice())?;
+            let kind = match self.open.remove(&canonical).expect("listed above") {
+                // A package goes into its blob as it is written, never whole in
+                // memory.
+                Open::Package(package) => {
+                    let blob = self.new_blob();
+                    let path = self.blob_path(&blob);
+                    let file = fs::File::create_new(&path).at(&path)?;
+                    let size = package.render(io::BufWriter::new(file))?;
+                    let content = Content::Blob(blob);
+                    EntryKind::File { content, size }
+                }
+                open => self.write_blob(open.render()?.as_slice())?,
+            };
             self.set_content(&canonical, kind);
         }
         Ok(())

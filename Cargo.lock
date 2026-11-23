@@ -115,7 +115,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 [[package]]
 name = "apkscope-core"
 version = "0.12.0"
-source = "git+https://github.com/cyberphantom52/apkscope?rev=57f86187449d012793d21d3ffc0a5a3fd35d91ec#57f86187449d012793d21d3ffc0a5a3fd35d91ec"
+source = "git+https://github.com/cyberphantom52/apkscope?rev=fd531fb0fbcd4fe4ead741886c3e73a890e3da8b#fd531fb0fbcd4fe4ead741886c3e73a890e3da8b"
 dependencies = [
  "crc32fast",
  "miniz_oxide 0.8.9",
