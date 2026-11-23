@@ -13,7 +13,8 @@ use apkscope_core::{apk::Apk, apksign, values::Body};
 use std::{
     cell::RefCell,
     collections::BTreeSet,
-    fs, io,
+    fs,
+    io::{self, Read, Seek, Write},
     path::{Path, PathBuf},
 };
 use thiserror::Error;
@@ -149,14 +150,20 @@ impl Package {
     }
 
     /// Write the package as its edits left it into `out`, with only what they
-    /// changed changed, stored entries aligned, and signed if it has keys. How
-    /// many bytes that is.
-    pub(crate) fn render(&self, out: impl io::Write) -> Result<u64, Error> {
-        let key = match &self.keys {
-            Some(keys) => Some(apksign::load(&keys.key, &keys.certificate)?),
-            None => None,
-        };
-        Ok(self.apk.borrow_mut().rebuild(out, key.as_ref())?)
+    /// changed changed and stored entries aligned, then sign it there if it has
+    /// keys. How many bytes that is.
+    pub(crate) fn render<F: Read + Write + Seek>(&self, out: &mut F) -> Result<u64, Error> {
+        let size = self
+            .apk
+            .borrow_mut()
+            .rebuild(io::BufWriter::new(&mut *out))?;
+        match &self.keys {
+            Some(keys) => {
+                let key = apksign::load(&keys.key, &keys.certificate)?;
+                Ok(apksign::sign(out, &key)?)
+            }
+            None => Ok(size),
+        }
     }
 }
 

@@ -156,9 +156,9 @@ impl Open {
         Ok(match self {
             Open::Policy(document) => document.render()?.into_bytes(),
             Open::Package(package) => {
-                let mut bytes = Vec::new();
+                let mut bytes = io::Cursor::new(Vec::new());
                 package.render(&mut bytes)?;
-                bytes
+                bytes.into_inner()
             }
         })
     }
@@ -223,8 +223,13 @@ impl Target {
                 Open::Package(package) => {
                     let blob = self.new_blob();
                     let path = self.blob_path(&blob);
-                    let file = fs::File::create_new(&path).at(&path)?;
-                    let size = package.render(io::BufWriter::new(file))?;
+                    let mut file = fs::File::options()
+                        .read(true)
+                        .write(true)
+                        .create_new(true)
+                        .open(&path)
+                        .at(&path)?;
+                    let size = package.render(&mut file)?;
                     let content = Content::Blob(blob);
                     EntryKind::File { content, size }
                 }
