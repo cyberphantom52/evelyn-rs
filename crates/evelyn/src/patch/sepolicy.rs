@@ -156,6 +156,29 @@ impl Document {
         &self.declared
     }
 
+    /// Remove from the file's text the types and attributes `selected` picks of
+    /// those the device's policy files declare, with every statement naming
+    /// them, as [`CilPolicy::remove_types`] does. The names removed, none if
+    /// `selected` picks none.
+    pub(crate) fn remove(&mut self, selected: impl Fn(&str) -> bool) -> Result<Vec<String>, Error> {
+        let names: Vec<String> = self
+            .declared
+            .iter()
+            .filter(|name| selected(name))
+            .cloned()
+            .collect();
+        if names.is_empty() {
+            return Ok(names);
+        }
+        self.text = CilPolicy::new()
+            .add_file_named(&self.name, &self.text)
+            .and_then(|policy| policy.remove_types(&names))
+            .and_then(|policy| policy.to_cil())
+            .map_err(at(&self.name))?;
+        self.declared.retain(|name| !selected(name));
+        Ok(names)
+    }
+
     /// Hold `held` until the file declares every name it needs.
     pub(crate) fn hold(&mut self, held: Held) {
         self.held.push(held);

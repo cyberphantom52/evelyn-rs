@@ -47,6 +47,9 @@ rust-fs-core = { version = "=0.4.4" }
 [patch."https://github.com/cyberphantom52/rust-fs-erofs"]
 rust-fs-core = { version = "=0.4.4" }
 
+[patch."https://github.com/cyberphantom52/sepolicy-inject-rs"]
+sepolicy-inject-rs = { path = "../../sepolicy-inject-rs" }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 

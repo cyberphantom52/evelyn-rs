@@ -740,6 +740,24 @@ impl Composition {
                 PolicyEdit::Import { types, from } => {
                     self.import_policy(file, types, from, bound, context)?;
                 }
+                PolicyEdit::Remove { types } => {
+                    let patterns = types
+                        .iter()
+                        .map(|pattern| crate::recipe::substitute(pattern, bound))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let removed = self.document(file)?.remove(|name| {
+                        patterns
+                            .iter()
+                            .any(|pattern| android::path::glob(pattern, name))
+                    })?;
+                    if removed.is_empty() {
+                        return Err(Error::Assertion(format!(
+                            "{} names no type or attribute in the policy",
+                            patterns.join(", ")
+                        )));
+                    }
+                    tracing::debug!(path = %file.path, "removed from the policy: {}", removed.join(", "));
+                }
             }
         }
         Ok(())

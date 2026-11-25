@@ -276,6 +276,12 @@ pub enum PolicyEdit {
         #[serde(default = "precompiled_policy")]
         from: Location,
     },
+    /// Remove the types and attributes `types` names, globs allowed, from the
+    /// file: their declarations, and every statement that names them, except an
+    /// attribute set, which only loses them as members. The names are matched
+    /// against what the device's policy files declare, so an attribute another
+    /// file declares is removed from this one's rules too.
+    Remove { types: Vec<String> },
 }
 
 /// An edit of a package's values resources.
@@ -539,7 +545,7 @@ mod tests {
                     Let("type", Property(Build("/my_product/build.prop"), "ro.type")),
                     Props(All, [Set("ro.a", "1"), Remove("ro.b")]),
                     Text("/vendor/etc/x", [Append(r"a\.b"), Diff("x.diff")]),
-                    Policy("/vendor/etc/selinux/vendor_sepolicy.cil", [Add("a.te"), Import(types: ["t"])]),
+                    Policy("/vendor/etc/selinux/vendor_sepolicy.cil", [Add("a.te"), Import(types: ["t"]), Remove(types: ["t_*"])]),
                     ForEach(Partitions(Rom), "p", [Remove("{p}/app/X")]),
                     Package("/product/app/A.apk", [
                         Resources([Set(type: "string", name: "n", config: "", value: "v")]),
