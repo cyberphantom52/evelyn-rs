@@ -10,9 +10,11 @@ on property:sys.boot_completed=1
 service persistentLogging /system/bin/sh -c "logcat -b all > /data/local/tmp/logs/log"
     user system
     group root system log
+    seclabel u:r:evelyn_bootlog:s0
     disabled
 
 service KernelLogging /system/bin/sh -c "dmesg -w > /data/local/tmp/logs/kernel_log"
     user system
     group root system log
+    seclabel u:r:evelyn_bootlog:s0
     disabled

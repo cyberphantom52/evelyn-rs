@@ -4,6 +4,7 @@
 [
     Step("debug-logging", [
         Install("logcat.rc", "/vendor/etc/init/logcat.rc"),
+        Policy("/vendor/etc/selinux/vendor_sepolicy.cil", [Add("bootlog.te")]),
     ]),
     // In the system partition's build.prop: init applies a vendor-side one's
     // properties with vendor_init's policy, which may not set these, so with

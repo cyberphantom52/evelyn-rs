@@ -109,10 +109,16 @@ const BUILT_IN_RECIPES: [(&str, &str); 1] = [(
 /// The recipe a debug build applies after every other patch, and its assets,
 /// written to the work directory for the build.
 const DEBUG_RECIPE: &str = include_str!("../../../../assets/recipes/debug.ron");
-const DEBUG_ASSETS: [(&str, &str); 1] = [(
-    "logcat.rc",
-    include_str!("../../../../assets/recipes/debug/logcat.rc"),
-)];
+const DEBUG_ASSETS: [(&str, &str); 2] = [
+    (
+        "logcat.rc",
+        include_str!("../../../../assets/recipes/debug/logcat.rc"),
+    ),
+    (
+        "bootlog.te",
+        include_str!("../../../../assets/recipes/debug/bootlog.te"),
+    ),
+];
 
 /// Build the repository: the port's patches, the extra patch directories, then
 /// the recipes built into Evelyn, applied to the partitions the port takes. Of

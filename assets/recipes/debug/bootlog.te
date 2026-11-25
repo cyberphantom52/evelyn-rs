@@ -1,0 +1,15 @@
+# The boot log services' domain. Without one, OxygenOS's policy runs a shell
+# init starts as oppo_shell, which can neither search /data/local/tmp nor read
+# logd or the kernel log, so the services exit at once and init restarts them
+# until boot completes.
+type evelyn_bootlog, domain, coredomain;
+allow init evelyn_bootlog:process transition;
+allow evelyn_bootlog shell_exec:file { entrypoint rx_file_perms };
+allow evelyn_bootlog { logcat_exec toolbox_exec }:file rx_file_perms;
+
+read_logd(evelyn_bootlog)
+allow evelyn_bootlog kernel:system syslog_read;
+allow evelyn_bootlog kmsg_device:chr_file r_file_perms;
+
+allow evelyn_bootlog shell_data_file:dir rw_dir_perms;
+allow evelyn_bootlog shell_data_file:file create_file_perms;
