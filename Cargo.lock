@@ -2079,7 +2079,7 @@ dependencies = [
 [[package]]
 name = "rust-fs-erofs"
 version = "0.6.0"
-source = "git+https://github.com/cyberphantom52/rust-fs-erofs?rev=84079c30c6642a14249d372bec116eb88af4f425#84079c30c6642a14249d372bec116eb88af4f425"
+source = "git+https://github.com/cyberphantom52/rust-fs-erofs?rev=ce54179c333a54b9e9393c0ca203ebc2c47dc021#ce54179c333a54b9e9393c0ca203ebc2c47dc021"
 dependencies = [
  "am-lz4-flex",
  "crc32c",
