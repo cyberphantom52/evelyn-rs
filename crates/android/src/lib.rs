@@ -6,6 +6,7 @@
 
 pub mod apex;
 pub mod art;
+pub mod bootconfig;
 pub mod build;
 pub mod defaults;
 mod device;

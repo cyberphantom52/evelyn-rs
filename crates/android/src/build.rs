@@ -61,19 +61,22 @@ pub fn image_file(
     Ok(size)
 }
 
-/// Build the boot image `source` is the ramdisk of into a new file at `output`,
+/// Build the boot image `source` is the ramdisk of into a new file at `output`:
+/// `edited`, the image with its other parts changed, or else the stock one,
 /// with `tree` as its ramdisk. Returns the image's size.
 pub fn boot_image(
     tree: &PartitionTree,
     store: &Store<'_>,
     source: &Image,
+    edited: Option<&bootimg::Image>,
     output: &Path,
     partition: &str,
 ) -> Result<u64, Error> {
     let ramdisk = source
         .ramdisk()
         .ok_or_else(|| Error::Unsupported(format!("{partition} is not built from a boot image")))?;
-    ramdisk::write(store, tree, ramdisk, output).map_err(|source| Error::Build {
+    let image = edited.unwrap_or(&ramdisk.image);
+    ramdisk::write(store, tree, ramdisk, image, output).map_err(|source| Error::Build {
         partition: partition.to_owned(),
         source: Box::new(source),
     })
