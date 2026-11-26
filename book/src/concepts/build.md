@@ -66,14 +66,32 @@ in its `BootImage`.
 A boot image whose ramdisk or bootconfig a recipe changes is built again from
 the stock one, with the new ramdisk compressed as the old one was. Its AVB footer, and a GKI
 boot signature, are re-signed with the AOSP test key of the original key's
-size. A `vbmeta` image that holds the boot image's hash is left as it is, so
-flash it with verification disabled. A new file in a ramdisk gets owner and
+size. A new file in a ramdisk gets owner and
 group `root`, and mode `0644`, or `0755` for a directory, unless the recipe sets
 other metadata. Ramdisk entries have no SELinux labels.
 
 A boot image is left as it is, with a warning, if Evelyn cannot read its
 ramdisk. This happens when the image has no ramdisk, has several (some
 `vendor_boot` images do), or holds device nodes.
+
+## Verified boot
+
+Android checks every partition it boots against the stock firmware's `vbmeta`
+images, which hold each partition's hash or dm-verity hashtree, signed with the
+device maker's key. A built partition no longer matches them, so Evelyn rebuilds
+them, as a custom ROM's build does:
+
+- Each built partition gets a dm-verity hashtree and an AVB footer after its
+  filesystem, as `avbtool add_hashtree_footer` writes them.
+- Each stock `vbmeta` image (`vbmeta`, `vbmeta_system`, ...) is rebuilt with
+  the built partitions' hashtrees and the rebuilt boot images' hashes in place
+  of the stock ones. Its chains to images Evelyn signed take their new keys.
+  Everything else is kept, including its flags.
+- Each is signed with the AOSP test key of its original key's size.
+
+The fstab's `avb` entries stay as they are, and dm-verity checks every
+partition as the device reads it. An unlocked bootloader boots images signed
+with any key, in its orange state; a locked one boots only the device maker's.
 
 ## Partition settings
 
@@ -87,8 +105,8 @@ override them, for partitions from either firmware.
 
 | `--output`   | Writes                                                    | Default when                    |
 |--------------|-----------------------------------------------------------|---------------------------------|
-| `super`      | `super.img`, built to `[super]`, and the changed boot images | `evelyn.toml` has a super layout |
-| `partitions` | one `<partition>.img` per partition and changed boot image | it has none                     |
+| `super`      | `super.img`, built to `[super]`, the changed boot images and the `vbmeta` images | `evelyn.toml` has a super layout |
+| `partitions` | one `<partition>.img` per partition, changed boot image and `vbmeta` image | it has none                     |
 | `zip`        | a recovery-flashable ZIP, named `<sha256>.zip`            | never; ask for it               |
 
 The ZIP holds:
@@ -97,8 +115,8 @@ The ZIP holds:
 - the installer, which accepts only a device whose `ro.product.device` is
   `product_id`
 - the device firmware outside `super`: the stock OTA's other partitions, or the
-  images in `firmware/stock/firmware/`, with the changed boot images in place
-  of their stock ones
+  images in `firmware/stock/firmware/`, with the changed boot images and the
+  rebuilt `vbmeta` images in place of their stock ones
 
 > **Note:** ZIP output has not been flash-tested yet.
 

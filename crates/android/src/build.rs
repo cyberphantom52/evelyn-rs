@@ -1,6 +1,7 @@
 //! Construct EROFS and ext4 filesystem images, and boot images with a new ramdisk.
 
 use crate::{Error, Image, IoAt, PartitionTree, Store};
+use bootimg::avb::{Descriptor, Footer, Signer};
 
 mod erofs;
 mod ext4;
@@ -12,8 +13,9 @@ use std::{fs, path::Path};
 /// Fixed timestamp for reproducible images (2009-01-01, as AOSP builds use).
 const EPOCH: u64 = 1_230_768_000;
 
-/// Build `tree` in `region`, reading file contents from `store`. Returns the image's
-/// size.
+/// Build `tree` in `region`, reading file contents from `store`, with a dm-verity
+/// hashtree and the AVB footer that describes it after the filesystem. Returns the
+/// image's size and its hashtree descriptor, for the vbmeta image that holds it.
 pub fn image(
     tree: &PartitionTree,
     store: &Store<'_>,
@@ -21,8 +23,9 @@ pub fn image(
     filesystem: Filesystem,
     partition: &str,
     mount_point: &str,
-) -> Result<u64, Error> {
+) -> Result<(u64, Descriptor), Error> {
     let uuid = uuid(partition);
+    let mut hashed = region.try_clone().map_err(Error::Write)?;
     match filesystem {
         Filesystem::Erofs => erofs::write(store, tree, region, uuid, EPOCH),
         Filesystem::Ext4 => {
@@ -33,6 +36,15 @@ pub fn image(
             "a ramdisk is built into its boot image, not on its own".into(),
         )),
     }
+    .and_then(|size| {
+        // The salt is the partition's, so rebuilds produce identical images.
+        let salt = crate::hash::Sha256Digest::bytes(partition.as_bytes());
+        Ok(Footer::hashtree(partition, salt.as_bytes()).seal(
+            &mut hashed,
+            size,
+            &Signer::TestKeys,
+        )?)
+    })
     .map_err(|source| Error::Build {
         partition: partition.to_owned(),
         source: Box::new(source),
@@ -47,7 +59,7 @@ pub fn image_file(
     filesystem: Filesystem,
     partition: &str,
     mount_point: &str,
-) -> Result<u64, Error> {
+) -> Result<(u64, Descriptor), Error> {
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -56,14 +68,15 @@ pub fn image_file(
         .open(output)
         .at(output)?;
     let region = Region::new(file.try_clone().at(output)?, 0);
-    let size = image(tree, store, region, filesystem, partition, mount_point)?;
-    file.set_len(size).at(output)?;
-    Ok(size)
+    let built = image(tree, store, region, filesystem, partition, mount_point)?;
+    file.set_len(built.0).at(output)?;
+    Ok(built)
 }
 
 /// Build the boot image `source` is the ramdisk of into a new file at `output`:
 /// `edited`, the image with its other parts changed, or else the stock one,
-/// with `tree` as its ramdisk. Returns the image's size.
+/// with `tree` as its ramdisk. Returns its AVB footer's new descriptor and the
+/// key it is signed with, for the vbmeta image that holds them, if it has one.
 pub fn boot_image(
     tree: &PartitionTree,
     store: &Store<'_>,
@@ -71,7 +84,7 @@ pub fn boot_image(
     edited: Option<&bootimg::Image>,
     output: &Path,
     partition: &str,
-) -> Result<u64, Error> {
+) -> Result<Option<(Descriptor, Vec<u8>)>, Error> {
     let ramdisk = source
         .ramdisk()
         .ok_or_else(|| Error::Unsupported(format!("{partition} is not built from a boot image")))?;

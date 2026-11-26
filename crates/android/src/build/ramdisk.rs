@@ -2,21 +2,22 @@
 
 use crate::ramdisk::Ramdisk;
 use crate::{EntryKind, Error, IoAt, PartitionTree, Store};
-use bootimg::avb::Signer;
+use bootimg::avb::{Descriptor, Signer};
 use bootimg::compress::Compression;
 use bootimg::ramdisk::{self, Kind, Node};
 use std::{fs, io::Read, path::Path};
 
 /// Write `image` to `output` with `tree` as its ramdisk, in the format
 /// `source`'s was compressed in. Its GKI signature and AVB footer are re-signed with the
-/// AOSP test keys of the original keys' sizes. Returns the image's size.
+/// AOSP test keys of the original keys' sizes. Returns the footer's new descriptor
+/// and the key it is signed with, if it has a footer.
 pub(super) fn write(
     store: &Store<'_>,
     tree: &PartitionTree,
     source: &Ramdisk,
     image: &bootimg::Image,
     output: &Path,
-) -> Result<u64, Error> {
+) -> Result<Option<(Descriptor, Vec<u8>)>, Error> {
     let mut entries = std::collections::BTreeMap::new();
     for (path, entry) in &tree.entries {
         let kind = match &entry.kind {
@@ -53,9 +54,15 @@ pub(super) fn write(
 
     let mut image = image.clone();
     *image.content.ramdisks_mut().remove(0) = ramdisk;
-    let mut file = fs::File::create(output).at(output)?;
-    image.write(&mut file, &Signer::TestKeys)?;
-    file.metadata().at(output).map(|metadata| metadata.len())
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(output)
+        .at(output)?;
+    let descriptor = image.write(&mut file, &Signer::TestKeys)?;
+    Ok(descriptor.zip(image.footer.map(|footer| footer.vbmeta.public_key)))
 }
 
 /// The level a ramdisk is compressed at, which every build pays for: LZ4 HC 9

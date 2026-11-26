@@ -2,7 +2,7 @@
 
 use std::{
     fs::File,
-    io::{self, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     os::unix::fs::FileExt,
 };
 
@@ -23,6 +23,11 @@ impl Region {
         }
     }
 
+    /// Another handle on the same region, at its start.
+    pub(crate) fn try_clone(&self) -> io::Result<Self> {
+        Ok(Self::new(self.file.try_clone()?, self.offset))
+    }
+
     /// Make the file reach at least `len` bytes into the region; new bytes read as zeros.
     pub(crate) fn reserve(&self, len: u64) -> io::Result<()> {
         let end = self.offset + len;
@@ -38,6 +43,14 @@ impl Region {
 
     pub(crate) fn write_all_at(&self, buf: &[u8], at: u64) -> io::Result<()> {
         self.file.write_all_at(buf, self.offset + at)
+    }
+}
+
+impl Read for Region {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let read = self.file.read_at(buf, self.offset + self.position)?;
+        self.position += read as u64;
+        Ok(read)
     }
 }
 

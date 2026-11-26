@@ -21,6 +21,7 @@ use android::Filesystem;
 use android::lp::SuperImage;
 use android::partition::{BOOT, Mounts, STANDARD_SYSTEM, VENDOR_SIDE};
 use android::{Image, PartitionTree};
+use bootimg::avb::Descriptor;
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -271,7 +272,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
         return Ok(built);
     }
 
-    let written = images_of(
+    let (written, mut descriptors) = images_of(
         build.work_dir,
         &partitions,
         &targets,
@@ -279,7 +280,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
         &profile,
         output,
     )?;
-    let boot = boot_images_of(
+    let (mut firmware, boot_descriptors, keys) = boot_images_of(
         build.work_dir,
         &partitions,
         &targets,
@@ -288,13 +289,20 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
         &boot_images,
         &edited,
     )?;
+    descriptors.extend(boot_descriptors);
+    firmware.extend(crate::engine::vbmeta::rebuild(
+        build.work_dir,
+        &stock,
+        &descriptors,
+        keys,
+    )?);
     let output_dir = build
         .output_dir
         .map(Path::to_path_buf)
         .unwrap_or_else(|| build.root.join("out").join(&profile.name));
     tracing::info!(output = %output_dir.display(), "publishing outputs");
     built.outputs =
-        crate::engine::output::publish(&output_dir, &profile, output, &stock, written, boot)?;
+        crate::engine::output::publish(&output_dir, &profile, output, &stock, written, firmware)?;
     Ok(built)
 }
 
@@ -604,7 +612,8 @@ pub(crate) enum Written {
 
 /// Build each boot image whose ramdisk a recipe changed into `images/` in the
 /// work directory, from its stock image (`boot_images` has where each is among
-/// `images`): each by name. One left as it was is not built.
+/// `images`): each by name. One left as it was is not built. Returns them, with
+/// the AVB descriptor of each one with a footer and the key it is signed with.
 fn boot_images_of(
     work_dir: &Path,
     partitions: &[Partition],
@@ -613,9 +622,11 @@ fn boot_images_of(
     images: &crate::patch::Images,
     boot_images: &BTreeMap<String, usize>,
     edited: &Edited,
-) -> Result<Vec<(String, PathBuf)>, Error> {
+) -> Result<Sealed, Error> {
     let dir = work_dir.join("images");
     let mut written = Vec::new();
+    let mut descriptors = BTreeMap::new();
+    let mut keys = BTreeMap::new();
     for partition in partitions
         .iter()
         .filter(|partition| targets[&partition.name].1.filesystem == Filesystem::Ramdisk)
@@ -636,14 +647,29 @@ fn boot_images_of(
         tracing::info!(partition = %partition.name, "building boot image");
         let store = android::Store::new(images, root);
         let image = dir.join(format!("{}.img", partition.name));
-        android::build::boot_image(tree, &store, source, edited, &image, &partition.name)?;
+        let sealed =
+            android::build::boot_image(tree, &store, source, edited, &image, &partition.name)?;
+        if let Some((descriptor, key)) = sealed {
+            descriptors.insert(partition.name.clone(), descriptor);
+            if !key.is_empty() {
+                keys.insert(partition.name.clone(), key);
+            }
+        }
         written.push((partition.name.clone(), image));
     }
-    Ok(written)
+    Ok((written, descriptors, keys))
 }
+
+/// Images by name, with the AVB descriptors and keys of those with a footer.
+type Sealed = (
+    Vec<(String, PathBuf)>,
+    BTreeMap<String, Descriptor>,
+    BTreeMap<String, Vec<u8>>,
+);
 
 /// Build every partition but the boot images into `images/` in the work
 /// directory: each into its own image, or straight into its place in `super`.
+/// Returns them, with each one's hashtree descriptor by name.
 fn images_of(
     work_dir: &Path,
     partitions: &[Partition],
@@ -651,13 +677,14 @@ fn images_of(
     images: &crate::patch::Images,
     profile: &Profile,
     output: Output,
-) -> Result<Written, Error> {
+) -> Result<(Written, BTreeMap<String, Descriptor>), Error> {
     let dir = work_dir.join("images");
     reset(&dir)?;
+    let mut hashtrees = BTreeMap::new();
     let partitions = partitions
         .iter()
         .filter(|partition| targets[&partition.name].1.filesystem != Filesystem::Ramdisk);
-    let build = |partition: &Partition, to: To| {
+    let mut build = |partition: &Partition, to: To| {
         let (root, tree) = &targets[&partition.name];
         tracing::info!(partition = %partition.name, filesystem = ?tree.filesystem, "building image");
         let store = android::Store::new(images, root);
@@ -666,14 +693,16 @@ fn images_of(
             .as_ref()
             .expect("a filesystem is mounted");
         let (name, filesystem) = (&partition.name, tree.filesystem);
-        Ok::<_, Error>(match to {
+        let (size, hashtree) = match to {
             To::Region(region) => {
                 android::build::image(tree, &store, region, filesystem, name, mount)?
             }
             To::File(image) => {
                 android::build::image_file(tree, &store, image, filesystem, name, mount)?
             }
-        })
+        };
+        hashtrees.insert(name.clone(), hashtree);
+        Ok::<_, Error>(size)
     };
     let written = match output {
         Output::Partitions => {
@@ -702,5 +731,5 @@ fn images_of(
             Written::Super(path)
         }
     };
-    Ok(written)
+    Ok((written, hashtrees))
 }

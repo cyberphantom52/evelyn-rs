@@ -9,26 +9,27 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Move what was built into `output_dir` as `output`, with the boot images
-/// whose ramdisk the build changed. A flashable ZIP also flashes the stock
-/// firmware's partitions outside `super`, those boot images in place of their
-/// stock ones, and is named for its SHA-256.
+/// Move what was built into `output_dir` as `output`, with the firmware images
+/// the build rebuilt: the boot images whose ramdisk it changed, and the vbmeta
+/// images. A flashable ZIP also flashes the stock firmware's partitions outside
+/// `super`, those images in place of their stock ones, and is named for its
+/// SHA-256.
 pub(crate) fn publish(
     output_dir: &Path,
     profile: &Profile,
     output: Output,
     stock: &OpenFirmware,
     images: Written,
-    boot: Vec<(String, PathBuf)>,
+    rebuilt: Vec<(String, PathBuf)>,
 ) -> Result<Vec<PathBuf>, Error> {
     fs::create_dir_all(output_dir).at(output_dir)?;
     Ok(match images {
-        Written::Partitions(images) => images_into(output_dir, images.into_iter().chain(boot))?,
+        Written::Partitions(images) => images_into(output_dir, images.into_iter().chain(rebuilt))?,
         Written::Super(super_image) if output == Output::Super => {
             let output = output_dir.join("super.img");
             fs::rename(&super_image, &output).at(&super_image)?;
             let mut outputs = vec![output];
-            outputs.extend(images_into(output_dir, boot)?);
+            outputs.extend(images_into(output_dir, rebuilt)?);
             outputs
         }
         Written::Super(super_image) => {
@@ -37,10 +38,10 @@ pub(crate) fn publish(
                 .into_iter()
                 .filter(|image| {
                     let name = image.file_stem().unwrap_or_default();
-                    !boot.iter().any(|(boot, _)| name == boot.as_str())
+                    !rebuilt.iter().any(|(rebuilt, _)| name == rebuilt.as_str())
                 })
                 .collect();
-            firmware.extend(boot.iter().map(|(_, image)| image.clone()));
+            firmware.extend(rebuilt.iter().map(|(_, image)| image.clone()));
             let partial = output_dir.join("evelyn.zip.partial");
             crate::engine::flashable::write(
                 &crate::engine::flashable::Contents {
@@ -51,7 +52,7 @@ pub(crate) fn publish(
                 &partial,
             )?;
             fs::remove_file(&super_image).at(&super_image)?;
-            for (_, image) in &boot {
+            for (_, image) in &rebuilt {
                 fs::remove_file(image).at(image)?;
             }
             // The ZIP's writer seeks back to finish headers, so it is hashed once written.

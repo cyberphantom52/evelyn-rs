@@ -12,6 +12,7 @@ mod needs;
 mod output;
 pub mod profile;
 mod properties;
+mod vbmeta;
 pub use build::{Build, Built, Composed, build};
 pub use firmware::{Extracted, Given, extract_in_place};
 use profile::Profile;
