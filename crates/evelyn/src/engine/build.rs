@@ -137,6 +137,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
             .unwrap_or_else(|| Given::Path(build.root.join("firmware").join(default)))
     };
     let scratch = build.work_dir.join("firmware");
+    tracing::info!("opening firmware");
     let mut rom = OpenFirmware::open(&given(&build.rom, "rom"), &scratch.join("rom"))?;
     let mut stock = OpenFirmware::open(&given(&build.stock, "stock"), &scratch.join("stock"))?;
 
@@ -170,6 +171,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
             Some((partition.mount_point.clone()?, partition.name.clone()))
         }));
 
+    tracing::info!("loading recipes");
     crate::recipe::kit::load(&profile.root)?;
     let mut recipes = recipes(&profile, build.extra_patches)?;
     if build.debug {
@@ -183,6 +185,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
             .map(|read| read.partition.clone())
             .collect()
     };
+    tracing::info!("opening source images");
     rom.extract(&of(Firmware::Rom))?;
     stock.extract(&of(Firmware::Stock))?;
 
@@ -272,6 +275,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
         .output_dir
         .map(Path::to_path_buf)
         .unwrap_or_else(|| build.root.join("out").join(&profile.name));
+    tracing::info!(output = %output_dir.display(), "publishing outputs");
     built.outputs =
         crate::engine::output::publish(&output_dir, &profile, output, &stock, written, boot)?;
     Ok(built)
@@ -676,6 +680,7 @@ fn images_of(
                 let size = build(partition, To::Region(image.region()?))?;
                 image.add(partition.name.clone(), size)?;
             }
+            tracing::info!(path = %path.display(), "finishing super image");
             image.finish()?;
             Written::Super(path)
         }
