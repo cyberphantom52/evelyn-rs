@@ -49,6 +49,9 @@ pub struct Build<'a> {
     pub dry_run: bool,
     /// Apply the debug recipe built into Evelyn after every other patch.
     pub debug: bool,
+    /// Apply the permissive SELinux recipe built into Evelyn after every other
+    /// patch.
+    pub selinux_permissive: bool,
     /// Compile again the ART files an edit made stale.
     pub dexpreopt: bool,
     pub tools: &'a Tools,
@@ -124,6 +127,10 @@ const DEBUG_ASSETS: [(&str, &str); 2] = [
     ),
 ];
 
+/// The recipe a permissive build applies after every other patch.
+const SELINUX_PERMISSIVE_RECIPE: &str =
+    include_str!("../../../../assets/recipes/selinux-permissive.ron");
+
 /// Build the repository: the port's patches, the extra patch directories, then
 /// the recipes built into Evelyn, applied to the partitions the port takes. Of
 /// firmware given as an OTA package, only the partitions the build reads are
@@ -176,6 +183,16 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
     let mut recipes = recipes(&profile, build.extra_patches)?;
     if build.debug {
         recipes.push(debug_recipe(&build.work_dir.join("debug"))?);
+    }
+    if build.selinux_permissive {
+        recipes.push(Patch {
+            recipe: Recipe::parse(
+                SELINUX_PERMISSIVE_RECIPE,
+                Path::new("selinux-permissive.ron"),
+            )?,
+            path: PathBuf::from("selinux-permissive.ron"),
+            assets: None,
+        });
     }
 
     let read = read(&partitions, &recipes, &mounts)?;

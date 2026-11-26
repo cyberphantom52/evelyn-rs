@@ -69,3 +69,6 @@ After the port's patches, every build applies recipes that ship with Evelyn:
   its `ro.vndk.version`. If the build does not have it, Evelyn installs it.
 - **Debug.** With `--debug`, Evelyn applies one more recipe after all the
   others. See [Debug builds](../guides/debug.md).
+- **Permissive SELinux.** With `--selinux-permissive`, Evelyn applies one
+  more recipe after all the others. See
+  [Permissive SELinux](../guides/debug.md#permissive-selinux).

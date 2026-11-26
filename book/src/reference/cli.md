@@ -56,6 +56,7 @@ Builds the device repository that contains the current directory.
 | `--patch <DIR>`           | none                            | An extra patch directory, applied after the port's patches. Can be given more than once. |
 | `--dry-run`               | off                             | Apply every recipe, write no images, and print what was composed. |
 | `--debug`                 | off                             | Make a [debug build](../guides/debug.md). |
+| `--selinux-permissive`    | off                             | Start SELinux [permissive](../guides/debug.md#permissive-selinux). |
 
 A `SOURCE` is one of these:
 

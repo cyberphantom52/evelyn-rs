@@ -568,6 +568,10 @@ mod tests {
                 "debug.ron",
                 include_str!("../../../assets/recipes/debug.ron"),
             ),
+            (
+                "selinux-permissive.ron",
+                include_str!("../../../assets/recipes/selinux-permissive.ron"),
+            ),
         ] {
             let recipe = Recipe::parse(text, Path::new(name)).unwrap();
             assert!(!recipe.steps.is_empty(), "{name}");

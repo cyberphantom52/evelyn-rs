@@ -1,0 +1,11 @@
+// A permissive build (`evelyn build --selinux-permissive`), applied after every
+// other patch: init starts SELinux permissive, as the v4 vendor_boot's bootconfig
+// asks. Android's init honours this only when it was built to allow it, as eng and
+// userdebug builds are.
+[
+    Step("selinux-permissive", [
+        BootImage("vendor_boot", [
+            Bootconfig([Set("androidboot.selinux", "permissive")]),
+        ]),
+    ]),
+]

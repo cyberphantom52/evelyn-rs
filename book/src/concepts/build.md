@@ -18,6 +18,7 @@
    1. the port's patches
    2. Evelyn's built-in recipes
    3. the debug recipe, with `--debug`
+   4. the permissive SELinux recipe, with `--selinux-permissive`
 6. **Check the fstab.** Evelyn reads the composed `vendor/etc/fstab.*`, and the
    first-stage `fstab.*` in `vendor_boot`. The build must supply every
    `logical` entry that is not `nofail`, in a filesystem that entry accepts.

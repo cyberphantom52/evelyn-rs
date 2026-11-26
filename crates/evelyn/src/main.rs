@@ -49,6 +49,11 @@ enum Command {
         /// boot without authorisation, applied after every other patch.
         #[arg(long)]
         debug: bool,
+        /// Start SELinux permissive, through vendor_boot's bootconfig, applied
+        /// after every other patch. init honours it only on an eng or userdebug
+        /// build.
+        #[arg(long)]
+        selinux_permissive: bool,
         /// Leave the ART files an edit made stale (the boot image, odex, vdex
         /// and app images) as they are rather than compile them again, for a
         /// quicker build: ART does not use them, and the code they are for runs
@@ -200,6 +205,7 @@ fn run(cli: Cli) -> Result<(), Error> {
             patches,
             dry_run,
             debug,
+            selinux_permissive,
             no_dexpreopt,
         } => {
             let root = evelyn::engine::profile::find(Path::new("."))?;
@@ -213,6 +219,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 extra_patches: &patches,
                 dry_run,
                 debug,
+                selinux_permissive,
                 dexpreopt: !no_dexpreopt,
                 tools: &evelyn::toolchain::Tools::user()?,
             })?)
