@@ -258,7 +258,9 @@ impl Art {
                 let work = self.work.display();
                 let mut command = Command::new(podman);
                 command
-                    .args(["run", "--rm", "--network=none"])
+                    // Unconfined: SELinux would keep container_t from the
+                    // work directory's files, labelled or not.
+                    .args(["run", "--rm", "--network=none", "--security-opt=label=disable"])
                     .arg(format!("--volume={work}:{work}"));
                 for (name, value) in &env {
                     command.arg(format!("--env={name}={value}"));
