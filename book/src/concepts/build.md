@@ -58,8 +58,12 @@ mounted anywhere, so a path outside a `BootImage` never reaches them. Evelyn
 finds the images beside the stock firmware's filesystems, in its `firmware/`
 directory, or in its OTA package. A dry run lists them as `boot_images`.
 
-A boot image whose ramdisk a recipe changes is built again from the stock one,
-with the new ramdisk compressed as the old one was. Its AVB footer, and a GKI
+A `vendor_boot` image's bootconfig, which init gives as `ro.boot.*`
+properties, is edited with [`Bootconfig`](../reference/operations.md#bootconfig)
+in its `BootImage`.
+
+A boot image whose ramdisk or bootconfig a recipe changes is built again from
+the stock one, with the new ramdisk compressed as the old one was. Its AVB footer, and a GKI
 boot signature, are re-signed with the AOSP test key of the original key's
 size. A `vbmeta` image that holds the boot image's hash is left as it is, so
 flash it with verification disabled. A new file in a ramdisk gets owner and

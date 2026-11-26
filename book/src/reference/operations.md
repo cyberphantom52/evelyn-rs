@@ -222,11 +222,27 @@ boot image: `boot`, `init_boot` or `vendor_boot`. Inside it, paths are paths in
 the ramdisk, as the device's rootfs has them before `system` is mounted, so the
 first-stage fstab is `/first_stage_ramdisk/fstab.qcom`. Nothing outside the
 image is reachable, and `Stock("/…")` names a path in the stock image's
-ramdisk. Only the file operations, the checks and the control flow work inside
-it.
+ramdisk. Only the file operations, the checks, the control flow and
+[`Bootconfig`](#bootconfig) work inside it.
 
 A boot image that a `BootImage` changes is built again when the build is
 written. See [Boot images](../concepts/build.md#boot-images).
+
+### `Bootconfig`
+
+```ron
+BootImage("vendor_boot", [
+    Bootconfig([Set("androidboot.vbmeta.device_state", "locked"), Remove("androidboot.memcg")]),
+])
+```
+
+`Bootconfig([Set(key, value), Remove(key)])` edits the bootconfig of a v4
+`vendor_boot` image, inside its `BootImage`. Init sets each `androidboot.*` key
+as a `ro.boot.*` property. `Set` changes every line that has the key, or adds
+one, and `Remove` removes every line that has it; a key to remove that is not
+there is reported, not an error. The image is edited in place, so a later
+`Bootconfig` sees what an earlier one did, and it is built again only if it
+ends up different from the stock one.
 
 ### `Sign`
 

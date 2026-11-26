@@ -14,6 +14,7 @@
 | `Policy`         | `Policy(path, [Add(asset), Import(types:, from:)])` | | | [SELinux](../reference/operations.md#policy) |
 | `Package`        | `Package(path, [ … ])` | | | [Package edits](../reference/packages.md) |
 | `BootImage`      | `BootImage(name, [ … ])` | | | [Boot images](../reference/operations.md#bootimage) |
+| `Bootconfig`     | `Bootconfig([Set(key, value), Remove(key)])` | | only | [Boot images](../reference/operations.md#bootconfig) |
 | `Sign`           | `Sign(path)` | | | [Signing](../reference/packages.md#signing) |
 | `Resources`      | `Resources([Set(type:, name:, config:, value:, create:)])` | only | | [Package edits](../reference/packages.md#resources) |
 | `StubMethod`     | `StubMethod(class:, method:, returns:)` | only | | [Package edits](../reference/packages.md#stubmethodclass-method-returns) |
