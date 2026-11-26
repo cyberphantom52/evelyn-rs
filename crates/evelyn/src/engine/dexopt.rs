@@ -101,6 +101,17 @@ pub(crate) struct Job {
     pub original: Option<Vec<u8>>,
 }
 
+/// A job [`Art::prepare`] readied: what dex2oat is run with, and what its odex
+/// is checked against once it has run.
+pub(crate) struct Compile {
+    args: Vec<String>,
+    odex: PathBuf,
+    stock: Oat,
+    checksums: String,
+    /// The files it writes over the build's, by where they go.
+    written: Vec<(PartitionPath, PathBuf)>,
+}
+
 impl Job {
     pub fn artifact(&self, extension: &str) -> PartitionPath {
         PartitionPath {
@@ -260,7 +271,12 @@ impl Art {
                 command
                     // Unconfined: SELinux would keep container_t from the
                     // work directory's files, labelled or not.
-                    .args(["run", "--rm", "--network=none", "--security-opt=label=disable"])
+                    .args([
+                        "run",
+                        "--rm",
+                        "--network=none",
+                        "--security-opt=label=disable",
+                    ])
                     .arg(format!("--volume={work}:{work}"));
                 for (name, value) in &env {
                     command.arg(format!("--env={name}={value}"));
@@ -495,15 +511,16 @@ impl Art {
         Ok(made)
     }
 
-    /// Compile `job`'s odex again, against a boot image whose checksums are
-    /// `checksums`; the files it writes over the build's, by where they go, the
-    /// new profile among them when the package itself changed.
-    pub fn compile(
+    /// Get `job`'s odex ready to be compiled again, against a boot image whose
+    /// checksums are `checksums`: the files dex2oat reads put in place, and the
+    /// new profile made when the package itself changed. [`Art::compile`] runs
+    /// it, needing nothing more of the device, so jobs can run at once.
+    pub fn prepare(
         &self,
         job: &Job,
         device: &mut Device<'_>,
         checksums: &str,
-    ) -> Result<Vec<(PartitionPath, PathBuf)>, Error> {
+    ) -> Result<Compile, Error> {
         let stock_odex = device.read_at(&job.artifact("odex"))?;
         let stock = Oat::read(&stock_odex)?;
         let debug_data = Elf::parse(&stock_odex)?
@@ -593,14 +610,25 @@ impl Art {
                 }
             }
         }
-        self.run(DEX2OAT, &args)?;
-
-        let odex = fs::read(output("odex")).at(output("odex"))?;
-        check(&stock, &Oat::read(&odex)?, checksums)?;
         for extension in ["odex", "vdex"].into_iter().chain(image.then_some("art")) {
             written.push((job.artifact(extension), output(extension)));
         }
-        Ok(written)
+        Ok(Compile {
+            args,
+            odex: output("odex"),
+            stock,
+            checksums: checksums.to_owned(),
+            written,
+        })
+    }
+
+    /// Run dex2oat for what [`Art::prepare`] readied, and check the odex it
+    /// writes; the files it writes over the build's, by where they go.
+    pub fn compile(&self, compile: Compile) -> Result<Vec<(PartitionPath, PathBuf)>, Error> {
+        self.run(DEX2OAT, &compile.args)?;
+        let odex = fs::read(&compile.odex).at(&compile.odex)?;
+        check(&compile.stock, &Oat::read(&odex)?, &compile.checksums)?;
+        Ok(compile.written)
     }
 
     /// The profile of a changed package. A profile names each DEX file by its

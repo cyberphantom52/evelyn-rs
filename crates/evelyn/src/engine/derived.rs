@@ -135,16 +135,46 @@ pub(crate) fn refresh(
                     written.push((at, std::fs::read(&file).at(&file)?));
                 }
             }
+            let dexopt = |job: &Job, source| Error::Dexopt {
+                dex: job.dex.clone(),
+                source: Box::new(source),
+            };
+            // Each job readied with the device, one after another, then compiled
+            // at once: no compile needs the device or another's output.
+            let mut ready = Vec::new();
             for job in &jobs {
-                tracing::info!(dex = %job.dex, isa = %job.isa, "compiling ART artifacts again");
                 let expected = checksums[&job.isa].join(":");
-                let files =
-                    art.compile(job, &mut device, &expected)
-                        .map_err(|source| Error::Dexopt {
-                            dex: job.dex.clone(),
-                            source: Box::new(source),
-                        })?;
-                for (at, file) in files {
+                let compile = art
+                    .prepare(job, &mut device, &expected)
+                    .map_err(|source| dexopt(job, source))?;
+                ready.push((job, compile));
+            }
+            let queue = std::sync::Mutex::new(ready.into_iter());
+            let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+            let compiled: Vec<_> = std::thread::scope(|scope| {
+                let threads: Vec<_> = (0..workers)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            let mut done = Vec::new();
+                            loop {
+                                // The lock is let go before the job compiles.
+                                let next = queue.lock().unwrap().next();
+                                let Some((job, compile)) = next else {
+                                    break done;
+                                };
+                                tracing::info!(dex = %job.dex, isa = %job.isa, "compiling ART artifacts again");
+                                done.push(art.compile(compile).map_err(|source| dexopt(job, source)));
+                            }
+                        })
+                    })
+                    .collect();
+                threads
+                    .into_iter()
+                    .flat_map(|thread| thread.join().unwrap())
+                    .collect()
+            });
+            for files in compiled {
+                for (at, file) in files? {
                     written.push((at, std::fs::read(&file).at(&file)?));
                 }
             }
