@@ -6,13 +6,14 @@ use bootimg::avb::Signer;
 use bootimg::ramdisk::{self, Kind, Node};
 use std::{fs, io::Read, path::Path};
 
-/// Write `source`'s boot image to `output` with `tree` as its ramdisk, compressed
-/// as the source's was, and its GKI signature and AVB footer re-signed with the
+/// Write `image` to `output` with `tree` as its ramdisk, compressed as
+/// `source`'s was. Its GKI signature and AVB footer are re-signed with the
 /// AOSP test keys of the original keys' sizes. Returns the image's size.
 pub(super) fn write(
     store: &Store<'_>,
     tree: &PartitionTree,
     source: &Ramdisk,
+    image: &bootimg::Image,
     output: &Path,
 ) -> Result<u64, Error> {
     let mut entries = std::collections::BTreeMap::new();
@@ -48,7 +49,7 @@ pub(super) fn write(
     }
     .build()?;
 
-    let mut image = source.image.clone();
+    let mut image = image.clone();
     *image.content.ramdisks_mut().remove(0) = ramdisk;
     let mut file = fs::File::create(output).at(output)?;
     image.write(&mut file, &Signer::TestKeys)?;

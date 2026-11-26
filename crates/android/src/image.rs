@@ -253,6 +253,11 @@ impl Image {
             _ => None,
         }
     }
+
+    /// The boot image a ramdisk is in, for an image that is one.
+    pub fn boot_image(&self) -> Option<&bootimg::Image> {
+        self.ramdisk().map(|ramdisk| &ramdisk.image)
+    }
 }
 
 /// The first `size` bytes of a file, read from an image at increasing offsets.
