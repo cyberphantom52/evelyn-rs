@@ -4,7 +4,7 @@
 
 use crate::Error;
 use crate::metadata::AndroidMetadata;
-use bootimg::boot::Image;
+use bootimg::Image;
 use bootimg::ramdisk::{self, Kind, Node};
 use std::collections::BTreeMap;
 
@@ -14,8 +14,6 @@ pub(crate) const ROOT: u64 = 0;
 pub(crate) struct Ramdisk {
     /// The image the ramdisk is in, to build it back with a new one.
     pub image: Image,
-    /// The image's component the ramdisk is.
-    pub component: String,
     pub tree: ramdisk::Ramdisk,
     /// Inode -> path: the root, then every other path in order.
     paths: Vec<String>,
@@ -29,8 +27,8 @@ impl Ramdisk {
     /// Read the ramdisk of the boot image `data`, which must have exactly one.
     pub(crate) fn parse(data: &[u8]) -> Result<Self, Error> {
         let image = Image::parse(data)?;
-        let component = match image.ramdisks().as_slice() {
-            [one] => one.to_string(),
+        let tree = match image.content.ramdisks().as_slice() {
+            [one] => ramdisk::Ramdisk::parse(one)?,
             [] => return Err(Error::Unsupported("a boot image without a ramdisk".into())),
             more => {
                 return Err(Error::Unsupported(format!(
@@ -39,7 +37,6 @@ impl Ramdisk {
                 )));
             }
         };
-        let tree = ramdisk::Ramdisk::parse(&image.components[&component])?;
         // The root sorts first, so the list stays sorted for lookups.
         let paths: Vec<String> = std::iter::once(String::new())
             .chain(tree.entries.keys().filter(|path| !path.is_empty()).cloned())
@@ -87,7 +84,6 @@ impl Ramdisk {
         }
         Ok(Self {
             image,
-            component,
             tree,
             paths,
             children,
