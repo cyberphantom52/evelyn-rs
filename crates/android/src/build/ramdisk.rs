@@ -3,11 +3,12 @@
 use crate::ramdisk::Ramdisk;
 use crate::{EntryKind, Error, IoAt, PartitionTree, Store};
 use bootimg::avb::Signer;
+use bootimg::compress::Compression;
 use bootimg::ramdisk::{self, Kind, Node};
 use std::{fs, io::Read, path::Path};
 
-/// Write `image` to `output` with `tree` as its ramdisk, compressed as
-/// `source`'s was. Its GKI signature and AVB footer are re-signed with the
+/// Write `image` to `output` with `tree` as its ramdisk, in the format
+/// `source`'s was compressed in. Its GKI signature and AVB footer are re-signed with the
 /// AOSP test keys of the original keys' sizes. Returns the image's size.
 pub(super) fn write(
     store: &Store<'_>,
@@ -43,15 +44,27 @@ pub(super) fn write(
             },
         );
     }
+    let compression = source.tree.compression;
     let ramdisk = ramdisk::Ramdisk {
-        compression: source.tree.compression,
+        compression,
         entries,
     }
-    .build()?;
+    .build(level(compression))?;
 
     let mut image = image.clone();
     *image.content.ramdisks_mut().remove(0) = ramdisk;
     let mut file = fs::File::create(output).at(output)?;
     image.write(&mut file, &Signer::TestKeys)?;
     file.metadata().at(output).map(|metadata| metadata.len())
+}
+
+/// The level a ramdisk is compressed at, which every build pays for: LZ4 HC 9
+/// takes a tenth of the time of 12 for a ramdisk under 1% larger. Gzip, xz
+/// and lzma stay at their default levels.
+fn level(compression: Compression) -> u32 {
+    match compression {
+        Compression::None => 0,
+        Compression::Lz4Legacy | Compression::Lz4Frame => 9,
+        Compression::Gzip | Compression::Xz { .. } | Compression::Lzma => 6,
+    }
 }

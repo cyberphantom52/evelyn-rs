@@ -25,7 +25,7 @@ fs-core = { package = "rust-fs-core", version = "=0.5.1" }
 fs-ext4 = { package = "rust-fs-ext4", git = "https://github.com/antimatter-studios/rust-fs-ext4", rev = "ffbe9644de6456b846b39be8e545df264301c3b9" }
 sepolicy = { package = "sepolicy-inject-rs", git = "https://github.com/cyberphantom52/sepolicy-inject-rs", tag = "v0.5.0" }
 fs-erofs = { package = "rust-fs-erofs", git = "https://github.com/cyberphantom52/rust-fs-erofs", rev = "84079c30c6642a14249d372bec116eb88af4f425" }
-bootimg = { git = "https://github.com/cyberphantom52/bootimg", rev = "871aa3b1fe1c126b55f565fcd623fea8691e26d6", default-features = false }
+bootimg = { git = "https://github.com/cyberphantom52/bootimg", rev = "f986cda67fe2e30895e6763c04ddc7ef80089d2d", default-features = false }
 payload-dumper = { package = "payload_dumper", git = "https://github.com/cyberphantom52/payload-dumper-rust", rev = "4eb9a3efac805c22632d04f6a350a4ca31bd8588", default-features = false, features = ["local_zip", "remote_zip", "prefetch"] }
 tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread"] }
 diffy = "0.5.2"

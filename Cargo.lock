@@ -253,7 +253,7 @@ dependencies = [
 [[package]]
 name = "bootimg"
 version = "0.1.0"
-source = "git+https://github.com/cyberphantom52/bootimg?rev=871aa3b1fe1c126b55f565fcd623fea8691e26d6#871aa3b1fe1c126b55f565fcd623fea8691e26d6"
+source = "git+https://github.com/cyberphantom52/bootimg?rev=f986cda67fe2e30895e6763c04ddc7ef80089d2d#f986cda67fe2e30895e6763c04ddc7ef80089d2d"
 dependencies = [
  "flate2",
  "liblzma",
