@@ -2,6 +2,7 @@
 
 use crate::ramdisk::Ramdisk;
 use crate::{EntryKind, Error, IoAt, PartitionTree, Store};
+use bootimg::avb::Signer;
 use bootimg::ramdisk::{self, Kind, Node};
 use std::{fs, io::Read, path::Path};
 
@@ -48,8 +49,8 @@ pub(super) fn write(
     .build()?;
 
     let mut image = source.image.clone();
-    image.components.insert(source.component.clone(), ramdisk);
+    *image.content.ramdisks_mut().remove(0) = ramdisk;
     let mut file = fs::File::create(output).at(output)?;
-    image.write(&mut file, None)?;
+    image.write(&mut file, &Signer::TestKeys)?;
     file.metadata().at(output).map(|metadata| metadata.len())
 }
