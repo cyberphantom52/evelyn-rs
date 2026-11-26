@@ -82,6 +82,8 @@ pub struct Composition {
     pub(crate) skips: Vec<String>,
     /// Where the package a `Package` is applying its edits to is.
     pub(crate) package: Option<PartitionPath>,
+    /// The boot image a `BootImage` is applying its edits to.
+    pub(crate) boot_image: Option<String>,
     /// What the step being applied left out of the policies it imported.
     pub(crate) held: Vec<Held>,
 }
@@ -111,6 +113,7 @@ impl Composition {
             skipped: Vec::new(),
             skips: Vec::new(),
             package: None,
+            boot_image: None,
             held: Vec::new(),
         }
     }

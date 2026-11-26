@@ -33,6 +33,9 @@ impl Composition {
         if self.package.is_some() && !operation.in_package() {
             return Err(Error::OutsidePackage(operation.name().to_owned()));
         }
+        if self.boot_image.is_some() && !operation.in_boot_image() {
+            return Err(Error::OutsideBootImage(operation.name().to_owned()));
+        }
         match operation {
             Operation::Copy {
                 from,
@@ -128,6 +131,7 @@ impl Composition {
             Operation::Xml(target, edits) => self.edit_xml(target, edits, bound, context),
             Operation::Policy(target, edits) => self.policy(target, edits, bound, context),
             Operation::Package(target, edits) => self.package(target, edits, bound, context),
+            Operation::BootImage(name, edits) => self.boot_image(name, edits, bound, context),
             Operation::Sign(target) => {
                 let keys = context.tools.keys()?;
                 let at = self.open_package_at(target, bound, context)?;
@@ -604,6 +608,34 @@ impl Composition {
         self.package = Some(at);
         let ran = self.operations(edits, bound.clone(), context);
         self.package = None;
+        ran
+    }
+
+    /// Apply `edits` to the boot image `name`: its ramdisk is mounted at `/` and
+    /// is the only partition its paths reach, in the build and in a firmware.
+    fn boot_image(
+        &mut self,
+        name: &str,
+        edits: &[Operation],
+        bound: &Bound,
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
+        let name = crate::recipe::substitute(name, bound)?;
+        let is_boot_image = self
+            .targets
+            .get(&name)
+            .is_some_and(|target| target.tree.filesystem == android::Filesystem::Ramdisk);
+        if !is_boot_image {
+            return Err(Error::UnknownBootImage(name));
+        }
+        let mounts = android::partition::Mounts::new([("/".to_owned(), name.clone())]);
+        let context = Context {
+            mounts: &mounts,
+            ..*context
+        };
+        self.boot_image = Some(name);
+        let ran = self.operations(edits, bound.clone(), &context);
+        self.boot_image = None;
         ran
     }
 
