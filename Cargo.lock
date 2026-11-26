@@ -2079,14 +2079,18 @@ dependencies = [
 
 [[package]]
 name = "rust-fs-core"
-version = "0.4.4"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bd7693404cc43fc8f3c5f92f3808c30277e2e2682440513d58f10e3d9bac815"
+checksum = "e5565c39c9e33464399bb7ad1c2061d52d113ffacce8a23af919e69347969552"
+dependencies = [
+ "serde",
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "rust-fs-erofs"
 version = "0.6.0"
-source = "git+https://github.com/cyberphantom52/rust-fs-erofs?rev=2025152b8d51d0d3151a7942b26b433ff7e31114#2025152b8d51d0d3151a7942b26b433ff7e31114"
+source = "git+https://github.com/cyberphantom52/rust-fs-erofs?rev=5412d81923f680f63deca26e89f6a299e4833c0c#5412d81923f680f63deca26e89f6a299e4833c0c"
 dependencies = [
  "am-lz4-flex",
  "crc32c",
@@ -2101,13 +2105,14 @@ dependencies = [
 [[package]]
 name = "rust-fs-ext4"
 version = "0.8.0"
-source = "git+https://github.com/cyberphantom52/rust-fs-ext4?rev=91677a6bd9535bef4bace45b5f08172f1a1e8164#91677a6bd9535bef4bace45b5f08172f1a1e8164"
+source = "git+https://github.com/antimatter-studios/rust-fs-ext4?rev=ffbe9644de6456b846b39be8e545df264301c3b9#ffbe9644de6456b846b39be8e545df264301c3b9"
 dependencies = [
  "bitflags",
  "caseless",
  "crc32c",
  "js-sys",
  "rust-fs-core",
+ "serde",
  "unicode-normalization",
 ]
 
@@ -2588,7 +2593,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

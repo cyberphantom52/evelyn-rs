@@ -21,10 +21,10 @@ ron = "0.12.2"
 toml = "1.1.8"
 sha2 = "0.11.1"
 base64 = "0.23.1"
-fs-core = { package = "rust-fs-core", version = "0.4.4" }
-fs-ext4 = { package = "rust-fs-ext4", git = "https://github.com/cyberphantom52/rust-fs-ext4", rev = "91677a6bd9535bef4bace45b5f08172f1a1e8164" }
+fs-core = { package = "rust-fs-core", version = "=0.5.1" }
+fs-ext4 = { package = "rust-fs-ext4", git = "https://github.com/antimatter-studios/rust-fs-ext4", rev = "ffbe9644de6456b846b39be8e545df264301c3b9" }
 sepolicy = { package = "sepolicy-inject-rs", git = "https://github.com/cyberphantom52/sepolicy-inject-rs", tag = "v0.5.0" }
-fs-erofs = { package = "rust-fs-erofs", git = "https://github.com/cyberphantom52/rust-fs-erofs", rev = "2025152b8d51d0d3151a7942b26b433ff7e31114" }
+fs-erofs = { package = "rust-fs-erofs", git = "https://github.com/cyberphantom52/rust-fs-erofs", rev = "5412d81923f680f63deca26e89f6a299e4833c0c" }
 bootimg = { git = "https://github.com/cyberphantom52/bootimg", rev = "53a24183125f58d7e0b97aa9f4be5be7c1b3f678", default-features = false }
 payload-dumper = { package = "payload_dumper", git = "https://github.com/cyberphantom52/payload-dumper-rust", rev = "4eb9a3efac805c22632d04f6a350a4ca31bd8588", default-features = false, features = ["local_zip", "remote_zip", "prefetch"] }
 tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread"] }
@@ -39,14 +39,6 @@ dirs = "7.0.0"
 zip = { version = "9.0.5", default-features = false }
 zstd = { version = "0.14.3", default-features = false, features = ["zstdmt"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "fmt", "env-filter"] }
-
-# The rust-fs-ext4 and rust-fs-erofs forks depend on rust-fs-core by a path outside
-# their own repositories.
-[patch."https://github.com/cyberphantom52/rust-fs-ext4"]
-rust-fs-core = { version = "=0.4.4" }
-
-[patch."https://github.com/cyberphantom52/rust-fs-erofs"]
-rust-fs-core = { version = "=0.4.4" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
