@@ -1,16 +1,14 @@
-//! A boot or vendor_boot image's ramdisk, read as a partition: its cpio archive
-//! decompressed once into memory, with an inode for each entry. Building one
-//! back puts a new archive in the image, compressed the same way, and re-signs
-//! it.
+//! A boot or vendor_boot image's ramdisk, read as a partition: bootimg's tree
+//! of it, with an inode for each path. Building one back puts a new archive in
+//! the image, compressed the same way, and re-signs it.
 
 use crate::Error;
 use crate::metadata::AndroidMetadata;
 use bootimg::boot::Image;
-use bootimg::compress::Compression;
-use bootimg::cpio::{self, S_IFDIR, S_IFLNK, S_IFMT, S_IFREG};
+use bootimg::ramdisk::{self, Kind, Node};
 use std::collections::BTreeMap;
 
-/// The inode of the ramdisk's root; entry `n` of the archive is inode `n + 1`.
+/// The inode of the ramdisk's root; the other paths number from 1 in order.
 pub(crate) const ROOT: u64 = 0;
 
 pub(crate) struct Ramdisk {
@@ -18,16 +16,13 @@ pub(crate) struct Ramdisk {
     pub image: Image,
     /// The image's component the ramdisk is.
     pub component: String,
-    pub compression: Compression,
-    entries: Vec<cpio::Entry>,
+    pub tree: ramdisk::Ramdisk,
+    /// Inode -> path: the root, then every other path in order.
+    paths: Vec<String>,
     /// Each directory's inode -> its children's names and inodes, sorted.
     children: BTreeMap<u64, Vec<(Vec<u8>, u64)>>,
-    /// A hardlinked entry's inode -> the inode all its names share.
-    links: BTreeMap<u64, u64>,
-    /// Inode -> how many names it has.
+    /// A hardlinked file's inode -> how many names it has.
     names: BTreeMap<u64, u32>,
-    /// The archive's own entry for its root, which gives the root's metadata.
-    root: Option<u64>,
 }
 
 impl Ramdisk {
@@ -44,47 +39,38 @@ impl Ramdisk {
                 )));
             }
         };
-        let (compression, archive) =
-            bootimg::compress::detect_and_decompress(&image.components[&component])?;
-        let entries = cpio::parse(&archive)?;
+        let tree = ramdisk::Ramdisk::parse(&image.components[&component])?;
+        // The root sorts first, so the list stays sorted for lookups.
+        let paths: Vec<String> = std::iter::once(String::new())
+            .chain(tree.entries.keys().filter(|path| !path.is_empty()).cloned())
+            .collect();
+        let inode = |path: &str| {
+            paths
+                .binary_search_by(|p| p.as_str().cmp(path))
+                .ok()
+                .map(|index| index as u64)
+        };
 
-        // A later entry for a path replaces an earlier one, as when the kernel
-        // unpacks the archive.
-        let mut paths: BTreeMap<String, u64> = BTreeMap::new();
-        let mut root = None;
-        for (index, entry) in entries.iter().enumerate() {
-            let path = entry.name.trim_start_matches("./").trim_matches('/');
-            if !matches!(entry.mode & S_IFMT, S_IFDIR | S_IFREG | S_IFLNK) {
-                return Err(Error::Unsupported(format!(
-                    "special file {path} in the ramdisk, mode {:#o}",
-                    entry.mode
-                )));
-            }
-            match path {
-                "" | "." => root = Some(index as u64 + 1),
-                path => {
-                    paths.insert(path.to_owned(), index as u64 + 1);
-                }
-            }
-        }
-        let mut links = BTreeMap::new();
-        let mut names = BTreeMap::new();
-        let mut first: BTreeMap<u32, u64> = BTreeMap::new();
-        for &inode in paths.values() {
-            let entry = &entries[inode as usize - 1];
-            let canonical = if entry.mode & S_IFMT == S_IFREG && entry.nlink > 1 {
-                *first.entry(entry.ino).or_insert(inode)
-            } else {
-                inode
-            };
-            links.insert(inode, canonical);
-            *names.entry(canonical).or_insert(0) += 1;
-        }
         let mut children: BTreeMap<u64, Vec<(Vec<u8>, u64)>> = BTreeMap::new();
-        for (path, &inode) in &paths {
+        let mut names = BTreeMap::new();
+        for (path, node) in tree.entries.iter().filter(|(path, _)| !path.is_empty()) {
+            let target = match &node.kind {
+                Kind::Special { kind, .. } => {
+                    return Err(Error::Unsupported(format!(
+                        "special file {path} in the ramdisk, mode {:#o}",
+                        kind | node.mode
+                    )));
+                }
+                Kind::Hardlink(file) => {
+                    let file = inode(file).unwrap();
+                    *names.entry(file).or_insert(1) += 1;
+                    file
+                }
+                _ => inode(path).unwrap(),
+            };
             let (parent, name) = match path.rsplit_once('/') {
                 Some((parent, name)) => (
-                    *paths.get(parent).ok_or_else(|| {
+                    inode(parent).ok_or_else(|| {
                         Error::Unsupported(format!("{path} in the ramdisk has no parent entry"))
                     })?,
                     name,
@@ -94,7 +80,7 @@ impl Ramdisk {
             children
                 .entry(parent)
                 .or_default()
-                .push((name.as_bytes().to_vec(), links[&inode]));
+                .push((name.as_bytes().to_vec(), target));
         }
         for list in children.values_mut() {
             list.sort();
@@ -102,12 +88,10 @@ impl Ramdisk {
         Ok(Self {
             image,
             component,
-            compression,
-            entries,
+            tree,
+            paths,
             children,
-            links,
             names,
-            root,
         })
     }
 
@@ -118,7 +102,7 @@ impl Ramdisk {
     /// The type bits of an inode's mode, its size, its number of names and its
     /// metadata.
     pub(crate) fn inode(&self, inode: u64) -> (u16, u64, u32, AndroidMetadata) {
-        let Some(entry) = self.entry(inode) else {
+        let Some(node) = self.node(inode) else {
             let metadata = AndroidMetadata {
                 uid: 0,
                 gid: 0,
@@ -128,41 +112,26 @@ impl Ramdisk {
             return (crate::mode::DIRECTORY, 0, 1, metadata);
         };
         let metadata = AndroidMetadata {
-            uid: entry.uid,
-            gid: entry.gid,
-            mode: (entry.mode & 0o7777) as u16,
+            uid: node.uid,
+            gid: node.gid,
+            mode: node.mode as u16,
             xattrs: BTreeMap::new(),
         };
         let names = self.names.get(&inode).copied().unwrap_or(1);
-        let kind = (entry.mode & S_IFMT) as u16;
+        let kind = node.kind.type_bits() as u16;
         (kind, self.data(inode).len() as u64, names, metadata)
     }
 
-    /// A file's contents or a symlink's target. Of a hardlinked file's names,
-    /// the archive may carry the data in any one.
+    /// A file's contents or a symlink's target.
     pub(crate) fn data(&self, inode: u64) -> &[u8] {
-        let Some(entry) = self.entry(inode) else {
-            return &[];
-        };
-        if entry.mode & S_IFMT == S_IFREG && entry.nlink > 1 && entry.data.is_empty() {
-            let linked = self
-                .links
-                .iter()
-                .filter(|(_, canonical)| **canonical == inode)
-                .filter_map(|(name, _)| self.entry(*name))
-                .find(|entry| !entry.data.is_empty());
-            if let Some(linked) = linked {
-                return &linked.data;
-            }
+        match self.node(inode).map(|node| &node.kind) {
+            Some(Kind::File(data) | Kind::Symlink(data)) => data,
+            _ => &[],
         }
-        &entry.data
     }
 
-    fn entry(&self, inode: u64) -> Option<&cpio::Entry> {
-        let index = match inode {
-            ROOT => self.root?,
-            inode => inode,
-        };
-        self.entries.get(index as usize - 1)
+    /// An inode's node; the root has one only if the archive has an entry for it.
+    fn node(&self, inode: u64) -> Option<&Node> {
+        self.tree.entries.get(&self.paths[inode as usize])
     }
 }
