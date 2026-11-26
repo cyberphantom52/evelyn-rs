@@ -61,6 +61,9 @@ pub struct Built {
     pub port: String,
     /// In `super` order.
     pub partitions: Vec<Composed>,
+    /// The stock boot images whose ramdisks the recipes can edit, in a
+    /// `BootImage`.
+    pub boot_images: Vec<String>,
     /// The recipes applied, in order, by path.
     pub recipes: Vec<PathBuf>,
     /// ROM partitions the port does not take.
@@ -81,13 +84,14 @@ pub struct Composed {
     pub mount_point: String,
 }
 
-/// A partition this build composes and builds into an image.
+/// A partition this build composes and builds into an image, or a boot image
+/// whose ramdisk it composes, which has no mount point.
 struct Partition {
     name: String,
     from: Firmware,
     /// The port's override; otherwise the base image's filesystem.
     filesystem: Option<Filesystem>,
-    mount_point: String,
+    mount_point: Option<String>,
 }
 
 /// A recipe, the path it is reported by, and the directory its assets are in,
@@ -157,15 +161,14 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
     let (mut partitions, ignored) = rom_partitions(&profile, &rom)?;
     partitions.extend(device_partitions(&profile, &mut stock)?);
     let mut opened = BTreeMap::new();
-    for (partition, image) in boot_partitions(&profile, &mut stock)? {
+    for (partition, image) in boot_partitions(&mut stock)? {
         opened.insert(partition.name.clone(), image);
         partitions.push(partition);
     }
-    let mounts = Mounts::new(
-        partitions
-            .iter()
-            .map(|partition| (partition.mount_point.clone(), partition.name.clone())),
-    );
+    let mounts =
+        Mounts::new(partitions.iter().filter_map(|partition| {
+            Some((partition.mount_point.clone()?, partition.name.clone()))
+        }));
 
     crate::recipe::kit::load(&profile.root)?;
     let mut recipes = recipes(&profile, build.extra_patches)?;
@@ -217,12 +220,19 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
         port: profile.name.clone(),
         partitions: partitions
             .iter()
-            .map(|partition| Composed {
-                name: partition.name.clone(),
-                from: partition.from,
-                filesystem: targets[&partition.name].1.filesystem,
-                mount_point: partition.mount_point.clone(),
+            .filter_map(|partition| {
+                Some(Composed {
+                    name: partition.name.clone(),
+                    from: partition.from,
+                    filesystem: targets[&partition.name].1.filesystem,
+                    mount_point: partition.mount_point.clone()?,
+                })
             })
+            .collect(),
+        boot_images: partitions
+            .iter()
+            .filter(|partition| partition.mount_point.is_none())
+            .map(|partition| partition.name.clone())
             .collect(),
         recipes: recipes.iter().map(|recipe| recipe.path.clone()).collect(),
         ignored,
@@ -307,10 +317,7 @@ fn device_partitions(profile: &Profile, stock: &mut OpenFirmware) -> Result<Vec<
 /// The stock firmware's boot images whose ramdisk can be composed, in `BOOT`
 /// order, each opened. One that cannot, such as an image without a ramdisk or
 /// with several, is left as it is.
-fn boot_partitions(
-    profile: &Profile,
-    stock: &mut OpenFirmware,
-) -> Result<Vec<(Partition, Image)>, Error> {
+fn boot_partitions(stock: &mut OpenFirmware) -> Result<Vec<(Partition, Image)>, Error> {
     let names: Vec<String> = BOOT
         .iter()
         .filter(|name| stock.boot_names().any(|have| have == *name))
@@ -322,8 +329,12 @@ fn boot_partitions(
         let path = stock.image(name).expect("extracted");
         match Image::detect(path) {
             Ok(image) => {
-                let mut partition = partition(profile, name, Firmware::Stock, stock)?;
-                partition.filesystem = Some(Filesystem::Ramdisk);
+                let partition = Partition {
+                    name: name.clone(),
+                    from: Firmware::Stock,
+                    filesystem: Some(Filesystem::Ramdisk),
+                    mount_point: None,
+                };
                 partitions.push((partition, image));
             }
             Err(error) => {
@@ -365,7 +376,7 @@ fn partition(
         name: name.to_owned(),
         from,
         filesystem: settings.filesystem,
-        mount_point,
+        mount_point: Some(mount_point),
     })
 }
 
@@ -608,7 +619,11 @@ fn images_of(
         let (root, tree) = &targets[&partition.name];
         tracing::info!(partition = %partition.name, filesystem = ?tree.filesystem, "building image");
         let store = android::Store::new(images, root);
-        let (name, filesystem, mount) = (&partition.name, tree.filesystem, &partition.mount_point);
+        let mount = partition
+            .mount_point
+            .as_ref()
+            .expect("a filesystem is mounted");
+        let (name, filesystem) = (&partition.name, tree.filesystem);
         Ok::<_, Error>(match to {
             To::Region(region) => {
                 android::build::image(tree, &store, region, filesystem, name, mount)?
