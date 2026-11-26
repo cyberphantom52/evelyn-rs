@@ -92,6 +92,10 @@ pub enum Error {
     RelativeRemove(String),
     #[error("{0} does not work inside a Package")]
     OutsidePackage(String),
+    #[error("{0} does not work inside a BootImage")]
+    OutsideBootImage(String),
+    #[error("no boot image {0} in this build")]
+    UnknownBootImage(String),
     #[error("no target partition {0}")]
     UnknownPartition(String),
     #[error("a scope selects no partition of this build")]

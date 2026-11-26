@@ -82,7 +82,8 @@ impl Step {
 /// produced, or inside a `Package`, the package. Paths are device paths
 /// (`/vendor/etc/fstab.qcom`), resolved to a partition by its mount point;
 /// `system` is mounted at `/` on system-as-root devices. Inside a `Package` they
-/// are paths from its root (`/res/values/strings.xml`).
+/// are paths from its root (`/res/values/strings.xml`), and inside a `BootImage`,
+/// paths in its ramdisk (`/first_stage_ramdisk/fstab.qcom`).
 ///
 /// Some operations open a file as a document of a kind (`Xml`, `Text`, `Bytes`,
 /// `Props`, `Policy`) and apply that kind's edits to it, in order.
@@ -152,6 +153,12 @@ pub enum Operation {
     /// when the build is written, and signed only if a `Sign` says so. Inside it,
     /// paths are from its root, and it has the smali edits and `Resources`.
     Package(String, Vec<Operation>),
+    /// Apply operations to a stock boot image, `boot`, `init_boot` or
+    /// `vendor_boot`, which is built again if they change it. Inside it, paths
+    /// are paths in its ramdisk, as the device's rootfs has them; `Stock("/…")`
+    /// is a path in the stock image's ramdisk. Only the file operations work
+    /// inside it.
+    BootImage(String, Vec<Operation>),
     /// Sign an APK with Evelyn's key when the build is written, as Android needs
     /// an APK it verifies to be once its contents change.
     Sign(String),
@@ -319,7 +326,7 @@ fn precompiled_policy() -> Location {
 }
 
 /// The built-in operations' names.
-pub(crate) const BUILT_IN_OPERATIONS: [&str; 22] = [
+pub(crate) const BUILT_IN_OPERATIONS: [&str; 23] = [
     "Copy",
     "Import",
     "Install",
@@ -331,6 +338,7 @@ pub(crate) const BUILT_IN_OPERATIONS: [&str; 22] = [
     "Xml",
     "Policy",
     "Package",
+    "BootImage",
     "Sign",
     "Resources",
     "ReplaceMethod",
@@ -393,6 +401,7 @@ impl Operation {
             Self::Xml(..) => "Xml",
             Self::Policy(..) => "Policy",
             Self::Package(..) => "Package",
+            Self::BootImage(..) => "BootImage",
             Self::Sign(..) => "Sign",
             Self::Resources(..) => "Resources",
             Self::ReplaceMethod { .. } => "ReplaceMethod",
@@ -432,6 +441,27 @@ impl Operation {
         )
     }
 
+    /// What can run on a boot image's ramdisk: file and content edits, and
+    /// copies.
+    pub fn in_boot_image(&self) -> bool {
+        matches!(
+            self,
+            Self::Copy { .. }
+                | Self::Import(..)
+                | Self::Install(..)
+                | Self::Remove(..)
+                | Self::SetMetadata { .. }
+                | Self::Text(..)
+                | Self::Bytes(..)
+                | Self::Xml(..)
+                | Self::Assert(..)
+                | Self::AssertHash(..)
+                | Self::Let(..)
+                | Self::ForEach(..)
+                | Self::When(..)
+        )
+    }
+
     /// Every location it names, in its expressions and in the operations inside
     /// it included.
     pub fn locations(&self) -> Vec<&Location> {
@@ -462,6 +492,8 @@ impl Operation {
             Self::Package(_, operations) => {
                 found.extend(operations.iter().flat_map(Self::locations))
             }
+            // What it reads is in the boot image, which the build reads.
+            Self::BootImage(..) => {}
             Self::ForEach(over, _, operations) => {
                 found.extend(over.locations());
                 found.extend(operations.iter().flat_map(Self::locations));
@@ -551,6 +583,9 @@ mod tests {
                         Resources([Set(type: "string", name: "n", config: "", value: "v")]),
                         Resources([Set(type: "integer-array", name: "m", config: "en-rIN", value: ["1", "2"], create: true)]),
                     ]),
+                    BootImage("vendor_boot", [
+                        Text("/first_stage_ramdisk/fstab.qcom", [Append(Read(Asset("fstab")))]),
+                    ]),
                 ]),
             ]"#,
             Path::new("test.ron"),
@@ -560,6 +595,6 @@ mod tests {
             panic!("one step")
         };
         assert_eq!(step.id(), "one");
-        assert_eq!(step.operations().len(), 6);
+        assert_eq!(step.operations().len(), 7);
     }
 }
