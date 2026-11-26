@@ -713,11 +713,9 @@ fn common(stock: &Oat) -> Result<Vec<String>, Error> {
             "true" => "-Xgc:CC",
             _ => "-Xgc:CMC",
         }
+        // No -j: dex2oat uses the CPUs of the machine it runs on, which in
+        // podman's VM are not the host's.
         .to_owned(),
-        format!(
-            "-j{}",
-            std::thread::available_parallelism().map_or(1, |n| n.get())
-        ),
     ];
     if let Some(sdk) = stock.store.get("assume-value-sdk-int") {
         args.push(format!(
