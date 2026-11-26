@@ -1,6 +1,7 @@
 //! Compiling ART's artifacts again the way the ROM's own were: the boot image
-//! and an odex, by the ROM's dex2oat, run under qemu-user on the host with the
-//! build's files as its root. The options are those the platform build gives
+//! and an odex, by the ROM's dex2oat, run on the host as it is or in a podman
+//! container, with the build's files at their device paths below a directory.
+//! The options are those the platform build gives
 //! dex2oat, from AOSP's Soong at `android-17.0.0_r1`:
 //!
 //! - `build/soong/dexpreopt/dexpreopt.go` (`dexpreoptCommand`) for an odex, and
@@ -135,11 +136,22 @@ impl BootJob {
     }
 }
 
+/// How the host runs the ROM's arm64 Linux tools.
+pub(crate) enum Runner {
+    /// As they are, on arm64 Linux and Android.
+    Native,
+    /// In a podman container, with the work directory at its own path: in
+    /// podman's Linux VM on a Mac, and under the qemu-user the kernel runs
+    /// arm64 programs with on a host that is not arm64.
+    Podman(PathBuf),
+}
+
 /// The ROM's ART tools, runnable on the host: a directory holding them and the
-/// build's files they read, at their device paths below it, and qemu-user to
-/// run them on a host that is not arm64 Linux or Android.
+/// build's files they read, at their device paths below it, and how the host
+/// runs them.
 pub(crate) struct Art {
-    emulator: Option<PathBuf>,
+    runner: Runner,
+    work: PathBuf,
     root: PathBuf,
     out: PathBuf,
 }
@@ -147,17 +159,19 @@ pub(crate) struct Art {
 impl Art {
     /// dex2oat and profman, the APEXes on their library path, their linker, and
     /// the system libraries they need, in a new directory in `work`, run by
-    /// `emulator` if the host needs one.
-    pub fn new(
-        device: &mut Device<'_>,
-        emulator: Option<PathBuf>,
-        work: &Path,
-    ) -> Result<Self, Error> {
+    /// `runner`.
+    pub fn new(device: &mut Device<'_>, runner: Runner, work: &Path) -> Result<Self, Error> {
         let art = Self {
-            emulator,
+            runner,
+            work: work.to_path_buf(),
             root: work.join("root"),
             out: work.join("out"),
         };
+        if let Runner::Podman(_) = art.runner {
+            // The container's root: empty, as the linker and what it loads are
+            // all in the work directory.
+            fs::create_dir_all(work.join("rootfs")).at(work)?;
+        }
         for dir in LIBRARY_PATH {
             if let Some(name) = dir.strip_prefix("/apex/").and_then(|d| d.split('/').next()) {
                 for (file, data) in device.apex(name)? {
@@ -223,27 +237,50 @@ impl Art {
             .into_owned()
     }
 
-    /// `program` run by the ROM's linker, under the emulator if the host needs
-    /// one, with the device's environment, its directories on the host.
+    /// `program` run by the ROM's linker, as the runner runs it, with the
+    /// device's environment, its directories on the host.
     fn command(&self, program: &str) -> Command {
-        let mut command = match &self.emulator {
-            Some(emulator) => {
-                let mut command = Command::new(emulator);
-                command.arg(self.host(LINKER));
+        let libraries: Vec<String> = LIBRARY_PATH.iter().map(|dir| self.at(dir)).collect();
+        let env = [
+            ("LD_LIBRARY_PATH", libraries.join(":")),
+            ("ANDROID_ROOT", self.at("/system")),
+            ("ANDROID_ART_ROOT", self.at("/apex/com.android.art")),
+            ("ANDROID_I18N_ROOT", self.at("/apex/com.android.i18n")),
+            ("ANDROID_DATA", self.at("/data")),
+        ];
+        let mut command = match &self.runner {
+            Runner::Native => {
+                let mut command = Command::new(self.host(LINKER));
+                command.env_clear().envs(env);
                 command
             }
-            None => Command::new(self.host(LINKER)),
+            Runner::Podman(podman) => {
+                let work = self.work.display();
+                let mut command = Command::new(podman);
+                command
+                    .args(["run", "--rm", "--network=none"])
+                    .arg(format!("--volume={work}:{work}"));
+                for (name, value) in &env {
+                    command.arg(format!("--env={name}={value}"));
+                }
+                // The root is the first argument after the options.
+                command
+                    .arg("--rootfs")
+                    .arg(self.work.join("rootfs"))
+                    .arg(self.host(LINKER));
+                command
+            }
         };
-        let libraries: Vec<String> = LIBRARY_PATH.iter().map(|dir| self.at(dir)).collect();
+        command.arg(self.host(program));
         command
-            .arg(self.host(program))
-            .env_clear()
-            .env("LD_LIBRARY_PATH", libraries.join(":"))
-            .env("ANDROID_ROOT", self.host("/system"))
-            .env("ANDROID_ART_ROOT", self.host("/apex/com.android.art"))
-            .env("ANDROID_I18N_ROOT", self.host("/apex/com.android.i18n"))
-            .env("ANDROID_DATA", self.host("/data"));
-        command
+    }
+
+    /// What the host runs: podman, or the ROM's linker itself.
+    fn program(&self) -> PathBuf {
+        match &self.runner {
+            Runner::Native => self.host(LINKER),
+            Runner::Podman(podman) => podman.clone(),
+        }
     }
 
     /// Run `program` with `args` to success; what it printed.
@@ -253,10 +290,7 @@ impl Art {
             .command(program)
             .args(args)
             .output()
-            .map_err(|source| {
-                let program = self.emulator.clone().unwrap_or(self.host(LINKER));
-                Error::ArtRun(program, source)
-            })?;
+            .map_err(|source| Error::ArtRun(self.program(), source))?;
         match output.status.success() {
             true => Ok(output.stdout),
             false => Err(Error::ArtFailed(program, output.status)),

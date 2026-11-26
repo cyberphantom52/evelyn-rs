@@ -35,8 +35,10 @@ pub enum Error {
     Changed(PathBuf),
     #[error("cannot generate the signing key")]
     Key(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error("{0} is not on PATH; it comes with qemu-user")]
-    Host(&'static str),
+    #[error("podman is not on PATH")]
+    NoPodman,
+    #[error("podman cannot run containers; on a Mac, start its VM with podman machine start")]
+    PodmanDown,
     #[error("cannot access {path}")]
     Io {
         path: PathBuf,
@@ -109,14 +111,20 @@ impl Tools {
         Ok(path)
     }
 
-    /// A program the host provides, the first of `names` on its `PATH`.
-    pub(crate) fn host(&self, names: &[&'static str]) -> Result<PathBuf, Error> {
+    /// podman, on the host's `PATH` and able to run containers.
+    pub(crate) fn podman(&self) -> Result<PathBuf, Error> {
         let path = std::env::var_os("PATH").unwrap_or_default();
-        names
-            .iter()
-            .flat_map(|name| std::env::split_paths(&path).map(move |dir| dir.join(name)))
+        let podman = std::env::split_paths(&path)
+            .map(|dir| dir.join("podman"))
             .find(|path| path.is_file())
-            .ok_or(Error::Host(names[0]))
+            .ok_or(Error::NoPodman)?;
+        // podman info reaches the service that runs containers, which on a Mac
+        // is in podman's VM.
+        let output = std::process::Command::new(&podman).arg("info").output();
+        match output.is_ok_and(|output| output.status.success()) {
+            true => Ok(podman),
+            false => Err(Error::PodmanDown),
+        }
     }
 
     /// The signing key, generated if there is none yet.

@@ -21,7 +21,7 @@
 //! See [`crate::engine::dexopt`] for how each is compiled.
 
 use crate::Firmware;
-use crate::engine::dexopt::{self, Art, BootJob, Job};
+use crate::engine::dexopt::{self, Art, BootJob, Job, Runner};
 use crate::engine::{Error, IoAt, device::Device, device::Workspace, device::relative};
 use crate::patch::{Images, Sources};
 use crate::toolchain::Tools;
@@ -87,25 +87,25 @@ pub(crate) fn refresh(
             ),
         }
         let compile = matches!(dexpreopt, Dexpreopt::Compile);
-        // The ROM's tools run as they are on arm64 Linux and Android, and
-        // under qemu-user elsewhere; without qemu-user the stale files stay as
+        // The ROM's tools run as they are on arm64 Linux and Android, and in a
+        // podman container elsewhere; without podman the stale files stay as
         // they are, which ART ignores, as it would have without this stage.
         let native = cfg!(any(target_os = "linux", target_os = "android"))
             && std::env::consts::ARCH == "aarch64";
         let runner = match stale {
             0 => None,
             _ if !compile => None,
-            _ if native => Some(None),
-            _ => match tools.host(&["qemu-aarch64-static", "qemu-aarch64"]) {
-                Ok(qemu) => Some(Some(qemu)),
+            _ if native => Some(Runner::Native),
+            _ => match tools.podman() {
+                Ok(podman) => Some(Runner::Podman(podman)),
                 Err(error) => {
                     tracing::warn!(stale, reason = %error, "ART files left stale, which ART will not use");
                     None
                 }
             },
         };
-        if let Some(emulator) = runner {
-            let art = Art::new(&mut device, emulator, work)?;
+        if let Some(runner) = runner {
+            let art = Art::new(&mut device, runner, work)?;
             // Each image's checksum as oat files record it, by instruction set,
             // the ROM's until it is compiled again.
             let mut checksums: BTreeMap<String, Vec<String>> = BTreeMap::new();
