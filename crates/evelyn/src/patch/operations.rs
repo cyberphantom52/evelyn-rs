@@ -919,13 +919,17 @@ impl Composition {
                 .iter()
                 .any(|pattern| android::path::glob(pattern, name))
         };
-        let donor =
-            sepolicy::SePolicy::from_data(&self.content(source, context)?).map_err(|error| {
+        let data = self.content(source, context)?;
+        let digest = android::hash::Sha256Digest::bytes(&data);
+        let donor = match self.donors.remove(&digest) {
+            Some(donor) => donor,
+            None => sepolicy::SePolicy::from_data(&data).map_err(|error| {
                 crate::patch::sepolicy::Error::Policy {
                     name: from.to_string(),
                     source: Box::new(error),
                 }
-            })?;
+            })?,
+        };
         let any = donor.attribute_names().any(|name| selected(&name))
             || donor.type_decls().any(|decl| selected(&decl.name));
         if !any {
@@ -935,6 +939,7 @@ impl Composition {
             )));
         }
         let extraction = donor.extract(selected, Some(self.document(file)?.declared()));
+        self.donors.insert(digest, donor);
         // Each rule left out once, with every name it needs.
         let mut held: BTreeMap<&String, BTreeSet<String>> = BTreeMap::new();
         for (needs, rules) in &extraction.unresolved {

@@ -92,6 +92,9 @@ pub struct Composition {
     pub(crate) boot_documents: BTreeMap<String, bootimg::Image>,
     /// What the step being applied left out of the policies it imported.
     pub(crate) held: Vec<Held>,
+    /// The compiled policies imports have read, by the digest of their bytes,
+    /// so a policy many imports take from is parsed once.
+    pub(crate) donors: BTreeMap<android::hash::Sha256Digest, sepolicy::SePolicy>,
 }
 
 /// The rules a step left out of its imports, and the names they need.
@@ -122,6 +125,7 @@ impl Composition {
             boot_image: None,
             boot_documents: BTreeMap::new(),
             held: Vec::new(),
+            donors: BTreeMap::new(),
         }
     }
 
