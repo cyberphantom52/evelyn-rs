@@ -159,6 +159,9 @@ pub enum Operation {
     /// is a path in the stock image's ramdisk. Only the file operations work
     /// inside it.
     BootImage(String, Vec<Operation>),
+    /// Inside a `BootImage` of a v4 `vendor_boot`: edit its bootconfig, whose
+    /// `androidboot.*` keys init sets as `ro.boot.*` properties.
+    Bootconfig(Vec<PropEdit>),
     /// Sign an APK with Evelyn's key when the build is written, as Android needs
     /// an APK it verifies to be once its contents change.
     Sign(String),
@@ -326,7 +329,7 @@ fn precompiled_policy() -> Location {
 }
 
 /// The built-in operations' names.
-pub(crate) const BUILT_IN_OPERATIONS: [&str; 23] = [
+pub(crate) const BUILT_IN_OPERATIONS: [&str; 24] = [
     "Copy",
     "Import",
     "Install",
@@ -339,6 +342,7 @@ pub(crate) const BUILT_IN_OPERATIONS: [&str; 23] = [
     "Policy",
     "Package",
     "BootImage",
+    "Bootconfig",
     "Sign",
     "Resources",
     "ReplaceMethod",
@@ -402,6 +406,7 @@ impl Operation {
             Self::Policy(..) => "Policy",
             Self::Package(..) => "Package",
             Self::BootImage(..) => "BootImage",
+            Self::Bootconfig(..) => "Bootconfig",
             Self::Sign(..) => "Sign",
             Self::Resources(..) => "Resources",
             Self::ReplaceMethod { .. } => "ReplaceMethod",
@@ -441,12 +446,13 @@ impl Operation {
         )
     }
 
-    /// What can run on a boot image's ramdisk: file and content edits, and
-    /// copies.
+    /// What can run on a boot image: file and content edits and copies in its
+    /// ramdisk, and `Bootconfig`.
     pub fn in_boot_image(&self) -> bool {
         matches!(
             self,
-            Self::Copy { .. }
+            Self::Bootconfig(..)
+                | Self::Copy { .. }
                 | Self::Import(..)
                 | Self::Install(..)
                 | Self::Remove(..)
@@ -585,6 +591,7 @@ mod tests {
                     ]),
                     BootImage("vendor_boot", [
                         Text("/first_stage_ramdisk/fstab.qcom", [Append(Read(Asset("fstab")))]),
+                        Bootconfig([Set("androidboot.a", "1"), Remove("androidboot.b")]),
                     ]),
                 ]),
             ]"#,

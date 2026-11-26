@@ -132,6 +132,7 @@ impl Composition {
             Operation::Policy(target, edits) => self.policy(target, edits, bound, context),
             Operation::Package(target, edits) => self.package(target, edits, bound, context),
             Operation::BootImage(name, edits) => self.boot_image(name, edits, bound, context),
+            Operation::Bootconfig(edits) => self.bootconfig(edits, bound, context),
             Operation::Sign(target) => {
                 let keys = context.tools.keys()?;
                 let at = self.open_package_at(target, bound, context)?;
@@ -637,6 +638,53 @@ impl Composition {
         let ran = self.operations(edits, bound.clone(), &context);
         self.boot_image = None;
         ran
+    }
+
+    /// Edit the bootconfig of the boot image a `BootImage` names, which must be
+    /// a v4 vendor_boot. A key to remove that is not there is reported.
+    fn bootconfig(
+        &mut self,
+        edits: &[PropEdit],
+        bound: &Bound,
+        context: &Context<'_>,
+    ) -> Result<(), Error> {
+        let image = self.boot_document(context)?;
+        let bootimg::Content::VendorBoot(vendor) = &mut image.content else {
+            return Err(Error::Unsupported(
+                "only a vendor_boot image has a bootconfig",
+            ));
+        };
+        if vendor.header.header_version < 4 {
+            return Err(Error::Unsupported(
+                "only a v4 vendor_boot image has a bootconfig",
+            ));
+        }
+        let mut missing = Vec::new();
+        for edit in edits {
+            let text = String::from_utf8_lossy(&vendor.bootconfig).into_owned();
+            let edited = match edit {
+                PropEdit::Set(key, value) => Some(android::bootconfig::set(
+                    &text,
+                    &crate::recipe::substitute(key, bound)?,
+                    &crate::recipe::substitute(value, bound)?,
+                )),
+                PropEdit::Remove(key) => {
+                    let key = crate::recipe::substitute(key, bound)?;
+                    let removed = android::bootconfig::remove(&text, &key);
+                    if removed.is_none() {
+                        missing.push(key);
+                    }
+                    removed
+                }
+            };
+            if let Some(edited) = edited {
+                vendor.bootconfig = edited.into_bytes();
+            }
+        }
+        for key in missing {
+            self.skip(format!("no bootconfig {key} to remove"));
+        }
+        Ok(())
     }
 
     /// Change one method of a class in the open package.
