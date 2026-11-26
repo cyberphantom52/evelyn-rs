@@ -118,7 +118,8 @@ pub(super) fn write(
         compression: Some(Compression::LZ4HC_12_32K),
         ..BuildOptions::default()
     };
-    let mut sink = BufWriter::new(region);
+    // The image reaches the file in large writes rather than one a pcluster.
+    let mut sink = BufWriter::with_capacity(1 << 20, region);
     let size = mkfs::build_image_to(root, BLOCK_BITS, options, &mut sink)?;
     sink.flush().map_err(Error::Write)?;
     Ok(size)
