@@ -36,6 +36,8 @@ pub struct Context<'a> {
     pub assets: Option<&'a Path>,
     /// Where each partition is mounted, for resolving device paths.
     pub mounts: &'a Mounts,
+    /// Each stock boot image's place among `images`.
+    pub boot_images: &'a BTreeMap<String, usize>,
 }
 
 impl Context<'_> {
@@ -84,6 +86,10 @@ pub struct Composition {
     pub(crate) package: Option<PartitionPath>,
     /// The boot image a `BootImage` is applying its edits to.
     pub(crate) boot_image: Option<String>,
+    /// The boot images whose parts other than the ramdisk a `BootImage` edits,
+    /// opened from the stock ones and edited in place; each is built with its
+    /// ramdisk when the build is written.
+    pub(crate) boot_documents: BTreeMap<String, bootimg::Image>,
     /// What the step being applied left out of the policies it imported.
     pub(crate) held: Vec<Held>,
 }
@@ -114,6 +120,7 @@ impl Composition {
             skips: Vec::new(),
             package: None,
             boot_image: None,
+            boot_documents: BTreeMap::new(),
             held: Vec::new(),
         }
     }
@@ -173,6 +180,23 @@ impl Composition {
             Some(Open::Package(package)) => Some(package),
             _ => None,
         }
+    }
+
+    /// The boot image a `BootImage` is applying its edits to, opened from the
+    /// stock one the first time.
+    pub(crate) fn boot_document(
+        &mut self,
+        context: &Context<'_>,
+    ) -> Result<&mut bootimg::Image, Error> {
+        let name = self.boot_image.clone().ok_or(Error::Unsupported(
+            "a boot image's parts are edited inside a BootImage",
+        ))?;
+        Ok(self.boot_documents.entry(name).or_insert_with_key(|name| {
+            context.images[context.boot_images[name]]
+                .boot_image()
+                .expect("a BootImage names a boot image")
+                .clone()
+        }))
     }
 
     /// Report that part of the step being applied did not apply, and why.

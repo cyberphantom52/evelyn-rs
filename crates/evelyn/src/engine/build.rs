@@ -211,7 +211,15 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
         images.push(image);
     }
 
-    let (targets, skipped) = compose(build, &partitions, &recipes, &sources, &images, &mounts)?;
+    let (targets, skipped, edited) = compose(
+        build,
+        &partitions,
+        &recipes,
+        &sources,
+        &images,
+        &mounts,
+        &boot_images,
+    )?;
     for skip in &skipped {
         tracing::warn!(recipe = %skip.recipe.display(), step = %skip.step, reason = %skip.reason, "skipped step");
     }
@@ -258,6 +266,7 @@ pub fn build(build: &Build<'_>) -> Result<Built, Error> {
         &sources,
         &images,
         &boot_images,
+        &edited,
     )?;
     let output_dir = build
         .output_dir
@@ -463,6 +472,9 @@ fn reset(path: &Path) -> Result<(), Error> {
 
 pub(crate) type Targets = BTreeMap<String, (PathBuf, PartitionTree)>;
 
+/// The boot images whose other parts than the ramdisk the recipes edited.
+type Edited = BTreeMap<String, bootimg::Image>;
+
 /// Start each partition from its base tree and apply every recipe in order.
 fn compose(
     build: &Build<'_>,
@@ -471,7 +483,8 @@ fn compose(
     sources: &crate::patch::Sources,
     images: &crate::patch::Images,
     mounts: &Mounts,
-) -> Result<(Targets, Vec<crate::patch::Skipped>), Error> {
+    boot_images: &BTreeMap<String, usize>,
+) -> Result<(Targets, Vec<crate::patch::Skipped>, Edited), Error> {
     let root = build.work_dir.join("targets");
     reset(&root)?;
     let mut targets = BTreeMap::new();
@@ -498,6 +511,7 @@ fn compose(
             tools: build.tools,
             assets: recipe.assets.as_deref(),
             mounts,
+            boot_images,
         };
         composition
             .apply(&recipe.recipe, &recipe.path, &context)
@@ -513,6 +527,7 @@ fn compose(
         tools: build.tools,
         assets: None,
         mounts,
+        boot_images,
     })?;
     // Each document is written back before what derives from it is made.
     composition.write_back()?;
@@ -530,6 +545,7 @@ fn compose(
             (false, false) => crate::engine::derived::Dexpreopt::Skip,
         },
     )?;
+    let edited = std::mem::take(&mut composition.boot_documents);
     let (trees, skipped) = composition.finish(mounts, images)?;
     let targets = trees
         .into_iter()
@@ -538,7 +554,7 @@ fn compose(
             (name, (path, tree))
         })
         .collect();
-    Ok((targets, skipped))
+    Ok((targets, skipped, edited))
 }
 
 /// Whether a recipe left `tree` as its source `base` was scanned.
@@ -575,6 +591,7 @@ fn boot_images_of(
     sources: &crate::patch::Sources,
     images: &crate::patch::Images,
     boot_images: &BTreeMap<String, usize>,
+    edited: &Edited,
 ) -> Result<Vec<(String, PathBuf)>, Error> {
     let dir = work_dir.join("images");
     let mut written = Vec::new();
@@ -587,14 +604,18 @@ fn boot_images_of(
             source: partition.from,
             partition: partition.name.clone(),
         }];
-        if unchanged(base, tree) {
+        let source = &images[boot_images[&partition.name]];
+        // An edited image the recipes left as the stock one is not edited.
+        let edited = edited
+            .get(&partition.name)
+            .filter(|image| Some(*image) != source.boot_image());
+        if unchanged(base, tree) && edited.is_none() {
             continue;
         }
         tracing::info!(partition = %partition.name, "building boot image");
         let store = android::Store::new(images, root);
-        let source = &images[boot_images[&partition.name]];
         let image = dir.join(format!("{}.img", partition.name));
-        android::build::boot_image(tree, &store, source, &image, &partition.name)?;
+        android::build::boot_image(tree, &store, source, edited, &image, &partition.name)?;
         written.push((partition.name.clone(), image));
     }
     Ok(written)

@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 android.workspace = true
+bootimg.workspace = true
 apkscope-core.workspace = true
 base64.workspace = true
 clap.workspace = true

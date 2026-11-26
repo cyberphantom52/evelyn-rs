@@ -720,6 +720,7 @@ dependencies = [
  "android",
  "apkscope-core",
  "base64",
+ "bootimg",
  "clap",
  "diffy",
  "dirs",
