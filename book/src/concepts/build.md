@@ -9,8 +9,8 @@
    port whose `[rom]` globs match them.
 3. **Resolve the partitions.** The vendor side comes from the stock firmware
    and is checked against `fingerprint` in `evelyn.toml`. The system side, and
-   anything the port lists, comes from the ROM. So do the ramdisks of the stock
-   [boot images](#boot-images).
+   anything the port lists, comes from the ROM. The ramdisks of the stock
+   [boot images](#boot-images) come from the stock firmware.
 4. **Extract and scan.** Evelyn extracts each partition the build reads, if the
    firmware is a package. It then scans the partition into a tree whose files
    point back into the source image.
@@ -23,8 +23,7 @@
    `logical` entry that is not `nofail`, in a filesystem that entry accepts.
 7. **Build the images.** Evelyn writes each partition back out as EROFS or ext4.
    Untouched files stream straight from the source image. Only edited files
-   come from disk. A boot image is built again only if a recipe changed its
-   ramdisk.
+   come from disk. A boot image is built again only if a recipe changed it.
 8. **Publish.** Evelyn writes partition images, a `super` image, or a ZIP to
    `out/<port>/`.
 
@@ -43,11 +42,21 @@ new image is built. Edits write their results into the work directory:
 
 ## Boot images
 
-The ramdisks of the stock `boot`, `init_boot` and `vendor_boot` images are
-partitions too, mounted at `/<name>`. A recipe edits the first-stage fstab as
-`/vendor_boot/first_stage_ramdisk/fstab.qcom`. Evelyn finds the images beside
-the stock firmware's filesystems, in its `firmware/` directory, or in its OTA
-package.
+A recipe edits the stock `boot`, `init_boot` and `vendor_boot` images in a
+[`BootImage`](../reference/operations.md#bootimage), whose paths are paths in
+the image's ramdisk:
+
+```ron
+BootImage("vendor_boot", [
+    Text("/first_stage_ramdisk/fstab.qcom", [Append(Read(Asset("fstab.my_partitions")))]),
+])
+```
+
+On the device, these ramdisks are unpacked together into the rootfs that
+first-stage init runs in, before `system` is mounted at `/`. They are not
+mounted anywhere, so a path outside a `BootImage` never reaches them. Evelyn
+finds the images beside the stock firmware's filesystems, in its `firmware/`
+directory, or in its OTA package. A dry run lists them as `boot_images`.
 
 A boot image whose ramdisk a recipe changes is built again from the stock one,
 with the new ramdisk compressed as the old one was. Its AVB footer, and a GKI

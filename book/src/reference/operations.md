@@ -1,7 +1,8 @@
 # Operations
 
 Operations change the build, meaning the partitions being produced. Inside a
-[`Package`](./packages.md), they change the package instead. Paths are device
+[`Package`](./packages.md), they change the package instead, and inside a
+[`BootImage`](#bootimage), the boot image's ramdisk. Paths are device
 paths that start with `/`, and globs are allowed where an operation matches
 files.
 
@@ -207,6 +208,25 @@ Package("/system_ext/priv-app/Settings/Settings.apk", [ /* … */ ])
 `Package(path, [operations])` opens an APK or JAR and applies operations inside
 it. The package is rebuilt once, when the build is written. See
 [Package edits](./packages.md).
+
+### `BootImage`
+
+```ron
+BootImage("vendor_boot", [
+    Text("/first_stage_ramdisk/fstab.qcom", [Append(Read(Asset("fstab.my_partitions")))]),
+])
+```
+
+`BootImage(name, [operations])` applies operations to the ramdisk of a stock
+boot image: `boot`, `init_boot` or `vendor_boot`. Inside it, paths are paths in
+the ramdisk, as the device's rootfs has them before `system` is mounted, so the
+first-stage fstab is `/first_stage_ramdisk/fstab.qcom`. Nothing outside the
+image is reachable, and `Stock("/…")` names a path in the stock image's
+ramdisk. Only the file operations, the checks and the control flow work inside
+it.
+
+A boot image that a `BootImage` changes is built again when the build is
+written. See [Boot images](../concepts/build.md#boot-images).
 
 ### `Sign`
 
