@@ -293,9 +293,13 @@ impl Art {
             .args(args)
             .output()
             .map_err(|source| Error::ArtRun(self.program(), source))?;
-        match output.status.success() {
-            true => Ok(output.stdout),
-            false => Err(Error::ArtFailed(program, output.status)),
+        // What the linker, qemu or podman said before dex2oat could start;
+        // dex2oat itself writes nothing.
+        let said = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        match (output.status.success(), said.is_empty()) {
+            (true, _) => Ok(output.stdout),
+            (false, true) => Err(Error::ArtFailed(program, output.status)),
+            (false, false) => Err(Error::ArtSaid(program, output.status, said)),
         }
     }
 

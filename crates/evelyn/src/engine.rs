@@ -119,6 +119,8 @@ pub enum Error {
     ArtRun(PathBuf, #[source] std::io::Error),
     #[error("{0} exited with {1}; it logs only to logd, which the host lacks")]
     ArtFailed(&'static str, std::process::ExitStatus),
+    #[error("{0} exited with {1}: {2}")]
+    ArtSaid(&'static str, std::process::ExitStatus, String),
     #[error("the new odex records {key} {built:?}, the ROM's {stock:?}")]
     ArtDiffers {
         key: &'static str,
